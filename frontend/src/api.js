@@ -104,12 +104,15 @@ export const registerSDM = async (sdmData) => {
   return res.data;
 };
 
-export const assignStateToSDM = async (sdmName, stateName, sdmPhone = '') => {
-  const res = await api.post('/auth/assign_state/', {
-    sdm_name: sdmName,
-    state: stateName,
-    sdm_phone: sdmPhone
-  });
+export const assignStateToSDM = async (sdmName, stateName = '', sdmPhone = '', siteIds = null) => {
+  const payload = { sdm_name: sdmName, sdm_phone: sdmPhone };
+  if (siteIds) {
+    payload.site_ids = siteIds;
+  }
+  if (stateName) {
+    payload.state = stateName;
+  }
+  const res = await api.post('/auth/assign_state/', payload);
   return res.data;
 };
 

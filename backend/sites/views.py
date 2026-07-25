@@ -352,27 +352,43 @@ class NotificationViewSet(viewsets.ModelViewSet):
 class AssignStateToSDMView(APIView):
     def post(self, request):
         sdm_name = request.data.get('sdm_name', '').strip()
-        state_name = request.data.get('state', '').strip()
+        raw_state = request.data.get('state', '').strip()
+        site_ids = request.data.get('site_ids', None)
         sdm_phone = request.data.get('sdm_phone', '').strip()
 
-        if not sdm_name or not state_name:
-            return Response({'error': 'SDM Manager Name and Target State are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not sdm_name:
+            return Response({'error': 'SDM Manager Name is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Match state case-insensitively
-        matching_sites = Site.objects.filter(state__iexact=state_name)
+        matching_sites = Site.objects.none()
+        clean_state = ''
+
+        if site_ids:
+            if isinstance(site_ids, str):
+                s_list = [s.strip().upper() for s in site_ids.split(',') if s.strip()]
+            elif isinstance(site_ids, list):
+                s_list = [str(s).strip().upper() for s in site_ids if str(s).strip()]
+            else:
+                s_list = []
+            matching_sites = Site.objects.filter(ihs_site_id__in=s_list)
+
+        elif raw_state:
+            clean_state = raw_state.split('(')[0].strip()
+            matching_sites = Site.objects.filter(Q(state__iexact=clean_state) | Q(state__iexact=f"RT{clean_state}"))
+            if matching_sites.count() == 0:
+                matching_sites = Site.objects.filter(state__icontains=clean_state)
+
         total_matching = matching_sites.count()
-
         if total_matching == 0:
-            return Response({'error': f'No telecom sites found in State "{state_name}".'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'No matching telecom sites found for assignment.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Update sdm_name (and phone if provided) across all sites in this State
+        # Update sdm_name (and phone if provided) across all matching sites
         update_data = {'sdm_name': sdm_name}
         if sdm_phone:
             update_data['sdm_phone'] = sdm_phone
 
         updated_rows = matching_sites.update(**update_data)
 
-        # Update user's first_name / last_name if user account exists
+        # Sync user object if found
         user_obj = User.objects.filter(Q(first_name__iexact=sdm_name) | Q(username__iexact=sdm_name.lower().replace(' ', '_'))).first()
         if user_obj and not user_obj.first_name:
             parts = sdm_name.split()
@@ -381,8 +397,8 @@ class AssignStateToSDMView(APIView):
             user_obj.save()
 
         return Response({
-            'message': f'Successfully assigned State "{state_name}" ({updated_rows} sites) to SDM Manager {sdm_name}!',
-            'state': state_name,
+            'message': f'Successfully assigned {updated_rows} site(s) to SDM Manager {sdm_name}!',
+            'state': clean_state,
             'sdm_name': sdm_name,
             'updated_count': updated_rows
         }, status=status.HTTP_200_OK)
@@ -391,12 +407,17 @@ class AssignStateToSDMView(APIView):
 class AvailableStatesView(APIView):
     def get(self, request):
         states_query = Site.objects.exclude(state__isnull=True).exclude(state='').values('state').annotate(count=Count('id')).order_by('state')
-        states_list = [
-            {'state': item['state'].strip(), 'count': item['count']}
-            for item in states_query
-            if item['state'].strip()
-        ]
-        return Response(states_list)
+        aggregated = {}
+        for item in states_query:
+            st = item['state'].strip().upper()
+            if not st:
+                continue
+            if st.startswith('RT') and len(st) > 2:
+                st = st[2:]
+            aggregated[st] = aggregated.get(st, 0) + item['count']
+
+        res = [{'state': st, 'count': cnt} for st, cnt in sorted(aggregated.items()) if cnt > 0]
+        return Response(res)
 
     @action(detail=False, methods=['post'])
     def mark_all_read(self, request):

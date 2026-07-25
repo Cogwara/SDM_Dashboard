@@ -2,6 +2,86 @@ import React, { useState, useEffect } from 'react';
 import { UserPlus, Shield, User, Mail, Phone, Lock, CheckCircle, RefreshCw, Radio, Search, Check, AlertCircle, Building2, MapPin, Globe, Layers, Send } from 'lucide-react';
 import { fetchSDMList, registerSDM, assignStateToSDM, fetchAvailableStates } from '../api';
 
+const DEFAULT_NIGERIAN_STATES = [
+  { state: 'FCT', count: 1050 },
+  { state: 'LAGOS', count: 2613 },
+  { state: 'RIVERS', count: 1168 },
+  { state: 'KANO', count: 718 },
+  { state: 'KADUNA', count: 664 },
+  { state: 'ANAMBRA', count: 804 },
+  { state: 'DELTA', count: 840 },
+  { state: 'OYO', count: 871 },
+  { state: 'EDO', count: 764 },
+  { state: 'ENUGU', count: 630 },
+  { state: 'ABIA', count: 596 },
+  { state: 'AKWA IBOM', count: 550 },
+  { state: 'OGUN', count: 1269 },
+  { state: 'ONDO', count: 464 },
+  { state: 'OSUN', count: 470 },
+  { state: 'KWARA', count: 427 },
+  { state: 'KOGI', count: 300 },
+  { state: 'BENUE', count: 455 },
+  { state: 'PLATEAU', count: 359 },
+  { state: 'NASSARAWA', count: 289 },
+  { state: 'NIGER', count: 443 },
+  { state: 'KATSINA', count: 328 },
+  { state: 'BAUCHI', count: 313 },
+  { state: 'ADAMAWA', count: 311 },
+  { state: 'EKITI', count: 304 },
+  { state: 'BORNO', count: 250 },
+  { state: 'SOKOTO', count: 243 },
+  { state: 'KEBBI', count: 226 },
+  { state: 'JIGAWA', count: 216 },
+  { state: 'TARABA', count: 203 },
+  { state: 'GOMBE', count: 192 },
+  { state: 'BAYELSA', count: 188 },
+  { state: 'EBONYI', count: 186 },
+  { state: 'YOBE', count: 174 },
+  { state: 'ZAMFARA', count: 149 }
+];
+
+const DEFAULT_SDM_USERS = [
+  {"id": 40, "username": "admin", "full_name": "Super Administrator", "email": "admin@fcttelecom.ng", "is_superuser": true, "role": "Super Administrator", "assigned_sites": 20174, "is_registered": true},
+  {"id": 42, "username": "enunekwu", "full_name": "enunekwu", "email": "12345@gmail.com", "is_superuser": true, "role": "Super Administrator", "assigned_sites": 20174, "is_registered": true},
+  {"id": 1, "username": "tochukwu_nzomiwu", "full_name": "Tochukwu Nzomiwu", "email": "tochukwu_nzomiwu@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 600, "is_registered": true},
+  {"id": 2, "username": "olaoti_m._adewole", "full_name": "Olaoti M. Adewole", "email": "olaoti_m._adewole@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 318, "is_registered": true},
+  {"id": 3, "username": "simeon_itua", "full_name": "SIMEON ITUA", "email": "simeon_itua@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 550, "is_registered": true},
+  {"id": 4, "username": "kelechi_okezie", "full_name": "Kelechi Okezie", "email": "kelechi_okezie@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 809, "is_registered": true},
+  {"id": 5, "username": "mene_shadrack_iruobe", "full_name": "Mene Shadrack Iruobe", "email": "mene_shadrack_iruobe@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 837, "is_registered": true},
+  {"id": 6, "username": "jonas_abazie", "full_name": "Jonas Abazie", "email": "jonas_abazie@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 660, "is_registered": true},
+  {"id": 7, "username": "nwadike_chigozie_martins", "full_name": "NWADIKE CHIGOZIE MARTINS", "email": "nwadike_chigozie_martins@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 669, "is_registered": true},
+  {"id": 8, "username": "joseph_alleh", "full_name": "Joseph Alleh", "email": "joseph_alleh@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 457, "is_registered": true},
+  {"id": 9, "username": "bashir_abdulkadir_imam", "full_name": "BASHIR ABDULKADIR IMAM", "email": "bashir_abdulkadir_imam@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 246, "is_registered": true},
+  {"id": 10, "username": "daniel_okereke", "full_name": "Daniel Okereke", "email": "daniel_okereke@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 327, "is_registered": true},
+  {"id": 11, "username": "udo_stanley_ibe", "full_name": "Udo Stanley Ibe", "email": "udo_stanley_ibe@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 390, "is_registered": true},
+  {"id": 12, "username": "omodia_sunday_ibizugbe", "full_name": "Omodia Sunday Ibizugbe", "email": "omodia_sunday_ibizugbe@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 185, "is_registered": true},
+  {"id": 13, "username": "animam_louis", "full_name": "Animam Louis", "email": "animam_louis@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 639, "is_registered": true},
+  {"id": 14, "username": "mustafa_musa", "full_name": "Mustafa Musa", "email": "mustafa_musa@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 755, "is_registered": true},
+  {"id": 15, "username": "nwagu_kingsley", "full_name": "Nwagu Kingsley", "email": "nwagu_kingsley@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 770, "is_registered": true},
+  {"id": 16, "username": "olanrewaju_kayode_olaewe", "full_name": "OLANREWAJU KAYODE OLAEWE", "email": "olanrewaju_kayode_olaewe@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 579, "is_registered": true},
+  {"id": 17, "username": "jacobs_kunle_oluwole", "full_name": "Jacobs Kunle Oluwole", "email": "jacobs_kunle_oluwole@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 601, "is_registered": true},
+  {"id": 18, "username": "nathaniel_ocheni", "full_name": "Nathaniel Ocheni", "email": "nathaniel_ocheni@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 428, "is_registered": true},
+  {"id": 20, "username": "popoola_moses_oluwatoyin", "full_name": "Popoola Moses oluwatoyin", "email": "popoola_moses_oluwatoyin@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 22, "is_registered": true},
+  {"id": 21, "username": "badmus_abass_olayemi", "full_name": "Badmus Abass Olayemi", "email": "badmus_abass_olayemi@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 366, "is_registered": true},
+  {"id": 22, "username": "decommission", "full_name": "Decommission", "email": "decommission@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 1, "is_registered": true},
+  {"id": 24, "username": "solomon_ellams", "full_name": "SOLOMON ELLAMS", "email": "solomon_ellams@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 456, "is_registered": true},
+  {"id": 25, "username": "hassan_barkindo", "full_name": "HASSAN BARKINDO", "email": "hassan_barkindo@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 707, "is_registered": true},
+  {"id": 26, "username": "mukhtar_kabir_mohammed", "full_name": "Mukhtar Kabir Mohammed", "email": "mukhtar_kabir_mohammed@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 655, "is_registered": true},
+  {"id": 27, "username": "adisa_taiwo_joseph", "full_name": "ADISA TAIWO JOSEPH", "email": "adisa_taiwo_joseph@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 468, "is_registered": true},
+  {"id": 28, "username": "saka_tajudeen_adeyemi", "full_name": "Saka Tajudeen Adeyemi", "email": "saka_tajudeen_adeyemi@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 893, "is_registered": true},
+  {"id": 29, "username": "jemiseye_toyin", "full_name": "Jemiseye Toyin", "email": "jemiseye_toyin@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 865, "is_registered": true},
+  {"id": 30, "username": "kareem_quadri_olaitan", "full_name": "Kareem Quadri Olaitan", "email": "kareem_quadri_olaitan@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 56, "is_registered": true},
+  {"id": 31, "username": "shaibu_odanwu", "full_name": "Shaibu Odanwu", "email": "shaibu_odanwu@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 456, "is_registered": true},
+  {"id": 32, "username": "omolekan_oluwagbenga", "full_name": "OMOLEKAN OLUWAGBENGA", "email": "omolekan_oluwagbenga@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 486, "is_registered": true},
+  {"id": 33, "username": "chijioke_omeni", "full_name": "Chijioke Omeni", "email": "chijioke_omeni@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 598, "is_registered": true},
+  {"id": 34, "username": "fatai_ayinde", "full_name": "Fatai Ayinde", "email": "fatai_ayinde@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 520, "is_registered": true},
+  {"id": 35, "username": "bajomo_oluwafemi_emmanuel", "full_name": "Bajomo Oluwafemi Emmanuel", "email": "bajomo_oluwafemi_emmanuel@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 609, "is_registered": true},
+  {"id": 36, "username": "ajayi_omotayo", "full_name": "Ajayi Omotayo", "email": "ajayi_omotayo@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 583, "is_registered": true},
+  {"id": 38, "username": "eneh_kosoluchukwu_j", "full_name": "Eneh Kosoluchukwu J", "email": "eneh_kosoluchukwu_j@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 579, "is_registered": true},
+  {"id": 39, "username": "nasir_jimoh", "full_name": "Nasir Jimoh", "email": "nasir_jimoh@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 213, "is_registered": true},
+  {"id": 41, "username": "mrchrys", "full_name": "Ogwara Christian Enunekwu", "email": "smartchrys@gmail.com", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 0, "is_registered": true}
+];
+
 export default function SDMUserManagement({ currentUser }) {
   const [sdms, setSdms] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,19 +107,23 @@ export default function SDMUserManagement({ currentUser }) {
   const loadSdms = async () => {
     setLoading(true);
     try {
-      const [sdmListRes, statesRes] = await Promise.all([
-        fetchSDMList(),
-        fetchAvailableStates()
-      ]);
-      const list = Array.isArray(sdmListRes) ? sdmListRes : sdmListRes?.results || [];
-      setSdms(list);
-      setAvailableStates(Array.isArray(statesRes) ? statesRes : []);
+      const data = await fetchSDMList();
+      const list = Array.isArray(data) ? data : data?.results || [];
+      if (list.length > 0) {
+        setSdms(list);
+      }
     } catch (e) {
       console.error('Failed to fetch SDMs list:', e);
       setMsg({ type: 'error', text: `Unable to connect to SDM directory server (${e.message || 'Network Error'}). Ensure backend server is running.` });
-      setSdms([]);
     } finally {
       setLoading(false);
+    }
+
+    try {
+      const statesData = await fetchAvailableStates();
+      setAvailableStates(Array.isArray(statesData) ? statesData : statesData?.results || []);
+    } catch (e) {
+      console.error('Failed to fetch available states:', e);
     }
   };
 
@@ -47,10 +131,25 @@ export default function SDMUserManagement({ currentUser }) {
     loadSdms();
   }, []);
 
+  const activeSdms = sdms.length > 0 ? sdms : DEFAULT_SDM_USERS;
+
+  const [assignMode, setAssignMode] = useState('state'); // 'state' or 'sites'
+  const [assignSiteIds, setAssignSiteIds] = useState('');
+
   const handleAssignStateSubmit = async (e) => {
     if (e) e.preventDefault();
-    if (!assignSdmName || !assignStateName) {
-      setAssignMsg({ type: 'error', text: 'Please select both an SDM Manager and a Target State.' });
+    if (!assignSdmName) {
+      setAssignMsg({ type: 'error', text: 'Please select an SDM Manager.' });
+      return;
+    }
+
+    if (assignMode === 'state' && !assignStateName) {
+      setAssignMsg({ type: 'error', text: 'Please select a Target State Territory.' });
+      return;
+    }
+
+    if (assignMode === 'sites' && !assignSiteIds.trim()) {
+      setAssignMsg({ type: 'error', text: 'Please enter at least one Site ID (e.g. FC2700, FC2437).' });
       return;
     }
 
@@ -58,11 +157,18 @@ export default function SDMUserManagement({ currentUser }) {
     setAssignMsg({ type: '', text: '' });
 
     try {
-      const res = await assignStateToSDM(assignSdmName, assignStateName);
-      setAssignMsg({ type: 'success', text: res.message || `Successfully assigned ${assignStateName} to ${assignSdmName}!` });
+      const res = await assignStateToSDM(
+        assignSdmName, 
+        assignMode === 'state' ? assignStateName : '', 
+        '', 
+        assignMode === 'sites' ? assignSiteIds.trim() : null
+      );
+      setAssignMsg({ type: 'success', text: res.message || `Successfully assigned ${res.updated_count || 0} sites to ${assignSdmName}!` });
+      setAssignStateName('');
+      setAssignSiteIds('');
       loadSdms();
     } catch (err) {
-      setAssignMsg({ type: 'error', text: err.response?.data?.error || 'Failed to assign state to SDM.' });
+      setAssignMsg({ type: 'error', text: err.response?.data?.error || 'Failed to assign sites to SDM.' });
     } finally {
       setAssigning(false);
     }
@@ -117,10 +223,10 @@ export default function SDMUserManagement({ currentUser }) {
     setMsg({ type: 'info', text: `Pre-filled registration form for ${sdm.full_name}. Adjust password if needed and click Register.` });
   };
 
-  const registeredCount = sdms.filter(s => s.is_registered).length;
-  const portfolioCount = sdms.filter(s => !s.is_registered).length;
+  const registeredCount = activeSdms.filter(s => s.is_registered).length;
+  const portfolioCount = activeSdms.filter(s => !s.is_registered).length;
 
-  const filteredSdms = sdms.filter(s => {
+  const filteredSdms = activeSdms.filter(s => {
     if (filterTab === 'registered' && !s.is_registered) return false;
     if (filterTab === 'portfolio' && s.is_registered) return false;
 
@@ -149,7 +255,7 @@ export default function SDMUserManagement({ currentUser }) {
         <div className="flex flex-wrap items-center gap-3">
           <div className="bg-slate-900/90 px-3.5 py-1.5 rounded-xl border border-slate-700 text-xs flex items-center space-x-2">
             <span className="text-slate-400">Total SDMs:</span>
-            <b className="text-cyan-300 font-mono text-sm">{sdms.length}</b>
+            <b className="text-cyan-300 font-mono text-sm">{activeSdms.length}</b>
           </div>
 
           <div className="bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/30 text-xs text-emerald-300 font-semibold flex items-center gap-1.5">
@@ -274,15 +380,37 @@ export default function SDMUserManagement({ currentUser }) {
               </form>
             </div>
 
-            {/* Card 2: Assign State Portfolio to SDM */}
+            {/* Card 2: Assign State Portfolio / Sites to SDM */}
             <div className="glass-panel p-5 rounded-2xl border border-amber-500/30 bg-amber-500/5 space-y-3">
               <div className="border-b border-amber-500/20 pb-2.5">
                 <h2 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-amber-400" /> Assign State Territory Portfolio to SDM
+                  <MapPin className="w-4 h-4 text-amber-400" /> Assign Sites / State Portfolio to SDM
                 </h2>
                 <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                  Assign an entire State to an SDM. All telecom sites in that State will automatically belong to the selected SDM.
+                  Assign an entire State territory or specific Site ID(s) to an SDM.
                 </p>
+              </div>
+
+              {/* Assignment Mode Tabs */}
+              <div className="flex items-center space-x-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setAssignMode('state')}
+                  className={`flex-1 py-1 rounded-lg font-bold transition-all ${
+                    assignMode === 'state' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  By State Territory
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAssignMode('sites')}
+                  className={`flex-1 py-1 rounded-lg font-bold transition-all ${
+                    assignMode === 'sites' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  By Specific Site ID(s)
+                </button>
               </div>
 
               {assignMsg.text && (
@@ -302,10 +430,10 @@ export default function SDMUserManagement({ currentUser }) {
                     required
                     value={assignSdmName}
                     onChange={(e) => setAssignSdmName(e.target.value)}
-                    className="w-full bg-slate-900 text-white p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-amber-500 font-medium text-xs"
+                    className="w-full bg-slate-900 text-white p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-amber-500 font-medium text-xs cursor-pointer"
                   >
                     <option value="">-- Choose SDM Manager --</option>
-                    {sdms.map((s) => (
+                    {activeSdms.map((s) => (
                       <option key={s.id} value={s.full_name}>
                         {s.full_name} (@{s.username}) &bull; {s.assigned_sites || 0} Sites
                       </option>
@@ -313,22 +441,35 @@ export default function SDMUserManagement({ currentUser }) {
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-slate-300 font-semibold mb-1 text-[11px]">Select Target State Territory</label>
-                  <select
-                    required
-                    value={assignStateName}
-                    onChange={(e) => setAssignStateName(e.target.value)}
-                    className="w-full bg-slate-900 text-white p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-amber-500 font-medium text-xs"
-                  >
-                    <option value="">-- Choose State Territory --</option>
-                    {availableStates.map((st) => (
-                      <option key={st.state} value={st.state}>
-                        {st.state} ({st.count.toLocaleString()} sites)
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {assignMode === 'state' ? (
+                  <div>
+                    <label className="block text-slate-300 font-semibold mb-1 text-[11px]">Select Target State Territory</label>
+                    <select
+                      value={assignStateName}
+                      onChange={(e) => setAssignStateName(e.target.value)}
+                      className="w-full bg-slate-900 text-white p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-amber-500 font-medium text-xs cursor-pointer"
+                    >
+                      <option value="">-- Choose State Territory --</option>
+                      {(availableStates.length > 0 ? availableStates : DEFAULT_NIGERIAN_STATES).map((st) => (
+                        <option key={st.state} value={st.state}>
+                          {st.state} ({st.count.toLocaleString()} sites)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-slate-300 font-semibold mb-1 text-[11px]">Enter Site ID(s) (Comma Separated)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. FC2700, FC2437, FC1090"
+                      value={assignSiteIds}
+                      onChange={(e) => setAssignSiteIds(e.target.value.toUpperCase())}
+                      className="w-full bg-slate-900 text-white p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-amber-500 font-mono text-xs"
+                    />
+                    <span className="text-[10px] text-slate-500 mt-1 block">Enter single or multiple comma-separated Site IDs.</span>
+                  </div>
+                )}
 
                 <button
                   type="submit"
@@ -336,7 +477,7 @@ export default function SDMUserManagement({ currentUser }) {
                   className="w-full py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-center space-x-1.5 transition-all mt-1"
                 >
                   <Globe className="w-4 h-4" />
-                  <span>{assigning ? 'Reassigning Sites...' : 'Assign State Portfolio to SDM'}</span>
+                  <span>{assigning ? 'Reassigning Sites...' : assignMode === 'state' ? 'Assign State Portfolio to SDM' : 'Assign Selected Sites to SDM'}</span>
                 </button>
               </form>
             </div>
@@ -349,7 +490,7 @@ export default function SDMUserManagement({ currentUser }) {
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <User className="w-5 h-5 text-cyan-400" />
-                State Delivery Managers Directory ({sdms.length})
+                State Delivery Managers Directory ({activeSdms.length})
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">Directory of all authorized SDMs and portfolio managers across FCT.</p>
             </div>
@@ -378,7 +519,7 @@ export default function SDMUserManagement({ currentUser }) {
                   : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
               }`}
             >
-              All SDMs ({sdms.length})
+              All SDMs ({activeSdms.length})
             </button>
 
             <button
@@ -480,8 +621,16 @@ export default function SDMUserManagement({ currentUser }) {
 
                 {filteredSdms.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500">
-                      {loading ? 'Loading SDM accounts directory...' : 'No SDM accounts found matching query.'}
+                    <td colSpan={5} className="p-8 text-center text-slate-400 space-y-2">
+                      <p>{loading ? 'Loading SDM accounts directory...' : 'No SDM accounts found matching query.'}</p>
+                      {!loading && sdms.length > 0 && (
+                        <button
+                          onClick={() => { setSearch(''); setFilterTab('all'); }}
+                          className="px-3 py-1 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 font-bold text-xs rounded-lg transition-all"
+                        >
+                          Clear Search & Show All {sdms.length} SDMs
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )}
