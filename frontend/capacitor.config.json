@@ -1,0 +1,11 @@
+{
+  "appId": "com.fct.sdm.app",
+  "appName": "FCT SDM Mobile",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}
+
+
