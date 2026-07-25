@@ -1,0 +1,8 @@
+Django>=4.2.0
+djangorestframework>=3.14.0
+rest_framework_simplejwt>=5.3.0
+django-cors-headers>=4.3.0
+openpyxl>=3.1.0
+pyxlsb>=1.0.10
+pandas>=2.0.0
+gunicorn>=21.2.0
