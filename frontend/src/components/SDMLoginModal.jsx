@@ -11,7 +11,7 @@ export default function SDMLoginModal({ onLoginSuccess }) {
   );
 
   const defaultIp = isMobileNative 
-    ? '192.168.1.2' 
+    ? '192.168.1.120' 
     : (typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost');
 
   const [username, setUsername] = useState('');
@@ -179,7 +179,7 @@ export default function SDMLoginModal({ onLoginSuccess }) {
                 <div className="flex items-center space-x-2 pt-1">
                   <input
                     type="text"
-                    placeholder="e.g. 192.168.1.2 or 10.0.2.2"
+                    placeholder="e.g. 192.168.1.120 or 10.0.2.2"
                     value={serverIp}
                     onChange={(e) => {
                       setServerIp(e.target.value);

@@ -134,7 +134,7 @@ export default function App() {
   if (isMobileNative) {
     return (
       <div className="min-h-screen font-sans w-full overflow-x-hidden p-2 sm:p-4">
-        <MobileAppView currentUser={currentUser} onLogout={handleLogout} onSelectSite={handleSelectSite} />
+        <MobileAppView currentUser={currentUser} onLogout={handleLogout} onSelectSite={handleSelectSite} currentTheme={theme} onThemeChange={setTheme} />
       </div>
     );
   }
@@ -221,10 +221,10 @@ export default function App() {
         )}
 
         {activeTab === 'mobile' && (
-          <MobileAppView currentUser={currentUser} onSelectSite={handleSelectSite} />
+          <MobileAppView currentUser={currentUser} onSelectSite={handleSelectSite} currentTheme={theme} onThemeChange={setTheme} />
         )}
 
-        {activeTab === 'admin' && currentUser && (
+        {activeTab === 'admin' && currentUser && currentUser.is_superuser && (
           <SDMUserManagement currentUser={currentUser} />
         )}
 
