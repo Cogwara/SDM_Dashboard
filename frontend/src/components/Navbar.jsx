@@ -69,7 +69,7 @@ export default function Navbar({
     { id: 'mobile', label: `📱 Field Mobile App ${pendingCount > 0 ? `(${pendingCount})` : ''}`, icon: Smartphone },
   ];
 
-  if (currentUser) {
+  if (currentUser && currentUser.is_superuser) {
     baseNavItems.push({ id: 'admin', label: 'SDM Directory & Admin', icon: ShieldCheck });
   }
 

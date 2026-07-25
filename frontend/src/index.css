@@ -45,6 +45,20 @@
   --input-bg: #ffffff;
 }
 
+/* 4. Tactical Emerald Theme */
+[data-theme="emerald"] {
+  --bg-color: #022c22;
+  --text-main: #ecfdf5;
+  --text-muted: #6ee7b7;
+  --panel-bg: rgba(6, 78, 59, 0.85);
+  --card-bg: rgba(4, 120, 87, 0.3);
+  --card-hover-border: rgba(16, 185, 129, 0.6);
+  --border-color: rgba(5, 150, 105, 0.4);
+  --accent-glow: rgba(16, 185, 129, 0.2);
+  --table-head-bg: rgba(6, 78, 59, 0.95);
+  --input-bg: rgba(6, 78, 59, 0.9);
+}
+
 body {
   background-color: var(--bg-color);
   color: var(--text-main);

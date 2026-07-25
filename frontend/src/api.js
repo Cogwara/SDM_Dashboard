@@ -24,26 +24,26 @@ const getBaseUrl = () => {
     const currentPort = window.location.port;
 
     // In web browser, clear stale default mobile IP fallback if stored
-    if (!nativeApp && savedIp && (savedIp.trim() === '192.168.1.2' || savedIp.trim() === 'localhost' || savedIp.trim() === '127.0.0.1' || savedIp.trim() === currentHost)) {
+    if (!nativeApp && savedIp && (savedIp.trim() === '192.168.1.120' || savedIp.trim() === 'localhost' || savedIp.trim() === '127.0.0.1' || savedIp.trim() === currentHost)) {
       localStorage.removeItem('fct_sdm_server_ip');
     } else if (savedIp && savedIp.trim()) {
       let host = cleanHost(savedIp);
       if (!host.includes(':')) {
-        host = `${host}:8000`;
+        host = `${host}:8001`;
       }
       return `http://${host}/api/v1`;
     }
 
-    // If running inside Capacitor APK on mobile device, default to 192.168.1.2:8000
+    // If running inside Capacitor APK on mobile device, default to 192.168.1.120:8001
     if (nativeApp) {
-      const mobileHost = (savedIp && savedIp.trim()) ? cleanHost(savedIp) : '192.168.1.2';
-      const formattedHost = mobileHost.includes(':') ? mobileHost : `${mobileHost}:8000`;
+      const mobileHost = (savedIp && savedIp.trim()) ? cleanHost(savedIp) : '192.168.1.120';
+      const formattedHost = mobileHost.includes(':') ? mobileHost : `${mobileHost}:8001`;
       return `http://${formattedHost}/api/v1`;
     }
 
     // Vite dev server runs on 5173, backend Django runs on 8000
     if (currentPort === '5173') {
-      return `http://${currentHost}:8000/api/v1`;
+      return `http://${currentHost}:8001/api/v1`;
     }
 
     // Nginx / Docker container (port 80 or 443) proxies /api/
@@ -51,10 +51,10 @@ const getBaseUrl = () => {
       return `/api/v1`;
     }
 
-    return `http://${currentHost}:8000/api/v1`;
+    return `http://${currentHost}:8001/api/v1`;
   }
 
-  return `http://localhost:8000/api/v1`;
+  return `http://localhost:8001/api/v1`;
 };
 
 export const API_BASE_URL = getBaseUrl();
@@ -74,7 +74,7 @@ export const setCustomServerIp = (ip) => {
 
   if (ip && ip.trim()) {
     const trimmed = ip.trim();
-    if (!nativeApp && (trimmed === '192.168.1.2' || trimmed === 'localhost' || trimmed === '127.0.0.1' || trimmed === currentHost)) {
+    if (!nativeApp && (trimmed === '192.168.1.120' || trimmed === 'localhost' || trimmed === '127.0.0.1' || trimmed === currentHost)) {
       localStorage.removeItem('fct_sdm_server_ip');
     } else {
       localStorage.setItem('fct_sdm_server_ip', trimmed);
@@ -168,6 +168,11 @@ export const resolveNote = async (noteId, payload = {}) => {
   return res.data;
 };
 
+export const deleteNote = async (noteId, params = {}) => {
+  const res = await api.delete(`/notes/${noteId}/`, { params });
+  return res.data;
+};
+
 export const uploadNotePhotos = async (noteId, formData) => {
   const res = await api.post(`/notes/${noteId}/upload_photo/`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -227,9 +232,10 @@ export const markAllNotificationsRead = async (params = {}) => {
 // Health Check & WhatsApp Direct Creation
 export const checkServerHealth = async () => {
   try {
-    const res = await api.get('/dashboard/stats/', { timeout: 3000 });
+    const res = await api.get('/dashboard/stats/', { timeout: 8000 });
     return res.status === 200;
-  } catch {
+  } catch (err) {
+    console.warn('Server health check error:', err);
     return false;
   }
 };

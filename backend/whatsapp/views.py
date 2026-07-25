@@ -17,6 +17,24 @@ class WhatsAppMessageViewSet(viewsets.ModelViewSet):
     serializer_class = WhatsAppMessageSerializer
     pagination_class = FlexiblePagination
 
+    def perform_create(self, serializer):
+        site_input = self.request.data.get('site_id_str') or self.request.data.get('site_id_input') or self.request.data.get('site')
+        site_obj = None
+        if site_input:
+            from sites.models import Site
+            val = str(site_input).strip()
+            clean_val = val.replace(' ', '').replace('-', '').replace('_', '')
+            site_obj = Site.objects.filter(
+                Q(ihs_site_id__iexact=val) | 
+                Q(mtn_id__iexact=val) | 
+                Q(ihs_site_id__iexact=clean_val) | 
+                Q(ihs_site_id__icontains=clean_val)
+            ).first()
+        if site_obj:
+            serializer.save(site=site_obj, site_id_str=site_obj.ihs_site_id)
+        else:
+            serializer.save(site_id_str=str(site_input or '').strip().upper())
+
     def get_queryset(self):
         qs = WhatsAppMessage.objects.all()
         
