@@ -236,11 +236,15 @@ export default function Navbar({
                     <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1">
                       <div className="flex items-center justify-between text-slate-300">
                         <span>Assigned Sites:</span>
-                        <b className="text-cyan-300 font-mono">{currentUser.assigned_sites_count || 150}</b>
+                        <b className="text-cyan-300 font-mono">
+                          {currentUser.is_superuser 
+                            ? 'All Sites (1,044)' 
+                            : (currentUser.assigned_sites_count || 'Portfolio Sites')}
+                        </b>
                       </div>
                       <div className="flex items-center justify-between text-slate-300">
                         <span>Scope:</span>
-                        <b className="text-slate-200">Abuja FCT</b>
+                        <b className="text-slate-200">{stateInfo.regionText}</b>
                       </div>
                     </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Search, Filter, Clock, Tag, AlertTriangle, CheckCircle, User, Radio, Lock, Edit3, Download, CheckCircle2, Camera, Upload, X, Maximize2, Calendar } from 'lucide-react';
-import { fetchNotes, createNote, updateNote, resolveNote, exportNotesExcel } from '../api';
+import { FileText, Plus, Search, Filter, Clock, Tag, AlertTriangle, CheckCircle, User, Radio, Lock, Edit3, Download, CheckCircle2, Camera, Upload, X, Maximize2, Calendar, Trash2 } from 'lucide-react';
+import { fetchNotes, createNote, updateNote, resolveNote, deleteNote, exportNotesExcel } from '../api';
 
 export default function NotesCenter({ onSelectSite, currentUser }) {
   const isSuperuser = currentUser?.is_superuser;
@@ -153,6 +153,20 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
       loadNotes();
     } catch (err) {
       alert('Error resolving note: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDeleteNote = async (note) => {
+    if (!window.confirm(`Are you sure you want to delete note "${note.title}" for site ${note.site_ihs_id}?`)) return;
+    try {
+      await deleteNote(note.id, {
+        user: userSdmName,
+        sdm: userSdmName,
+        is_superuser: isSuperuser
+      });
+      loadNotes();
+    } catch (err) {
+      alert('Error deleting note: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -447,18 +461,28 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
                       </button>
                     )}
 
-                    {/* Edit Note Action Button for Creator */}
+                    {/* Edit & Delete Note Action Buttons */}
                     {canEdit ? (
-                      <button
-                        onClick={() => handleOpenEditModal(note)}
-                        className="px-2.5 py-1 bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 font-semibold text-xs rounded-lg border border-slate-700 hover:border-cyan-500/40 transition-all flex items-center gap-1.5"
-                        title="Update your SDM Operational Note"
-                      >
-                        <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>Edit / Update</span>
-                      </button>
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          onClick={() => handleOpenEditModal(note)}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 font-semibold text-xs rounded-lg border border-slate-700 hover:border-cyan-500/40 transition-all flex items-center gap-1.5"
+                          title="Update your SDM Operational Note"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteNote(note)}
+                          className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs rounded-lg border border-rose-500/30 transition-all flex items-center gap-1.5"
+                          title={isSuperuser ? "Delete Note (Superuser)" : "Delete your note"}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
                     ) : (
-                      <span className="px-2 py-1 bg-slate-900/60 text-slate-500 text-[11px] rounded-lg border border-slate-800 flex items-center gap-1 cursor-not-allowed" title={`Only creator (${note.created_by}) can update this note`}>
+                      <span className="px-2 py-1 bg-slate-900/60 text-slate-500 text-[11px] rounded-lg border border-slate-800 flex items-center gap-1 cursor-not-allowed" title={`Only creator (${note.created_by}) can edit or delete this note`}>
                         <Lock className="w-3 h-3 text-slate-600" /> Read Only
                       </span>
                     )}

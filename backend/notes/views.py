@@ -22,6 +22,30 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
     parser_classes = (JSONParser, MultiPartParser, FormParser)
     pagination_class = FlexiblePagination
 
+    def destroy(self, request, *args, **kwargs):
+        note = self.get_object()
+        user_param = (request.query_params.get('user') or request.query_params.get('sdm') or request.data.get('user') or '').strip().lower()
+        is_superuser = request.query_params.get('is_superuser') == 'true' or request.data.get('is_superuser') is True
+
+        created_by = (note.created_by or '').strip().lower()
+        sdm_name = (note.site.sdm_name or '').strip().lower() if note.site else ''
+
+        if is_superuser or not user_param or user_param == created_by or user_param == sdm_name or user_param in created_by or created_by in user_param:
+            if note.site:
+                SiteTimeline.objects.create(
+                    site=note.site,
+                    event=f"SDM Note Deleted: {note.title}",
+                    details=f"Category: {note.category} | Priority: {note.priority} | Deleted by {user_param or 'Admin'}",
+                    author=user_param or 'Admin'
+                )
+            self.perform_destroy(note)
+            return Response({'message': 'Note deleted successfully.'}, status=status.HTTP_200_OK)
+        else:
+            return Response(
+                {'error': 'Permission denied: SDMs can only delete their own operational notes.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
     @action(detail=False, methods=['get'])
     def export_excel(self, request):
         import openpyxl
@@ -309,38 +333,54 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
 
     def _save_uploaded_photos(self, request, site, note):
         files = []
-        for key in ['photos', 'attachments', 'file', 'photo']:
+        for key in ['photos', 'attachments', 'file', 'photo', 'uploaded_photos', 'uploaded_photo']:
             files.extend(request.FILES.getlist(key))
             if key in request.FILES and request.FILES[key] not in files:
                 files.append(request.FILES[key])
 
         for f in files:
             content_type = getattr(f, 'content_type', '') or ''
-            file_type = 'Photo' if content_type.startswith('image/') else 'Document'
+            raw_name = (f.name or 'field_photo.jpg').split('/')[-1].split('\\')[-1]
+            if '.' not in raw_name:
+                raw_name = f"{raw_name}.jpg"
+            f.name = raw_name
+
+            file_type = 'Photo' if content_type.startswith('image/') or raw_name.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')) else 'Document'
             SiteAttachment.objects.create(
                 site=site,
                 note=note,
                 file=f,
-                file_name=f.name,
+                file_name=raw_name,
                 file_type=file_type,
                 uploaded_by=note.created_by
             )
 
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
-        site_id_input = data.get('site_id_input') or data.get('site')
+        site_id_input = data.get('site_id_input') or data.get('site_id_str') or data.get('site_id') or data.get('site')
         site = None
         if site_id_input:
-            if isinstance(site_id_input, int):
-                site = Site.objects.filter(pk=site_id_input).first()
-            else:
-                site = Site.objects.filter(Q(ihs_site_id__iexact=str(site_id_input).strip()) | Q(pk=site_id_input if str(site_id_input).isdigit() else -1)).first()
+            val = str(site_id_input).strip()
+            clean_val = val.replace(' ', '').replace('-', '').replace('_', '')
+            site = Site.objects.filter(
+                Q(ihs_site_id__iexact=val) | 
+                Q(mtn_id__iexact=val) | 
+                Q(ihs_site_id__iexact=clean_val) | 
+                Q(ihs_site_id__icontains=clean_val) | 
+                Q(pk=val if val.isdigit() else -1)
+            ).first()
 
-        if not site and 'site' in data:
+            if not site:
+                import re
+                digits = re.sub(r'\D', '', val)
+                if digits:
+                    site = Site.objects.filter(ihs_site_id__icontains=digits).first()
+
+        if not site and 'site' in data and data['site']:
             site = Site.objects.filter(pk=data['site']).first()
 
         if not site:
-            return Response({'error': f'Site "{site_id_input}" not found.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': f'Site "{site_id_input}" not found in database. Please verify Site ID.'}, status=status.HTTP_400_BAD_REQUEST)
 
         data['site'] = site.id
 

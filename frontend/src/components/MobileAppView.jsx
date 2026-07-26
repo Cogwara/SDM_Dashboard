@@ -2,23 +2,194 @@ import React, { useState, useEffect } from 'react';
 import { 
   Smartphone, Wifi, WifiOff, RefreshCw, FileText, MessageSquare, 
   CheckCircle2, AlertTriangle, Layers, Clock, UploadCloud, Trash2, Camera, ShieldCheck,
-  Server, User, LogOut, Lock, Settings
+  Server, User, LogOut, Lock, Settings, Bot, Search, Send, Sparkles, Filter, ChevronRight, Zap, Shield, MapPin, Radio, Phone, UserCheck, X, Maximize2, BarChart3, Edit3, Palette, Sun, Moon
 } from 'lucide-react';
 import { 
   getPendingNotes, getPendingWhatsApp, saveOfflineNote, saveOfflineWhatsApp, 
   removePendingNote, removePendingWhatsApp, clearPendingQueue, getPendingTotalCount,
-  getCachedSites, saveCachedSites, getLastSyncTime 
+  getCachedSites, saveCachedSites, clearCachedSites, getLastSyncTime 
 } from '../mobileOfflineStorage';
-import { checkServerHealth, createNote, createWhatsAppMessage, fetchSites, setCustomServerIp } from '../api';
+import { 
+  checkServerHealth, createNote, createWhatsAppMessage, fetchSites, setCustomServerIp,
+  fetchNotes, resolveNote, deleteNote, fetchWhatsAppMessages, queryAIAssistant,
+  fetchDashboardStats, lookupSite
+} from '../api';
+import { getSDMStateInfo } from '../utils/userUtils';
 
-export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
-  const [activeSubTab, setActiveSubTab] = useState('note'); // 'note', 'whatsapp', 'queue', 'cache'
+const fileToBase64 = (file) => {
+  return new Promise((resolve) => {
+    if (!file || typeof file === 'string') return resolve(file);
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+};
+
+const base64ToFile = (dataurl, filename = 'photo.jpg') => {
+  if (!dataurl || typeof dataurl !== 'string' || !dataurl.startsWith('data:')) {
+    return null;
+  }
+  try {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], filename, { type: mime });
+  } catch (e) {
+    console.error('Failed to convert base64 to file:', e);
+    return null;
+  }
+};
+
+const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
+  return new Promise((resolve) => {
+    if (!fileObj || typeof fileObj === 'string') return resolve(fileObj);
+
+    let gpsText = 'GPS: FCT Location Data';
+    const getLocationPromise = new Promise((resLoc) => {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const lat = pos.coords.latitude.toFixed(5);
+            const lon = pos.coords.longitude.toFixed(5);
+            resLoc(`GPS: Lat ${lat}°, Lon ${lon}°`);
+          },
+          () => resLoc('GPS: FCT Location'),
+          { timeout: 3000 }
+        );
+      } else {
+        resLoc('GPS: FCT Location');
+      }
+    });
+
+    const reader = new FileReader();
+    reader.onerror = () => resolve(fileObj);
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => {
+        console.warn('Image load error during watermarking, preserving original file');
+        resolve(fileObj);
+      };
+      img.onload = async () => {
+        try {
+          const gpsResult = await getLocationPromise;
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+
+          ctx.drawImage(img, 0, 0);
+
+          const now = new Date();
+          const dateStr = now.toISOString().slice(0, 10) + ' ' + now.toLocaleTimeString();
+          const siteStr = siteId ? `SITE ID: ${siteId.toUpperCase()}` : 'SITE ID: N/A';
+          const authorStr = userSdmName ? `ENGINEER: ${userSdmName}` : 'ENGINEER: SDM FIELD';
+          const locationStr = gpsResult ? gpsResult.replace('GPS: ', 'LOCATION: ') : 'LOCATION: FCT';
+
+          const lines = [
+            siteStr,
+            `DATE/TIME: ${dateStr}`,
+            locationStr,
+            authorStr
+          ];
+
+          // Compact font size (reduced as requested)
+          const fontSize = Math.max(12, Math.floor(img.height * 0.022));
+          const lineSpacing = fontSize * 1.35;
+          const bannerPadding = 12;
+          const bannerHeight = Math.floor(lines.length * lineSpacing + bannerPadding * 2);
+
+          // Semi-transparent dark background overlay at bottom
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+          ctx.fillRect(0, img.height - bannerHeight, img.width, bannerHeight);
+
+          // Top thin red accent border line
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(0, img.height - bannerHeight, img.width, Math.max(2, Math.floor(fontSize * 0.15)));
+
+          // Set font & bright red text color
+          ctx.font = `bold ${fontSize}px monospace, sans-serif`;
+          ctx.fillStyle = '#ef4444'; // Red text color
+
+          // Render each item on its own new line (no icons)
+          lines.forEach((lineText, index) => {
+            const y = img.height - bannerHeight + bannerPadding + (index + 1) * lineSpacing - 4;
+            ctx.fillText(lineText, 16, y);
+          });
+
+          // Sanitize filename
+          const rawName = (fileObj.name || 'photo.jpg').split('/').pop().split('\\').pop();
+          const cleanName = rawName.includes('.') ? rawName : `${rawName}.jpg`;
+
+          canvas.toBlob((blob) => {
+            if (!blob) return resolve(fileObj);
+            const watermarkedFile = new File([blob], `wm_${cleanName}`, { type: 'image/jpeg' });
+            resolve(watermarkedFile);
+          }, 'image/jpeg', 0.92);
+        } catch (err) {
+          console.error('Canvas watermark processing error:', err);
+          resolve(fileObj);
+        }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(fileObj);
+  });
+};
+
+export default function MobileAppView({ currentUser, onLogout, onSelectSite, currentTheme = 'sky', onThemeChange }) {
+  const [activeSubTab, setActiveSubTab] = useState('overview'); // 'overview', 'note', 'whatsapp', 'ai', 'sites', 'queue'
   const [isOnline, setIsOnline] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingNotes, setPendingNotes] = useState(getPendingNotes());
   const [pendingWa, setPendingWa] = useState(getPendingWhatsApp());
   const [cachedSites, setCachedSites] = useState(getCachedSites());
   const [syncStatusMsg, setSyncStatusMsg] = useState(null);
+
+  // Mobile Theme State
+  const [theme, setTheme] = useState(() => localStorage.getItem('fct_sdm_theme') || currentTheme || 'sky');
+  const [showThemeModal, setShowThemeModal] = useState(false);
+
+  const mobileThemes = [
+    { id: 'sky', label: 'Skyblueish Glass (Default)', icon: Sparkles, color: 'text-cyan-400' },
+    { id: 'dark', label: 'Obsidian Midnight Dark', icon: Moon, color: 'text-indigo-400' },
+    { id: 'emerald', label: 'Tactical Emerald Field', icon: Shield, color: 'text-emerald-400' },
+    { id: 'light', label: 'Daylight Executive Light', icon: Sun, color: 'text-amber-400' },
+  ];
+
+  const handleApplyTheme = (newTheme) => {
+    setTheme(newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('fct_sdm_theme', newTheme);
+    if (onThemeChange) onThemeChange(newTheme);
+    setShowThemeModal(false);
+  };
+
+  // Live Server Data States
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [liveNotes, setLiveNotes] = useState([]);
+  const [liveWa, setLiveWa] = useState([]);
+  const [loadingData, setLoadingData] = useState(false);
+
+  // Filters & Search
+  const [siteSearch, setSiteSearch] = useState('');
+  const [noteCategoryFilter, setNoteCategoryFilter] = useState('All');
+  const [notePriorityFilter, setNotePriorityFilter] = useState('All');
+  const [waIssueFilter, setWaIssueFilter] = useState('All');
+  const [selectedSiteDetail, setSelectedSiteDetail] = useState(null);
+  const [lightboxImg, setLightboxImg] = useState(null);
+
+  // AI Assistant Mobile State
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiMessages, setAiMessages] = useState([
+    { sender: 'ai', text: '👋 Hello! I am your FCT SDM Mobile Field Assistant. Ask me about site outage diagnostics, generator faults, fuel calculations, or operational guidelines.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+  ]);
+  const [aiLoading, setAiLoading] = useState(false);
 
   const isMobileNative = typeof window !== 'undefined' && Boolean(
     (window.Capacitor?.isNativePlatform?.() && window.Capacitor?.getPlatform?.() !== 'web') ||
@@ -27,14 +198,14 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
     window.location.protocol === 'file:'
   );
   const defaultIp = isMobileNative 
-    ? '192.168.1.2' 
+    ? '192.168.1.120' 
     : (typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost');
 
   // Server IP Config state
   const [serverIp, setServerIp] = useState(() => localStorage.getItem('fct_sdm_server_ip') || defaultIp);
   const [showServerConfig, setShowServerConfig] = useState(false);
 
-  // Incident Occurrence Timestamp State
+  // Form states for New Offline Note
   const toLocalISOString = (d) => {
     if (!d) return '';
     const dateObj = new Date(d);
@@ -43,7 +214,6 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
     return new Date(dateObj.getTime() - tzOffset).toISOString().slice(0, 16);
   };
 
-  // Form states for New Offline Note
   const [noteSiteId, setNoteSiteId] = useState('');
   const [noteTitle, setNoteTitle] = useState('');
   const [noteIncidentTime, setNoteIncidentTime] = useState(() => toLocalISOString(new Date()));
@@ -58,31 +228,46 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
   const [waSender, setWaSender] = useState(currentUser?.full_name || 'Field SDM Engineer');
   const [waMessage, setWaMessage] = useState('');
 
-  // Check network & server connection periodically
-  const checkConnection = async () => {
+  // Fetch Live Server Feeds & Stats
+  const loadLiveServerFeeds = async () => {
     const reachable = await checkServerHealth();
     setIsOnline(reachable);
 
-    // If server is reachable, auto refresh cached sites
-    if (reachable) {
+    if (reachable && currentUser) {
+      setLoadingData(true);
       try {
-        const sitesData = await fetchSites({ page_size: 1000 });
-        const sitesList = Array.isArray(sitesData) ? sitesData : sitesData.results || [];
-        if (sitesList.length > 0) {
-          saveCachedSites(sitesList);
-          setCachedSites(sitesList);
+        const sdmParam = !currentUser.is_superuser ? (currentUser.full_name || currentUser.username) : undefined;
+        const [statsRes, notesRes, waRes, sitesRes] = await Promise.allSettled([
+          fetchDashboardStats({ sdm: sdmParam }),
+          fetchNotes({ sdm: sdmParam, page_size: 25 }),
+          fetchWhatsAppMessages({ sdm: sdmParam, page_size: 25 }),
+          fetchSites({ sdm: sdmParam, page_size: 25000 })
+        ]);
+
+        if (statsRes.status === 'fulfilled') setDashboardStats(statsRes.value);
+        if (notesRes.status === 'fulfilled') setLiveNotes(notesRes.value.results || notesRes.value || []);
+        if (waRes.status === 'fulfilled') setLiveWa(waRes.value.results || waRes.value || []);
+        if (sitesRes.status === 'fulfilled') {
+          const list = Array.isArray(sitesRes.value) ? sitesRes.value : sitesRes.value.results || [];
+          saveCachedSites(list);
+          setCachedSites(list);
         }
       } catch (e) {
-        console.error('Failed to update offline site cache:', e);
+        console.error('Failed to load mobile live data:', e);
+      } finally {
+        setLoadingData(false);
       }
+    } else if (!currentUser) {
+      clearCachedSites();
+      setCachedSites([]);
     }
   };
 
   useEffect(() => {
-    checkConnection();
-    const interval = setInterval(checkConnection, 10000); // Poll every 10 seconds
+    loadLiveServerFeeds();
+    const interval = setInterval(loadLiveServerFeeds, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentUser]);
 
   const refreshPendingQueues = () => {
     setPendingNotes(getPendingNotes());
@@ -93,7 +278,15 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
   const handleSyncNow = async () => {
     const reachable = await checkServerHealth();
     if (!reachable) {
-      setSyncStatusMsg({ type: 'error', text: '🔴 Cannot sync: Server network unreachable. Please connect to the server network.' });
+      setSyncStatusMsg({ type: 'error', text: '🔴 Cannot sync: Server network unreachable. Please check PC & phone Wi-Fi connection.' });
+      return;
+    }
+
+    const currentNotes = getPendingNotes();
+    const currentWa = getPendingWhatsApp();
+
+    if (currentNotes.length === 0 && currentWa.length === 0) {
+      setSyncStatusMsg({ type: 'info', text: 'ℹ️ Offline queue is empty. 0 pending items waiting to sync.' });
       return;
     }
 
@@ -102,23 +295,38 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
 
     let syncedNotesCount = 0;
     let syncedWaCount = 0;
+    let failedNotesCount = 0;
+    let failedWaCount = 0;
+    let errorDetails = [];
 
     // 1. Sync Pending Notes
-    const currentNotes = getPendingNotes();
     for (const note of currentNotes) {
       try {
         const formData = new FormData();
-        formData.append('site_id_str', note.site_id_str);
-        formData.append('title', note.title);
-        formData.append('category', note.category);
-        formData.append('priority', note.priority);
-        formData.append('description', note.description);
+        const siteStr = (note.site_id_str || note.site_id_input || note.site || '').toString().trim();
+        formData.append('site_id_input', siteStr);
+        formData.append('site_id_str', siteStr);
+        formData.append('title', note.title || 'SDM Note');
+        formData.append('category', note.category || 'General');
+        formData.append('priority', note.priority || 'Medium');
+        formData.append('description', note.description || '');
         formData.append('created_by', note.created_by || currentUser?.full_name || 'Mobile SDM');
+        if (note.created_at) {
+          formData.append('created_at', note.created_at);
+        }
 
-        // Attach photos if present
-        if (note.photos && note.photos.length > 0) {
-          note.photos.forEach((file) => {
-            formData.append('uploaded_photos', file);
+        if (note.photos && Array.isArray(note.photos)) {
+          note.photos.forEach((photoItem, idx) => {
+            if (photoItem && typeof photoItem === 'string' && photoItem.startsWith('data:')) {
+              const fileObj = base64ToFile(photoItem, `offline_photo_${idx + 1}.jpg`);
+              if (fileObj) {
+                formData.append('photos', fileObj);
+                formData.append('uploaded_photos', fileObj);
+              }
+            } else if (photoItem && photoItem instanceof File) {
+              formData.append('photos', photoItem);
+              formData.append('uploaded_photos', photoItem);
+            }
           });
         }
 
@@ -126,22 +334,29 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
         removePendingNote(note.local_id);
         syncedNotesCount++;
       } catch (e) {
+        failedNotesCount++;
+        const errMsg = e.response?.data?.error || e.message || 'Server error';
+        errorDetails.push(`Note for ${note.site_id_str || 'Site'}: ${errMsg}`);
         console.error('Failed to sync note:', note, e);
       }
     }
 
     // 2. Sync Pending WhatsApp Messages
-    const currentWa = getPendingWhatsApp();
     for (const wa of currentWa) {
       try {
+        const siteStr = (wa.site_id_str || wa.site_id_input || '').toString().trim();
         await createWhatsAppMessage({
-          site_id_str: wa.site_id_str,
+          site_id_str: siteStr,
+          site_id_input: siteStr,
           sender_name: wa.sender_name || currentUser?.full_name || 'Mobile Engineer',
           message_text: wa.message_text
         });
         removePendingWhatsApp(wa.local_id);
         syncedWaCount++;
       } catch (e) {
+        failedWaCount++;
+        const errMsg = e.response?.data?.error || e.message || 'Server error';
+        errorDetails.push(`WhatsApp for ${wa.site_id_str || 'Site'}: ${errMsg}`);
         console.error('Failed to sync WhatsApp message:', wa, e);
       }
     }
@@ -149,21 +364,46 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
     refreshPendingQueues();
     setIsSyncing(false);
     localStorage.setItem('sdm_last_sync_time', new Date().toLocaleTimeString());
+    loadLiveServerFeeds();
 
-    setSyncStatusMsg({
-      type: 'success',
-      text: `✅ Network Sync Complete! Successfully uploaded ${syncedNotesCount} SDM note(s) and ${syncedWaCount} WhatsApp intel update(s) to server.`
-    });
+    const totalFailed = failedNotesCount + failedWaCount;
+    if (totalFailed === 0) {
+      setSyncStatusMsg({
+        type: 'success',
+        text: `✅ Network Sync Complete! Successfully uploaded ${syncedNotesCount} SDM note(s) and ${syncedWaCount} WhatsApp intel update(s) to server.`
+      });
+      alert(`✅ Network Sync Complete!\nUploaded ${syncedNotesCount} note(s) & ${syncedWaCount} WhatsApp intel update(s) to server.`);
+    } else {
+      const firstErr = errorDetails[0] || 'Check site ID or server status';
+      setSyncStatusMsg({
+        type: 'warning',
+        text: `⚠️ Sync finished: Uploaded ${syncedNotesCount} note(s) & ${syncedWaCount} intel update(s). ${totalFailed} item(s) failed (${firstErr}).`
+      });
+      alert(`⚠️ Sync Completed with Issues:\nUploaded: ${syncedNotesCount} note(s) & ${syncedWaCount} intel update(s).\n\nFailed items (${totalFailed}):\n- ${errorDetails.join('\n- ')}`);
+    }
   };
 
-  // Handle Photo Picker
-  const handlePhotoChange = (e) => {
+  // Handle Photo Picker with Automatic Location, Site ID & Timestamp Watermarking
+  const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
+
+  const handlePhotoChange = async (e) => {
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
 
-    setNotePhotos(prev => [...prev, ...files]);
-    const previews = files.map(file => URL.createObjectURL(file));
-    setNotePhotoPreviews(prev => [...prev, ...previews]);
+    setIsProcessingPhotos(true);
+    try {
+      const watermarkedFiles = await Promise.all(
+        files.map(file => watermarkPhoto(file, noteSiteId, currentUser?.full_name || currentUser?.username))
+      );
+
+      setNotePhotos(prev => [...prev, ...watermarkedFiles]);
+      const previews = watermarkedFiles.map(file => URL.createObjectURL(file));
+      setNotePhotoPreviews(prev => [...prev, ...previews]);
+    } catch (err) {
+      console.error('Error watermarking photo:', err);
+    } finally {
+      setIsProcessingPhotos(false);
+    }
   };
 
   // Save Server IP from Mobile UI
@@ -172,67 +412,96 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
     if (!serverIp.trim()) return;
     setCustomServerIp(serverIp.trim());
     setShowServerConfig(false);
-    setSyncStatusMsg({ type: 'info', text: `🔄 Server IP updated to http://${serverIp.trim()}:8000. Re-testing server connection...` });
-    checkConnection();
+    setSyncStatusMsg({ type: 'info', text: `🔄 Server IP updated to http://${serverIp.trim()}:8001. Re-testing server connection...` });
+    loadLiveServerFeeds();
   };
 
-  // Save New Note (Online or Offline)
+  // Save New Note
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
   const handleSaveNote = async (e) => {
     e.preventDefault();
-    if (!currentUser) {
-      setSyncStatusMsg({ type: 'error', text: '🔒 Login Required: You must log in to your SDM account before creating notes.' });
+    if (!noteSiteId || !noteSiteId.trim()) {
+      alert('⚠️ Please enter a Target Site ID (e.g. FC2700).');
       return;
     }
-    if (!noteSiteId || !noteTitle || !noteDescription) return;
-
-    const notePayload = {
-      site_id_str: noteSiteId.toUpperCase(),
-      title: noteTitle,
-      category: noteCategory,
-      priority: notePriority,
-      description: noteDescription,
-      created_by: currentUser?.full_name || currentUser?.username || 'Field SDM',
-      created_at: noteIncidentTime ? new Date(noteIncidentTime).toISOString() : new Date().toISOString(),
-      photos: notePhotos
-    };
-
-    if (isOnline) {
-      try {
-        const formData = new FormData();
-        formData.append('site_id_str', notePayload.site_id_str);
-        formData.append('title', notePayload.title);
-        formData.append('category', notePayload.category);
-        formData.append('priority', notePayload.priority);
-        formData.append('description', notePayload.description);
-        formData.append('created_by', notePayload.created_by);
-        if (noteIncidentTime) {
-          formData.append('created_at', noteIncidentTime);
-        }
-        notePhotos.forEach(file => formData.append('uploaded_photos', file));
-
-        await createNote(formData);
-        setSyncStatusMsg({ type: 'success', text: `🟢 Note created & saved directly to server for site ${notePayload.site_id_str}!` });
-      } catch (e) {
-        // Fallback to offline queue if request failed
-        saveOfflineNote(notePayload);
-        refreshPendingQueues();
-        setSyncStatusMsg({ type: 'warning', text: `📦 Saved to Offline Queue! Note will sync automatically when server connection stabilizes.` });
-      }
-    } else {
-      saveOfflineNote(notePayload);
-      refreshPendingQueues();
-      setSyncStatusMsg({ type: 'warning', text: `📦 Offline Mode: Note saved to local device queue! It will sync when connected to server network.` });
+    if (!noteTitle || !noteTitle.trim()) {
+      alert('⚠️ Please enter a Note Title.');
+      return;
+    }
+    if (!noteDescription || !noteDescription.trim()) {
+      alert('⚠️ Please enter a Detailed Operational Description.');
+      return;
     }
 
-    // Reset Form
-    setNoteSiteId('');
-    setNoteTitle('');
-    setNoteDescription('');
-    setNotePhotos([]);
-    setNotePhotoPreviews([]);
+    const activeUser = currentUser || { full_name: 'Field SDM Engineer', username: 'field_sdm' };
+    setIsSavingNote(true);
+
+    try {
+      const base64Photos = await Promise.all((notePhotos || []).map(f => fileToBase64(f)));
+      const cleanPhotos = base64Photos.filter(Boolean);
+
+      const notePayload = {
+        site_id_str: noteSiteId.trim().toUpperCase(),
+        site_id_input: noteSiteId.trim().toUpperCase(),
+        title: noteTitle.trim(),
+        category: noteCategory,
+        priority: notePriority,
+        description: noteDescription.trim(),
+        created_by: activeUser.full_name || activeUser.username || 'Field SDM',
+        created_at: noteIncidentTime ? new Date(noteIncidentTime).toISOString() : new Date().toISOString(),
+        photos: cleanPhotos
+      };
+
+      if (isOnline) {
+        try {
+          const formData = new FormData();
+          formData.append('site_id_input', notePayload.site_id_str);
+          formData.append('site_id_str', notePayload.site_id_str);
+          formData.append('title', notePayload.title);
+          formData.append('category', notePayload.category);
+          formData.append('priority', notePayload.priority);
+          formData.append('description', notePayload.description);
+          formData.append('created_by', notePayload.created_by);
+          if (noteIncidentTime) {
+            formData.append('created_at', noteIncidentTime);
+          }
+          notePhotos.forEach(file => {
+            formData.append('photos', file);
+            formData.append('uploaded_photos', file);
+          });
+
+          await createNote(formData);
+          setSyncStatusMsg({ type: 'success', text: `🟢 Note created & saved directly to server for site ${notePayload.site_id_str}!` });
+          alert(`✅ Success! Note for site ${notePayload.site_id_str} saved to server.`);
+          loadLiveServerFeeds();
+        } catch (e) {
+          saveOfflineNote(notePayload);
+          refreshPendingQueues();
+          const serverErr = e.response?.data?.error || e.message || 'Server network error';
+          setSyncStatusMsg({ type: 'warning', text: `📦 Note saved to Offline Queue (${serverErr}). It will auto-sync when server connects.` });
+          alert(`📦 Saved to Offline Queue! Note for site ${notePayload.site_id_str} saved locally for auto-sync.`);
+        }
+      } else {
+        saveOfflineNote(notePayload);
+        refreshPendingQueues();
+        setSyncStatusMsg({ type: 'warning', text: `📦 Offline Mode: Note saved to local device queue for site ${notePayload.site_id_str}!` });
+        alert(`📦 Offline Mode: Note for site ${notePayload.site_id_str} saved to local device queue.`);
+      }
+
+      setNoteSiteId('');
+      setNoteTitle('');
+      setNoteDescription('');
+      setNotePhotos([]);
+      setNotePhotoPreviews([]);
+    } catch (err) {
+      alert('Error saving note: ' + err.message);
+    } finally {
+      setIsSavingNote(false);
+    }
   };
 
-  // Save WhatsApp Intel (Online or Offline)
+  // Save WhatsApp Intel
   const handleSaveWa = async (e) => {
     e.preventDefault();
     if (!currentUser) {
@@ -243,6 +512,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
 
     const waPayload = {
       site_id_str: waSiteId.toUpperCase(),
+      site_id_input: waSiteId.toUpperCase(),
       sender_name: waSender || currentUser?.full_name || currentUser?.username || 'Mobile Engineer',
       message_text: waMessage
     };
@@ -251,6 +521,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
       try {
         await createWhatsAppMessage(waPayload);
         setSyncStatusMsg({ type: 'success', text: `🟢 WhatsApp Intel logged directly to server for site ${waPayload.site_id_str}!` });
+        loadLiveServerFeeds();
       } catch (e) {
         saveOfflineWhatsApp(waPayload);
         refreshPendingQueues();
@@ -266,231 +537,402 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
     setWaMessage('');
   };
 
+  // Quick Resolve Live Note
+  const handleQuickResolveLiveNote = async (note) => {
+    try {
+      await resolveNote(note.id, { updated_by: currentUser?.full_name, sdm: currentUser?.full_name, is_superuser: currentUser?.is_superuser });
+      loadLiveServerFeeds();
+    } catch (e) {
+      alert('Error resolving note: ' + (e.response?.data?.error || e.message));
+    }
+  };
+
+  // Delete Live Note
+  const handleDeleteLiveNote = async (note) => {
+    if (!window.confirm(`Delete note "${note.title}"?`)) return;
+    try {
+      await deleteNote(note.id, { user: currentUser?.full_name, sdm: currentUser?.full_name, is_superuser: currentUser?.is_superuser });
+      loadLiveServerFeeds();
+    } catch (e) {
+      alert('Error deleting note: ' + (e.response?.data?.error || e.message));
+    }
+  };
+
+  // Send Mobile AI Prompt
+  const handleSendAiPrompt = async (presetPrompt) => {
+    const q = presetPrompt || aiQuery;
+    if (!q.trim()) return;
+
+    const userMsg = { sender: 'user', text: q, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    setAiMessages(prev => [...prev, userMsg]);
+    if (!presetPrompt) setAiQuery('');
+    setAiLoading(true);
+
+    try {
+      const res = await queryAIAssistant(q, '', 'chat');
+      const aiMsg = { sender: 'ai', text: res.answer || res.response || 'Analysis complete.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+      setAiMessages(prev => [...prev, aiMsg]);
+    } catch (err) {
+      const errorMsg = { sender: 'ai', text: '⚠️ Connection error: AI assistant requires active connection to server.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+      setAiMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // Handle Site Card Select in Mobile
+  const handleOpenSiteDetail = async (siteItem) => {
+    try {
+      const fullData = await lookupSite(siteItem.ihs_site_id);
+      setSelectedSiteDetail(fullData);
+    } catch {
+      setSelectedSiteDetail(siteItem);
+    }
+    if (onSelectSite) onSelectSite(siteItem.ihs_site_id);
+  };
+
   const pendingTotal = pendingNotes.length + pendingWa.length;
   const lastSync = getLastSyncTime();
 
+  // Filtered Sites for Mobile Search
+  const filteredCachedSites = cachedSites.filter(site => {
+    if (!siteSearch.trim()) return true;
+    const q = siteSearch.trim().toLowerCase();
+    return (
+      (site.ihs_site_id || '').toLowerCase().includes(q) ||
+      (site.mtn_id || '').toLowerCase().includes(q) ||
+      (site.site_address || '').toLowerCase().includes(q) ||
+      (site.state || '').toLowerCase().includes(q) ||
+      (site.power_solution || '').toLowerCase().includes(q)
+    );
+  });
+
+  // Filtered Live Notes
+  const filteredLiveNotes = liveNotes.filter(n => {
+    if (noteCategoryFilter !== 'All' && n.category !== noteCategoryFilter) return false;
+    if (notePriorityFilter !== 'All' && n.priority !== notePriorityFilter) return false;
+    return true;
+  });
+
+  // Filtered Live WhatsApp
+  const filteredLiveWa = liveWa.filter(w => {
+    if (waIssueFilter === 'Power' && !w.has_power_issue) return false;
+    if (waIssueFilter === 'Generator' && !w.has_generator_issue) return false;
+    if (waIssueFilter === 'Fuel' && !w.has_fuel_issue) return false;
+    if (waIssueFilter === 'Battery' && !w.has_battery_issue) return false;
+    if (waIssueFilter === 'Transmission' && !w.has_transmission_issue) return false;
+    return true;
+  });
+
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      
-      {/* Mobile Top App Header */}
-      <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-extrabold text-white tracking-wide flex items-center gap-2">
-              <Smartphone className="w-6 h-6 text-cyan-400 animate-pulse" />
-              FCT SDM Field Mobile Application
-            </h2>
-            <p className="text-xs text-slate-400 mt-1">
-              Offline-First Mobile Operations &bull; Create SDM Notes & WhatsApp Field Intel Offline &bull; Network Auto-Sync
-            </p>
+    <div className="max-w-4xl mx-auto space-y-5 pb-16 px-2 sm:px-4">
+      {/* Mobile Top Header Banner */}
+      <div className="glass-card p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center space-x-3">
+          <div className="p-3 bg-cyan-500/20 text-cyan-400 rounded-xl border border-cyan-500/30">
+            <Smartphone className="w-6 h-6 animate-pulse" />
           </div>
-
-          {/* Sync Control & Status Badge */}
-          <div className="flex items-center space-x-3">
-            <div className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 ${
-              isOnline 
-                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40' 
-                : 'bg-rose-950/60 text-rose-300 border-rose-500/40'
-            }`}>
-              {isOnline ? <Wifi className="w-4 h-4 text-emerald-400" /> : <WifiOff className="w-4 h-4 text-rose-400 animate-bounce" />}
-              <span>{isOnline ? 'Server Network Online' : 'Offline Mode (Device Queue Active)'}</span>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h2 className="text-base font-extrabold text-white">
+                {currentUser?.is_superuser ? 'SDM Field Mobile App' : `${getSDMStateInfo(currentUser).code} SDM Field Mobile App`}
+              </h2>
+              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded-full border border-cyan-500/30">
+                {isMobileNative ? 'ANDROID APK NATIVE' : 'MOBILE WEB MODE'}
+              </span>
             </div>
-
-            <button
-              onClick={handleSyncNow}
-              disabled={isSyncing}
-              className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-lg flex items-center space-x-1.5 transition-all"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
-              {pendingTotal > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 bg-amber-400 text-slate-950 rounded-full text-[10px] font-extrabold">
-                  {pendingTotal}
-                </span>
-              )}
-            </button>
+            <p className="text-xs text-slate-400">
+              Logged in: <strong className="text-white">{currentUser?.full_name || currentUser?.username || 'Field SDM'}</strong> ({currentUser?.role || 'SDM'})
+            </p>
           </div>
         </div>
 
-        {/* User Badge & Server IP Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-800/80 text-xs">
-          {/* Active User Card */}
-          <div className="flex items-center space-x-2 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-800 text-slate-300 font-medium">
-            <User className="w-4 h-4 text-cyan-400" />
-            <span>
-              Logged in: <strong className="text-white">{currentUser?.full_name || currentUser?.username || 'Guest SDM'}</strong>
-            </span>
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                title="Log out or switch SDM account"
-                className="ml-2 px-2 py-0.5 bg-rose-950/60 hover:bg-rose-900 text-rose-300 rounded border border-rose-800 text-[10px] font-bold flex items-center gap-1 transition-all"
-              >
-                <LogOut className="w-3 h-3" /> Log Out
-              </button>
-            )}
-          </div>
+        {/* Status Indicator & Controls */}
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setShowThemeModal(true)}
+            className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all"
+            title="Change Mobile App Theme"
+          >
+            <Palette className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="capitalize hidden sm:inline">{theme} Theme</span>
+          </button>
 
-          {/* Server IP Config Button */}
           <button
             onClick={() => setShowServerConfig(!showServerConfig)}
-            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 font-mono text-[11px] font-bold rounded-xl border border-cyan-500/30 flex items-center gap-1.5 transition-all"
+            className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl border border-slate-700 text-xs font-mono flex items-center gap-1.5 transition-all"
+            title="Configure Server Host IP"
           >
             <Server className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Server IP: {serverIp}</span>
+            <span>IP: {serverIp}</span>
           </button>
-        </div>
 
-        {/* Server IP Drawer */}
-        {showServerConfig && (
-          <form onSubmit={handleSaveServerIp} className="p-4 bg-slate-900/95 rounded-xl border border-cyan-500/40 space-y-3 shadow-xl">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-cyan-300 flex items-center gap-1.5 font-mono">
-                <Server className="w-4 h-4 text-cyan-400" /> Configure Backend Server Host / IP Address
-              </h4>
-              <button type="button" onClick={() => setShowServerConfig(false)} className="text-slate-400 hover:text-white text-xs">&times;</button>
-            </div>
-            <p className="text-[11px] text-slate-400">
-              Enter your backend server network IP (e.g. <code className="text-cyan-300 font-mono">192.168.1.2</code> or <code className="text-cyan-300 font-mono">10.0.0.5</code>). Target API: <code className="text-cyan-300 font-mono">http://{serverIp}:8000/api/v1</code>
-            </p>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                placeholder="e.g. 192.168.1.2"
-                value={serverIp}
-                onChange={(e) => setServerIp(e.target.value)}
-                required
-                className="flex-1 bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all"
-              >
-                Save & Connect
-              </button>
-            </div>
-          </form>
-        )}
+          <button
+            onClick={loadLiveServerFeeds}
+            className="p-2 bg-slate-900 hover:bg-slate-800 text-cyan-400 rounded-xl border border-slate-700 transition-all"
+            title="Refresh Network Connection & Feeds"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
+          </button>
 
-        {/* Sync Alert Banner */}
-        {syncStatusMsg && (
-          <div className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between border ${
-            syncStatusMsg.type === 'success' ? 'bg-emerald-950/60 text-emerald-200 border-emerald-800' :
-            syncStatusMsg.type === 'error' ? 'bg-rose-950/60 text-rose-200 border-rose-800' :
-            'bg-amber-950/60 text-amber-200 border-amber-800'
+          <div className={`px-3 py-1 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 ${
+            isOnline 
+              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800' 
+              : 'bg-amber-950/80 text-amber-300 border-amber-800 animate-pulse'
           }`}>
-            <span>{syncStatusMsg.text}</span>
-            {lastSync && <span className="text-[10px] text-slate-400">Last Synced: {lastSync}</span>}
+            {isOnline ? <Wifi className="w-3.5 h-3.5 text-emerald-400" /> : <WifiOff className="w-3.5 h-3.5 text-amber-400" />}
+            <span>{isOnline ? 'SERVER ONLINE' : 'OFFLINE MODE'}</span>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Navigation Sub-Tabs */}
-      <div className="flex bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 text-xs font-semibold">
+      {/* Server IP Configuration Panel */}
+      {showServerConfig && (
+        <div className="glass-panel p-4 rounded-2xl border border-cyan-500/40 bg-slate-900/95 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-cyan-300 flex items-center gap-1.5 font-mono">
+              <Server className="w-4 h-4 text-cyan-400" /> CONFIGURE BACKEND SERVER IP ADDRESS
+            </h4>
+            <button type="button" onClick={() => setShowServerConfig(false)} className="text-slate-400 hover:text-white text-xs">&times;</button>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Enter host server IP address (e.g. <code className="text-cyan-300 font-mono">192.168.1.120</code>). Target API: <code className="text-cyan-300 font-mono">http://{serverIp}:8001/api/v1</code>
+          </p>
+          <form onSubmit={handleSaveServerIp} className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="e.g. 192.168.1.120"
+              value={serverIp}
+              onChange={(e) => setServerIp(e.target.value)}
+              required
+              className="flex-1 bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all"
+            >
+              Update Server IP
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Sync Status Banner */}
+      {syncStatusMsg && (
+        <div className={`p-3.5 rounded-xl text-xs border flex items-center justify-between ${
+          syncStatusMsg.type === 'success' ? 'bg-emerald-950/60 text-emerald-200 border-emerald-800' :
+          syncStatusMsg.type === 'error' ? 'bg-rose-950/60 text-rose-200 border-rose-800' :
+          syncStatusMsg.type === 'info' ? 'bg-cyan-950/60 text-cyan-200 border-cyan-800' :
+          'bg-amber-950/60 text-amber-200 border-amber-800'
+        }`}>
+          <span>{syncStatusMsg.text}</span>
+          <button onClick={() => setSyncStatusMsg(null)} className="text-slate-400 hover:text-white text-xs font-bold pl-2">&times;</button>
+        </div>
+      )}
+
+      {/* Mobile KPI Summary Quick Bar */}
+      {dashboardStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <div className="glass-card p-3 rounded-xl border border-slate-800 text-center">
+            <div className="text-[10px] text-slate-400 font-bold uppercase">Total Sites</div>
+            <div className="text-lg font-extrabold text-white font-mono">{dashboardStats.total_sites || 0}</div>
+          </div>
+          <div className="glass-card p-3 rounded-xl border border-red-500/30 bg-red-950/20 text-center">
+            <div className="text-[10px] text-red-300 font-bold uppercase">Sites Down</div>
+            <div className="text-lg font-extrabold text-red-400 font-mono">{dashboardStats.sites_down || 0}</div>
+          </div>
+          <div className="glass-card p-3 rounded-xl border border-amber-500/30 bg-amber-950/20 text-center">
+            <div className="text-[10px] text-amber-300 font-bold uppercase">Critical Sites</div>
+            <div className="text-lg font-extrabold text-amber-300 font-mono">{dashboardStats.critical_sites || 0}</div>
+          </div>
+          <div className="glass-card p-3 rounded-xl border border-cyan-500/30 bg-cyan-950/20 text-center">
+            <div className="text-[10px] text-cyan-300 font-bold uppercase">Open Incidents</div>
+            <div className="text-lg font-extrabold text-cyan-300 font-mono">{dashboardStats.open_incidents || 0}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Touch Navigation Sub-Tabs */}
+      <div className="flex overflow-x-auto p-1 bg-slate-900/90 rounded-xl border border-slate-800 text-xs font-bold gap-1 no-scrollbar">
+        <button
+          onClick={() => setActiveSubTab('overview')}
+          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'overview' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Overview</span>
+        </button>
+
         <button
           onClick={() => setActiveSubTab('note')}
-          className={`flex-1 py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
             activeSubTab === 'note' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
           }`}
         >
           <FileText className="w-4 h-4" />
-          <span>New SDM Note</span>
+          <span>SDM Notes</span>
         </button>
 
         <button
           onClick={() => setActiveSubTab('whatsapp')}
-          className={`flex-1 py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
             activeSubTab === 'whatsapp' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
           }`}
         >
           <MessageSquare className="w-4 h-4" />
-          <span>Log WhatsApp Intel</span>
+          <span>WhatsApp</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('ai')}
+          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'ai' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Bot className="w-4 h-4 text-cyan-400" />
+          <span>AI Assistant</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('sites')}
+          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'sites' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>Sites ({cachedSites.length})</span>
         </button>
 
         <button
           onClick={() => setActiveSubTab('queue')}
-          className={`flex-1 py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all relative ${
-            activeSubTab === 'queue' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-400 hover:text-white'
+          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'queue' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
           }`}
         >
           <UploadCloud className="w-4 h-4" />
-          <span>Pending Queue ({pendingTotal})</span>
-          {pendingTotal > 0 && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping absolute top-2 right-2" />
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('cache')}
-          className={`flex-1 py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-            activeSubTab === 'cache' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>Offline Site Cache ({cachedSites.length})</span>
+          <span>Queue {pendingTotal > 0 ? `(${pendingTotal})` : ''}</span>
         </button>
       </div>
 
-      {/* Sub-Tab 1: Create Offline SDM Note */}
-      {activeSubTab === 'note' && (
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <FileText className="w-4 h-4 text-cyan-400" />
-              Create Field SDM Operational Note (Offline Supported)
+      {/* Sub-Tab 0: Overview Summary & Mobile Shortcuts */}
+      {activeSubTab === 'overview' && (
+        <div className="space-y-4">
+          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
+              <Zap className="w-4 h-4 text-cyan-400" />
+              Quick Mobile Field Actions
             </h3>
-            <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
-              {isOnline ? '🟢 Live Online Save' : '📦 Local Device Storage'}
-            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                onClick={() => setActiveSubTab('note')}
+                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-cyan-500/30 text-left transition-all space-y-1"
+              >
+                <div className="flex items-center justify-between text-cyan-300 font-bold text-xs">
+                  <span className="flex items-center gap-1.5"><FileText className="w-4 h-4" /> Create SDM Note</span>
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                </div>
+                <p className="text-[11px] text-slate-400">Log generator, power outage, or maintenance notes (works offline).</p>
+              </button>
+
+              <button
+                onClick={() => setActiveSubTab('whatsapp')}
+                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-emerald-500/30 text-left transition-all space-y-1"
+              >
+                <div className="flex items-center justify-between text-emerald-300 font-bold text-xs">
+                  <span className="flex items-center gap-1.5"><MessageSquare className="w-4 h-4" /> Log WhatsApp Intel</span>
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                </div>
+                <p className="text-[11px] text-slate-400">Log field arrival times, diesel refills, or engineer updates.</p>
+              </button>
+
+              <button
+                onClick={() => setActiveSubTab('ai')}
+                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-purple-500/30 text-left transition-all space-y-1"
+              >
+                <div className="flex items-center justify-between text-purple-300 font-bold text-xs">
+                  <span className="flex items-center gap-1.5"><Bot className="w-4 h-4 text-purple-400" /> AI Site Assistant</span>
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                </div>
+                <p className="text-[11px] text-slate-400">Instant AI diagnostics for generator alarms & outage causes.</p>
+              </button>
+
+              <button
+                onClick={() => setActiveSubTab('sites')}
+                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-blue-500/30 text-left transition-all space-y-1"
+              >
+                <div className="flex items-center justify-between text-blue-300 font-bold text-xs">
+                  <span className="flex items-center gap-1.5"><Layers className="w-4 h-4" /> SDM Sites Directory</span>
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                </div>
+                <p className="text-[11px] text-slate-400">Browse {cachedSites.length} cached sites assigned to {currentUser?.full_name}.</p>
+              </button>
+            </div>
           </div>
+        </div>
+      )}
 
-          <form onSubmit={handleSaveNote} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Target Site ID *</label>
-                <input
-                  type="text"
-                  placeholder="e.g. FC2700..."
-                  value={noteSiteId}
-                  onChange={(e) => setNoteSiteId(e.target.value.toUpperCase())}
-                  required
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Category *</label>
-                <select
-                  value={noteCategory}
-                  onChange={(e) => setNoteCategory(e.target.value)}
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                >
-                  {['Generator', 'Power', 'Battery', 'Transmission', 'SA Alarms', 'Access', 'Security', 'General'].map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Priority *</label>
-                <select
-                  value={notePriority}
-                  onChange={(e) => setNotePriority(e.target.value)}
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                >
-                  {['P1-Critical', 'High', 'Medium', 'Low'].map(p => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
-              </div>
+      {/* Sub-Tab 1: Create & View SDM Operational Notes */}
+      {activeSubTab === 'note' && (
+        <div className="space-y-4">
+          {/* Note Form */}
+          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <FileText className="w-4 h-4 text-cyan-400" />
+                Create Field SDM Operational Note
+              </h3>
+              <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
+                {isOnline ? '🟢 Live Online Save' : '📦 Local Device Queue'}
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <form onSubmit={handleSaveNote} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Target Site ID *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. FC2700..."
+                    value={noteSiteId}
+                    onChange={(e) => setNoteSiteId(e.target.value.toUpperCase())}
+                    required
+                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Category *</label>
+                  <select
+                    value={noteCategory}
+                    onChange={(e) => setNoteCategory(e.target.value)}
+                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                  >
+                    {['Generator', 'Power', 'Battery', 'Transmission', 'SA Alarms', 'Access', 'Security', 'General'].map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Priority *</label>
+                  <select
+                    value={notePriority}
+                    onChange={(e) => setNotePriority(e.target.value)}
+                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                  >
+                    {['P1-Critical', 'High', 'Medium', 'Low'].map(p => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Incident / Note Title *</label>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">Note Title *</label>
                 <input
                   type="text"
-                  placeholder="Brief summary of the issue or operational status..."
+                  placeholder="e.g. Generator AVR Replacement Completed"
                   value={noteTitle}
                   onChange={(e) => setNoteTitle(e.target.value)}
                   required
@@ -499,259 +941,421 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-cyan-400" /> Incident Date & Time *</span>
-                  <span className="text-[10px] text-cyan-300 font-normal">Set time event occurred</span>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">Detailed Operational Description *</label>
+                <textarea
+                  rows="3"
+                  placeholder="Describe root cause, action taken, FSE on site, status..."
+                  value={noteDescription}
+                  onChange={(e) => setNoteDescription(e.target.value)}
+                  required
+                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              {/* Photo Picker with Camera & Watermarking */}
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Attach Photo Evidence (Auto-Stamped with Site ID, Date, Time & GPS Location)
                 </label>
-                <input
-                  type="datetime-local"
-                  value={noteIncidentTime}
-                  onChange={(e) => setNoteIncidentTime(e.target.value)}
-                  required
-                  className="w-full bg-slate-900 text-xs text-white font-mono p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-            </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Camera Snap Input */}
+                  <label className="cursor-pointer px-3 py-2 bg-cyan-600/30 hover:bg-cyan-600/40 text-cyan-200 border border-cyan-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all">
+                    <Camera className="w-4 h-4 text-cyan-400" />
+                    <span>Snap Camera Photo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoChange}
+                      className="hidden"
+                    />
+                  </label>
 
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1">Detailed Field Observations & Action Progress *</label>
-              <textarea
-                rows={4}
-                placeholder="Enter root cause, engineer ETA, actions taken, or field findings..."
-                value={noteDescription}
-                onChange={(e) => setNoteDescription(e.target.value)}
-                required
-                className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            {/* Photo Upload Picker */}
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-300 block">📷 Upload Field Evidence Photos (Offline Cached)</label>
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handlePhotoChange}
-                className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-cyan-400 hover:file:bg-slate-700 cursor-pointer"
-              />
-
-              {notePhotoPreviews.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-2">
-                  {notePhotoPreviews.map((src, i) => (
-                    <img key={i} src={src} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />
-                  ))}
+                  {/* Gallery Input */}
+                  <label className="cursor-pointer px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all">
+                    <UploadCloud className="w-4 h-4 text-slate-400" />
+                    <span>Upload Gallery Photo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={handlePhotoChange}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
-              )}
-            </div>
 
-            <button
-              type="submit"
-              className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-center space-x-2 transition-all"
-            >
-              <span>{isOnline ? 'Save Note & Direct Upload' : 'Save Note to Offline Device Queue'}</span>
-              <UploadCloud className="w-4 h-4" />
-            </button>
-          </form>
-        </div>
-      )}
+                {isProcessingPhotos && (
+                  <div className="text-xs text-cyan-400 flex items-center gap-1.5 mt-2">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Stamping Site ID, Timestamp & GPS Location onto photo canvas...</span>
+                  </div>
+                )}
 
-      {/* Sub-Tab 2: Log Local WhatsApp Intel */}
-      {activeSubTab === 'whatsapp' && (
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-cyan-400" />
-              Log WhatsApp Field Technical Intel (Offline Supported)
-            </h3>
-            <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
-              {isOnline ? '🟢 Live Online Save' : '📦 Local Device Storage'}
-            </span>
-          </div>
-
-          <form onSubmit={handleSaveWa} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Target Site ID *</label>
-                <input
-                  type="text"
-                  placeholder="e.g. FC2700..."
-                  value={waSiteId}
-                  onChange={(e) => setWaSiteId(e.target.value.toUpperCase())}
-                  required
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                />
+                {notePhotoPreviews.length > 0 && (
+                  <div className="space-y-1.5 mt-3">
+                    <div className="text-[11px] font-bold text-cyan-300">
+                      Watermarked Photo Previews ({notePhotoPreviews.length}):
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {notePhotoPreviews.map((src, i) => (
+                        <div key={i} className="relative group">
+                          <img src={src} alt="watermarked preview" className="w-20 h-20 object-cover rounded-xl border-2 border-cyan-500/40 shadow-lg" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNotePhotos(prev => prev.filter((_, idx) => idx !== i));
+                              setNotePhotoPreviews(prev => prev.filter((_, idx) => idx !== i));
+                            }}
+                            className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white rounded-full p-0.5 text-xs shadow hover:bg-rose-500"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Engineer / Sender Name *</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Engr. Musa / FSE Okon..."
-                  value={waSender}
-                  onChange={(e) => setWaSender(e.target.value)}
-                  required
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1">WhatsApp Field Message / Group Update *</label>
-              <textarea
-                rows={4}
-                placeholder="Paste or type WhatsApp update (e.g. 'FC2700 DG restored by FSE Engr John. ETA 20 mins for full battery float check')..."
-                value={waMessage}
-                onChange={(e) => setWaMessage(e.target.value)}
-                required
-                className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-center space-x-2 transition-all"
-            >
-              <span>{isOnline ? 'Log WhatsApp Intel Directly' : 'Queue WhatsApp Intel for Auto-Sync'}</span>
-              <MessageSquare className="w-4 h-4" />
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* Sub-Tab 3: Pending Queue */}
-      {activeSubTab === 'queue' && (
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <UploadCloud className="w-4 h-4 text-amber-400" />
-                Device Offline Queue ({pendingTotal} Unsynced Item(s))
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                These updates were recorded offline and will automatically upload when connected to the server network.
-              </p>
-            </div>
-
-            {pendingTotal > 0 && (
               <button
-                onClick={() => { clearPendingQueue(); refreshPendingQueues(); }}
-                className="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900/60 text-rose-300 border border-rose-800 rounded-lg text-xs font-semibold flex items-center gap-1"
+                type="submit"
+                disabled={isSavingNote}
+                className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                Clear Queue
+                <FileText className="w-4 h-4" />
+                <span>{isSavingNote ? 'Saving Operational Note...' : 'Save SDM Operational Note'}</span>
               </button>
-            )}
+            </form>
           </div>
 
-          {pendingTotal === 0 ? (
-            <div className="p-12 text-center text-slate-400 text-xs space-y-2">
-              <ShieldCheck className="w-10 h-10 text-emerald-400 mx-auto" />
-              <p className="font-semibold text-white">Queue is empty!</p>
-              <p>All local SDM notes and WhatsApp updates on this device have been synchronized to the server backend.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              
-              {/* Pending Notes List */}
-              {pendingNotes.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-cyan-300 block">Pending SDM Notes ({pendingNotes.length}):</span>
-                  {pendingNotes.map((pn) => (
-                    <div key={pn.local_id} className="p-3 bg-slate-900/80 rounded-xl border border-amber-500/30 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <span className="px-2 py-0.5 bg-amber-950 text-amber-300 font-mono font-bold text-[10px] rounded">
-                            {pn.site_id_str}
-                          </span>
-                          <span className="text-xs font-bold text-white">{pn.title}</span>
-                          <span className="text-[10px] text-slate-400">({pn.category})</span>
-                        </div>
-                        <p className="text-xs text-slate-300 mt-1 line-clamp-1">{pn.description}</p>
-                      </div>
-
-                      <button
-                        onClick={() => { removePendingNote(pn.local_id); refreshPendingQueues(); }}
-                        className="text-slate-500 hover:text-rose-400 p-1"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
+          {/* Live Recent Notes Feed */}
+          {isOnline && (
+            <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-cyan-400" /> Live SDM Notes Stream ({filteredLiveNotes.length})
+                </h4>
+                <div className="flex items-center gap-2 text-xs">
+                  <select
+                    value={notePriorityFilter}
+                    onChange={(e) => setNotePriorityFilter(e.target.value)}
+                    className="bg-slate-900 text-slate-300 text-[11px] px-2 py-1 rounded-lg border border-slate-700"
+                  >
+                    <option value="All">All Priorities</option>
+                    <option value="Critical">Critical</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
                 </div>
-              )}
+              </div>
 
-              {/* Pending WhatsApp Messages List */}
-              {pendingWa.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-cyan-300 block">Pending WhatsApp Messages ({pendingWa.length}):</span>
-                  {pendingWa.map((pw) => (
-                    <div key={pw.local_id} className="p-3 bg-slate-900/80 rounded-xl border border-amber-500/30 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <span className="px-2 py-0.5 bg-amber-950 text-amber-300 font-mono font-bold text-[10px] rounded">
-                            {pw.site_id_str}
+              <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                {filteredLiveNotes.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500 text-xs">No notes matching filter.</div>
+                ) : (
+                  filteredLiveNotes.map((note) => (
+                    <div key={note.id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span 
+                          onClick={() => handleOpenSiteDetail({ ihs_site_id: note.site_ihs_id })}
+                          className="font-extrabold text-cyan-300 font-mono cursor-pointer hover:underline"
+                        >
+                          {note.site_ihs_id}
+                        </span>
+                        <div className="flex items-center space-x-1">
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                            note.priority === 'Critical' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-300'
+                          }`}>
+                            {note.priority}
                           </span>
-                          <span className="text-xs font-bold text-white">{pw.sender_name}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                            note.status === 'Resolved' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'
+                          }`}>
+                            {note.status}
+                          </span>
                         </div>
-                        <p className="text-xs text-slate-300 mt-1 line-clamp-1">{pw.message_text}</p>
                       </div>
+                      <div className="text-xs font-bold text-white">{note.title}</div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">{note.description}</p>
 
-                      <button
-                        onClick={() => { removePendingWhatsApp(pw.local_id); refreshPendingQueues(); }}
-                        className="text-slate-500 hover:text-rose-400 p-1"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60">
+                        <span>By: {note.created_by}</span>
+                        <div className="flex items-center space-x-2">
+                          {note.status !== 'Resolved' && (
+                            <button
+                              onClick={() => handleQuickResolveLiveNote(note)}
+                              className="text-emerald-400 hover:underline font-bold"
+                            >
+                              Resolve
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteLiveNote(note)}
+                            className="text-rose-400 hover:underline font-bold"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
-
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Sub-Tab 4: Offline Site Cache */}
-      {activeSubTab === 'cache' && (
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
+      {/* Sub-Tab 2: Log WhatsApp Field Intel */}
+      {activeSubTab === 'whatsapp' && (
+        <div className="space-y-4">
+          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-emerald-400" />
+                Log WhatsApp Field Intel Report
+              </h3>
+              <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
+                {isOnline ? '🟢 Live Online Save' : '📦 Local Device Storage'}
+              </span>
+            </div>
+
+            <form onSubmit={handleSaveWa} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Target Site ID *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. FC1200..."
+                    value={waSiteId}
+                    onChange={(e) => setWaSiteId(e.target.value.toUpperCase())}
+                    required
+                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Sender / Engineer Name</label>
+                  <input
+                    type="text"
+                    value={waSender}
+                    onChange={(e) => setWaSender(e.target.value)}
+                    required
+                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">WhatsApp Message Content *</label>
+                <textarea
+                  rows="3"
+                  placeholder="Paste WhatsApp update e.g: Engineer arrived site FC1200 at 10:30am. Generator running fine..."
+                  value={waMessage}
+                  onChange={(e) => setWaMessage(e.target.value)}
+                  required
+                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Log WhatsApp Intel</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Live WhatsApp Stream */}
+          {isOnline && (
+            <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-emerald-400" /> Live WhatsApp Field Intel Stream ({filteredLiveWa.length})
+                </h4>
+                <select
+                  value={waIssueFilter}
+                  onChange={(e) => setWaIssueFilter(e.target.value)}
+                  className="bg-slate-900 text-slate-300 text-[11px] px-2 py-1 rounded-lg border border-slate-700"
+                >
+                  <option value="All">All Issues</option>
+                  <option value="Generator">Generator</option>
+                  <option value="Power">Power</option>
+                  <option value="Fuel">Fuel</option>
+                  <option value="Battery">Battery</option>
+                  <option value="Transmission">Transmission</option>
+                </select>
+              </div>
+
+              <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+                {filteredLiveWa.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500 text-xs">No WhatsApp intel matching filter.</div>
+                ) : (
+                  filteredLiveWa.map((wa) => (
+                    <div key={wa.id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1 font-sans">
+                      <div className="flex items-center justify-between text-xs">
+                        <span 
+                          onClick={() => handleOpenSiteDetail({ ihs_site_id: wa.site_id_str })}
+                          className="font-extrabold text-emerald-300 font-mono cursor-pointer hover:underline"
+                        >
+                          {wa.site_id_str || 'SITE'}
+                        </span>
+                        <span className="text-[10px] text-slate-400">{wa.sender_name}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-200 leading-relaxed">{wa.message_text}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sub-Tab 3: Mobile AI Assistant */}
+      {activeSubTab === 'ai' && (
+        <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Bot className="w-5 h-5 text-purple-400 animate-pulse" />
+              Mobile SDM AI Field Assistant
+            </h3>
+            <span className="text-[10px] px-2 py-0.5 bg-purple-950/60 text-purple-300 border border-purple-800 rounded">
+              AI ENGINE v2.0
+            </span>
+          </div>
+
+          {/* Preset Prompts */}
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => handleSendAiPrompt('Show summary of current generator outage causes in FCT')}
+              className="px-2.5 py-1 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 border border-purple-800/60 rounded-lg text-[11px]"
+            >
+              ⚡ Generator Outages
+            </button>
+            <button
+              onClick={() => handleSendAiPrompt('What are the top critical sites requiring immediate intervention?')}
+              className="px-2.5 py-1 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 border border-purple-800/60 rounded-lg text-[11px]"
+            >
+              🚨 Critical Sites
+            </button>
+            <button
+              onClick={() => handleSendAiPrompt('Summarize recent WhatsApp updates for diesel refills')}
+              className="px-2.5 py-1 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 border border-purple-800/60 rounded-lg text-[11px]"
+            >
+              ⛽ Fuel Updates
+            </button>
+          </div>
+
+          {/* AI Chat Messages Window */}
+          <div className="space-y-3 max-h-80 overflow-y-auto p-3 bg-slate-950 rounded-xl border border-slate-800">
+            {aiMessages.map((msg, i) => (
+              <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[85%] p-3 rounded-2xl text-xs ${
+                  msg.sender === 'user'
+                    ? 'bg-cyan-600 text-white rounded-br-none'
+                    : 'bg-slate-900 text-slate-200 border border-purple-500/30 rounded-bl-none'
+                }`}>
+                  <div className="font-bold text-[10px] text-purple-300 mb-1">
+                    {msg.sender === 'user' ? 'You (SDM)' : '🤖 SDM AI Engine'}
+                  </div>
+                  <div className="whitespace-pre-line leading-relaxed">{msg.text}</div>
+                </div>
+                <span className="text-[9px] text-slate-500 mt-1 px-1">{msg.time}</span>
+              </div>
+            ))}
+
+            {aiLoading && (
+              <div className="flex items-center space-x-2 text-xs text-purple-400 p-2">
+                <Sparkles className="w-4 h-4 animate-spin" />
+                <span>AI Assistant thinking & analyzing site data...</span>
+              </div>
+            )}
+          </div>
+
+          {/* Query Input Form */}
+          <form onSubmit={(e) => { e.preventDefault(); handleSendAiPrompt(); }} className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Ask AI about site issues, DG faults, or guidelines..."
+              value={aiQuery}
+              onChange={(e) => setAiQuery(e.target.value)}
+              className="flex-1 bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-purple-500"
+            />
+            <button
+              type="submit"
+              disabled={aiLoading}
+              className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Ask</span>
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Sub-Tab 4: SDM Site Finder & Profiles */}
+      {activeSubTab === 'sites' && (
+        <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <Layers className="w-4 h-4 text-cyan-400" />
-                Offline Site Database Cache ({cachedSites.length} Sites Saved)
+                SDM Sites Directory ({filteredCachedSites.length} Sites)
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Cached locally on this device so field engineers can search site configurations without internet connection.
+                Search & inspect site specifications assigned to {currentUser?.full_name || 'SDM'}.
               </p>
             </div>
+            <button
+              type="button"
+              onClick={loadLiveServerFeeds}
+              className="px-2.5 py-1 text-xs bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-lg hover:bg-cyan-500/30"
+            >
+              Refresh Sites
+            </button>
           </div>
 
-          {cachedSites.length === 0 ? (
-            <div className="p-12 text-center text-slate-400 text-xs">
-              No offline site cache stored yet. Connect to server network to auto-sync site records.
+          {/* Search Bar */}
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search site ID, address, state, or power solution..."
+              value={siteSearch}
+              onChange={(e) => setSiteSearch(e.target.value)}
+              className="w-full bg-slate-900 text-xs text-white pl-9 pr-4 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+            />
+          </div>
+
+          {filteredCachedSites.length === 0 ? (
+            <div className="p-12 text-center text-slate-500 text-xs">
+              No matching sites found in cache. Ensure you are connected to the server network.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
-              {cachedSites.slice(0, 50).map((site) => (
+              {filteredCachedSites.slice(0, 60).map((site) => (
                 <div 
                   key={site.id} 
-                  onClick={() => onSelectSite(site.ihs_site_id)}
-                  className="p-3 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-slate-800 cursor-pointer transition-all space-y-1"
+                  onClick={() => handleOpenSiteDetail(site)}
+                  className="p-3.5 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-slate-800 cursor-pointer transition-all space-y-1.5 group"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-extrabold text-cyan-300 font-mono">{site.ihs_site_id}</span>
+                    <span className="text-xs font-extrabold text-cyan-300 font-mono group-hover:text-cyan-200">{site.ihs_site_id}</span>
                     <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                      site.is_down ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
+                      site.is_down ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     }`}>
-                      {site.operational_status}
+                      {site.operational_status || 'Active'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-300 truncate">{site.site_address}</p>
-                  <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1">
-                    <span>Power: {site.power_solution}</span>
-                    <span>DG: {site.dg_capacity}</span>
+                  <p className="text-[11px] text-slate-300 truncate">{site.site_address || site.cluster_name}</p>
+                  <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
+                    <span>Power: {site.power_solution || 'Grid'}</span>
+                    <span>DG: {site.dg_capacity || 'N/A'}</span>
                   </div>
                 </div>
               ))}
@@ -760,6 +1364,189 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite }) {
         </div>
       )}
 
+      {/* Sub-Tab 5: Offline Queue & Sync Controls */}
+      {activeSubTab === 'queue' && (
+        <div className="space-y-4">
+          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <UploadCloud className="w-4 h-4 text-cyan-400" />
+                  Pending Offline Queue ({pendingTotal} Items)
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Items created offline waiting for server sync.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSyncNow}
+                  disabled={isSyncing}
+                  className="px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <span>Sync Now</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearPendingQueue();
+                    refreshPendingQueues();
+                    setSyncStatusMsg({ type: 'info', text: '🗑️ Pending offline queue cleared.' });
+                  }}
+                  className="px-3 py-1.5 bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs rounded-xl hover:bg-rose-500/30"
+                >
+                  Clear Queue
+                </button>
+              </div>
+            </div>
+
+            {pendingTotal === 0 ? (
+              <div className="p-12 text-center text-slate-400 text-xs">
+                No pending items in queue. All your operational notes and WhatsApp intel are synced!
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                {/* Pending Notes */}
+                {pendingNotes.map((note) => (
+                  <div key={note.local_id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-extrabold text-cyan-300 font-mono">[NOTE] {note.site_id_str} - {note.title}</div>
+                      <div className="text-[11px] text-slate-400">{note.description.slice(0, 60)}...</div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        removePendingNote(note.local_id);
+                        refreshPendingQueues();
+                      }}
+                      className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+
+                {/* Pending WhatsApp */}
+                {pendingWa.map((wa) => (
+                  <div key={wa.local_id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-extrabold text-emerald-300 font-mono">[INTEL] {wa.site_id_str} - {wa.sender_name}</div>
+                      <div className="text-[11px] text-slate-400">{wa.message_text.slice(0, 60)}...</div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        removePendingWhatsApp(wa.local_id);
+                        refreshPendingQueues();
+                      }}
+                      className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Site Detail Overlay Modal inside Mobile View */}
+      {selectedSiteDetail && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="glass-panel max-w-xl w-full p-6 rounded-2xl border border-cyan-500/40 bg-slate-950 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <span className="text-xs font-mono text-cyan-400 font-extrabold">{selectedSiteDetail.ihs_site_id}</span>
+                <h3 className="text-base font-extrabold text-white">{selectedSiteDetail.site_address || selectedSiteDetail.cluster_name}</h3>
+              </div>
+              <button
+                onClick={() => setSelectedSiteDetail(null)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-900 border border-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">Operational Status</span>
+                <span className="font-extrabold text-cyan-300">{selectedSiteDetail.operational_status || 'Normal'}</span>
+              </div>
+              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">Power Solution</span>
+                <span className="font-bold text-white">{selectedSiteDetail.power_solution || 'Grid'}</span>
+              </div>
+              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">DG Capacity</span>
+                <span className="font-bold text-white">{selectedSiteDetail.dg_capacity || 'N/A'}</span>
+              </div>
+              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">State / LGA</span>
+                <span className="font-bold text-white">{selectedSiteDetail.state || 'FCT'} / {selectedSiteDetail.lga || 'Abuja'}</span>
+              </div>
+              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">SMC FSE</span>
+                <span className="font-bold text-white">{selectedSiteDetail.smc_fse_name || 'N/A'}</span>
+              </div>
+              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">MTN RDM</span>
+                <span className="font-bold text-white">{selectedSiteDetail.mtn_rdm_name || 'N/A'}</span>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setNoteSiteId(selectedSiteDetail.ihs_site_id);
+                  setSelectedSiteDetail(null);
+                  setActiveSubTab('note');
+                }}
+                className="px-4 py-2 bg-cyan-600 text-white font-bold text-xs rounded-xl shadow-md"
+              >
+                Log Note for {selectedSiteDetail.ihs_site_id}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Theme Selector Overlay Modal */}
+      {showThemeModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-panel max-w-sm w-full p-5 rounded-2xl border border-cyan-500/40 bg-slate-950 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Palette className="w-4 h-4 text-cyan-400" />
+                Select Mobile App Theme
+              </h3>
+              <button onClick={() => setShowThemeModal(false)} className="text-slate-400 hover:text-white text-xs font-bold">&times;</button>
+            </div>
+
+            <div className="space-y-2">
+              {mobileThemes.map((t) => {
+                const Icon = t.icon;
+                const isActive = theme === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => handleApplyTheme(t.id)}
+                    className={`w-full p-3 rounded-xl border flex items-center justify-between transition-all ${
+                      isActive ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-md' : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2.5">
+                      <Icon className={`w-4 h-4 ${t.color}`} />
+                      <span className="text-xs font-bold">{t.label}</span>
+                    </div>
+                    {isActive && <span className="text-[10px] px-2 py-0.5 bg-cyan-500/30 text-cyan-300 rounded font-extrabold">ACTIVE</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
