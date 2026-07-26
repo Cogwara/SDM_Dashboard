@@ -5,6 +5,7 @@ import {
   ExternalLink, Layers, Search, Database, Cpu, Wifi, Edit3, Camera, Upload, X, Maximize2, Trash2
 } from 'lucide-react';
 import { lookupSite, createNote, updateNote, resolveNote, deleteNote } from '../api';
+import ConfirmDeleteModal from './ConfirmDeleteModal';
 
 export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithPrompt }) {
   const [site, setSite] = useState(null);
@@ -73,6 +74,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
 
     const newPreviews = files.map((file) => URL.createObjectURL(file));
     setNotePhotoPreviews((prev) => [...prev, ...newPreviews]);
+    try { e.target.value = ''; } catch {}
   };
 
   const handleRemoveNoteSelectedPhoto = (index) => {
@@ -122,17 +124,28 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
     }
   };
 
-  const handleDeleteNote = async (n) => {
-    if (!window.confirm(`Are you sure you want to delete note "${n.title}"?`)) return;
+  const [noteToDelete, setNoteToDelete] = useState(null);
+  const [isDeletingNote, setIsDeletingNote] = useState(false);
+
+  const handleDeleteNote = (n) => {
+    setNoteToDelete(n);
+  };
+
+  const handleConfirmDeleteNote = async () => {
+    if (!noteToDelete) return;
+    setIsDeletingNote(true);
     try {
-      await deleteNote(n.id, {
+      await deleteNote(noteToDelete.id, {
         user: userSdmName,
         sdm: userSdmName,
         is_superuser: isSuperuser
       });
+      setNoteToDelete(null);
       loadSite();
     } catch (err) {
       alert('Error deleting note: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setIsDeletingNote(false);
     }
   };
 
@@ -821,6 +834,21 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
         </div>
       )}
 
+      {/* Confirm Delete Modal */}
+      <ConfirmDeleteModal
+        isOpen={!!noteToDelete}
+        title="Delete SDM Operational Note"
+        message="Are you sure you want to delete this SDM Operational Note from this site? This will permanently remove the note."
+        itemDetails={noteToDelete ? {
+          siteId: site?.ihs_site_id || siteId,
+          itemTitle: noteToDelete.title,
+          author: noteToDelete.created_by
+        } : null}
+        confirmText="Permanently Delete Note"
+        onConfirm={handleConfirmDeleteNote}
+        onCancel={() => setNoteToDelete(null)}
+        isDeleting={isDeletingNote}
+      />
     </div>
   );
 }

@@ -2,26 +2,61 @@ import React, { useState, useEffect } from 'react';
 import { 
   Smartphone, Wifi, WifiOff, RefreshCw, FileText, MessageSquare, 
   CheckCircle2, AlertTriangle, Layers, Clock, UploadCloud, Trash2, Camera, ShieldCheck,
-  Server, User, LogOut, Lock, Settings, Bot, Search, Send, Sparkles, Filter, ChevronRight, Zap, Shield, MapPin, Radio, Phone, UserCheck, X, Maximize2, BarChart3, Edit3, Palette, Sun, Moon
+  Server, User, LogOut, Lock, Settings, Bot, Search, Send, Sparkles, Filter, ChevronRight, Zap, Shield, MapPin, Radio, Phone, UserCheck, X, Maximize2, BarChart3, Edit3, Palette, Sun, Moon, TrendingUp, Building2, Network, ArrowLeft, Activity, Plus
 } from 'lucide-react';
 import { 
-  getPendingNotes, getPendingWhatsApp, saveOfflineNote, saveOfflineWhatsApp, 
-  removePendingNote, removePendingWhatsApp, clearPendingQueue, getPendingTotalCount,
+  getPendingNotes, getPendingWhatsApp, getPendingFseAudits, saveOfflineNote, saveOfflineWhatsApp, saveOfflineFseAudit,
+  removePendingNote, removePendingWhatsApp, removePendingFseAudit, clearPendingQueue, getPendingTotalCount,
   getCachedSites, saveCachedSites, clearCachedSites, getLastSyncTime 
 } from '../mobileOfflineStorage';
 import { 
-  checkServerHealth, createNote, createWhatsAppMessage, fetchSites, setCustomServerIp,
+  checkServerHealth, createNote, updateNote, createWhatsAppMessage, fetchSites, setCustomServerIp,
   fetchNotes, resolveNote, deleteNote, fetchWhatsAppMessages, queryAIAssistant,
   fetchDashboardStats, lookupSite
 } from '../api';
 import { getSDMStateInfo } from '../utils/userUtils';
+import GeoMap from './GeoMap';
+import SiteFseInspector from './SiteFseInspector';
+import TNLLinksDirectory from './TNLLinksDirectory';
+import ReportsAnalytics from './ReportsAnalytics';
+import SiteProfile from './SiteProfile';
+import SDMUserManagement from './SDMUserManagement';
+import ConfirmDeleteModal from './ConfirmDeleteModal';
 
 const fileToBase64 = (file) => {
   return new Promise((resolve) => {
     if (!file || typeof file === 'string') return resolve(file);
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
     reader.onerror = () => resolve(null);
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => resolve(e.target.result);
+      img.onload = () => {
+        try {
+          const MAX_DIM = 1000;
+          let w = img.width;
+          let h = img.height;
+          if (w > MAX_DIM || h > MAX_DIM) {
+            if (w > h) {
+              h = Math.round((h * MAX_DIM) / w);
+              w = MAX_DIM;
+            } else {
+              w = Math.round((w * MAX_DIM) / h);
+              h = MAX_DIM;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.75));
+        } catch {
+          resolve(e.target.result);
+        }
+      };
+      img.src = e.target.result;
+    };
     reader.readAsDataURL(file);
   });
 };
@@ -50,7 +85,6 @@ const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
   return new Promise((resolve) => {
     if (!fileObj || typeof fileObj === 'string') return resolve(fileObj);
 
-    let gpsText = 'GPS: FCT Location Data';
     const getLocationPromise = new Promise((resLoc) => {
       if (typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -78,12 +112,26 @@ const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
       img.onload = async () => {
         try {
           const gpsResult = await getLocationPromise;
+
+          const MAX_DIM = 1200;
+          let targetWidth = img.width;
+          let targetHeight = img.height;
+          if (targetWidth > MAX_DIM || targetHeight > MAX_DIM) {
+            if (targetWidth > targetHeight) {
+              targetHeight = Math.round((targetHeight * MAX_DIM) / targetWidth);
+              targetWidth = MAX_DIM;
+            } else {
+              targetWidth = Math.round((targetWidth * MAX_DIM) / targetHeight);
+              targetHeight = MAX_DIM;
+            }
+          }
+
           const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
           const ctx = canvas.getContext('2d');
 
-          ctx.drawImage(img, 0, 0);
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
           const now = new Date();
           const dateStr = now.toISOString().slice(0, 10) + ' ' + now.toLocaleTimeString();
@@ -98,27 +146,27 @@ const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
             authorStr
           ];
 
-          // Compact font size (reduced as requested)
-          const fontSize = Math.max(12, Math.floor(img.height * 0.022));
+          // Compact font size
+          const fontSize = Math.max(12, Math.floor(targetHeight * 0.025));
           const lineSpacing = fontSize * 1.35;
           const bannerPadding = 12;
           const bannerHeight = Math.floor(lines.length * lineSpacing + bannerPadding * 2);
 
           // Semi-transparent dark background overlay at bottom
           ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-          ctx.fillRect(0, img.height - bannerHeight, img.width, bannerHeight);
+          ctx.fillRect(0, targetHeight - bannerHeight, targetWidth, bannerHeight);
 
           // Top thin red accent border line
           ctx.fillStyle = '#ef4444';
-          ctx.fillRect(0, img.height - bannerHeight, img.width, Math.max(2, Math.floor(fontSize * 0.15)));
+          ctx.fillRect(0, targetHeight - bannerHeight, targetWidth, Math.max(2, Math.floor(fontSize * 0.15)));
 
           // Set font & bright red text color
           ctx.font = `bold ${fontSize}px monospace, sans-serif`;
-          ctx.fillStyle = '#ef4444'; // Red text color
+          ctx.fillStyle = '#ef4444';
 
-          // Render each item on its own new line (no icons)
+          // Render each item on its own new line
           lines.forEach((lineText, index) => {
-            const y = img.height - bannerHeight + bannerPadding + (index + 1) * lineSpacing - 4;
+            const y = targetHeight - bannerHeight + bannerPadding + (index + 1) * lineSpacing - 4;
             ctx.fillText(lineText, 16, y);
           });
 
@@ -130,7 +178,7 @@ const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
             if (!blob) return resolve(fileObj);
             const watermarkedFile = new File([blob], `wm_${cleanName}`, { type: 'image/jpeg' });
             resolve(watermarkedFile);
-          }, 'image/jpeg', 0.92);
+          }, 'image/jpeg', 0.78);
         } catch (err) {
           console.error('Canvas watermark processing error:', err);
           resolve(fileObj);
@@ -143,13 +191,22 @@ const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
 };
 
 export default function MobileAppView({ currentUser, onLogout, onSelectSite, currentTheme = 'sky', onThemeChange }) {
-  const [activeSubTab, setActiveSubTab] = useState('overview'); // 'overview', 'note', 'whatsapp', 'ai', 'sites', 'queue'
+  const [activeSubTab, setActiveSubTab] = useState('overview'); // 'overview', 'sites', 'map', 'fse', 'tnl', 'note', 'whatsapp', 'ai', 'reports', 'queue', 'admin', 'profile'
+  const [selectedSiteId, setSelectedSiteId] = useState(null);
   const [isOnline, setIsOnline] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingNotes, setPendingNotes] = useState(getPendingNotes());
   const [pendingWa, setPendingWa] = useState(getPendingWhatsApp());
+  const [pendingAudits, setPendingAudits] = useState(getPendingFseAudits());
   const [cachedSites, setCachedSites] = useState(getCachedSites());
   const [syncStatusMsg, setSyncStatusMsg] = useState(null);
+
+  const handleMobileSelectSite = (siteId) => {
+    if (!siteId) return;
+    setSelectedSiteId(siteId);
+    setActiveSubTab('profile');
+    if (onSelectSite) onSelectSite(siteId);
+  };
 
   // Mobile Theme State
   const [theme, setTheme] = useState(() => localStorage.getItem('fct_sdm_theme') || currentTheme || 'sky');
@@ -214,12 +271,24 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
     return new Date(dateObj.getTime() - tzOffset).toISOString().slice(0, 16);
   };
 
+  const noteCategories = [
+    'Power', 'Transmission', 'Generator', 'Battery', 'Fuel', 
+    'Microwave', 'RAN', 'Fiber', 'Security', 'SA Alarms', 'Customer', 
+    'Preventive Maintenance', 'Corrective Maintenance', 'General'
+  ];
+  const notePriorities = ['Critical', 'High', 'Medium', 'Low'];
+  const noteStatuses = ['Open', 'In Progress', 'Resolved', 'Escalated'];
+
+  const [editingNote, setEditingNote] = useState(null);
   const [noteSiteId, setNoteSiteId] = useState('');
   const [noteTitle, setNoteTitle] = useState('');
   const [noteIncidentTime, setNoteIncidentTime] = useState(() => toLocalISOString(new Date()));
   const [noteCategory, setNoteCategory] = useState('Generator');
-  const [notePriority, setNotePriority] = useState('High');
+  const [notePriority, setNotePriority] = useState('Medium');
+  const [noteStatus, setNoteStatus] = useState('Open');
+  const [noteCreatedBy, setNoteCreatedBy] = useState(() => currentUser?.full_name || currentUser?.username || 'State Delivery Manager');
   const [noteDescription, setNoteDescription] = useState('');
+  const [noteAppendUpdate, setNoteAppendUpdate] = useState('');
   const [notePhotos, setNotePhotos] = useState([]);
   const [notePhotoPreviews, setNotePhotoPreviews] = useState([]);
 
@@ -272,6 +341,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
   const refreshPendingQueues = () => {
     setPendingNotes(getPendingNotes());
     setPendingWa(getPendingWhatsApp());
+    setPendingAudits(getPendingFseAudits());
   };
 
   // Perform full network sync when in range of server
@@ -321,11 +391,9 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
               const fileObj = base64ToFile(photoItem, `offline_photo_${idx + 1}.jpg`);
               if (fileObj) {
                 formData.append('photos', fileObj);
-                formData.append('uploaded_photos', fileObj);
               }
             } else if (photoItem && photoItem instanceof File) {
               formData.append('photos', photoItem);
-              formData.append('uploaded_photos', photoItem);
             }
           });
         }
@@ -403,6 +471,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
       console.error('Error watermarking photo:', err);
     } finally {
       setIsProcessingPhotos(false);
+      try { e.target.value = ''; } catch {}
     }
   };
 
@@ -416,7 +485,39 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
     loadLiveServerFeeds();
   };
 
-  // Save New Note
+  // Open Edit Note Form
+  const handleOpenEditNote = (note) => {
+    setEditingNote(note);
+    setNoteSiteId(note.site_ihs_id || note.site_id_str || note.site_id_input || '');
+    setNoteTitle(note.title || '');
+    setNoteCategory(note.category || 'General');
+    setNotePriority(note.priority || 'Medium');
+    setNoteStatus(note.status || 'Open');
+    setNoteCreatedBy(note.created_by || currentUser?.full_name || 'State Delivery Manager');
+    setNoteIncidentTime(note.created_at ? toLocalISOString(note.created_at) : toLocalISOString(new Date()));
+    setNoteDescription(note.description || '');
+    setNoteAppendUpdate('');
+    setNotePhotos([]);
+    setNotePhotoPreviews([]);
+    setActiveSubTab('note');
+  };
+
+  const handleResetNoteForm = () => {
+    setEditingNote(null);
+    setNoteSiteId('');
+    setNoteTitle('');
+    setNoteCategory('Generator');
+    setNotePriority('Medium');
+    setNoteStatus('Open');
+    setNoteCreatedBy(currentUser?.full_name || 'State Delivery Manager');
+    setNoteIncidentTime(toLocalISOString(new Date()));
+    setNoteDescription('');
+    setNoteAppendUpdate('');
+    setNotePhotos([]);
+    setNotePhotoPreviews([]);
+  };
+
+  // Save or Update Note
   const [isSavingNote, setIsSavingNote] = useState(false);
 
   const handleSaveNote = async (e) => {
@@ -435,9 +536,17 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
     }
 
     const activeUser = currentUser || { full_name: 'Field SDM Engineer', username: 'field_sdm' };
+    const authorName = noteCreatedBy.trim() || activeUser.full_name || activeUser.username || 'State Delivery Manager';
     setIsSavingNote(true);
 
     try {
+      let finalDescription = noteDescription.trim();
+      if (noteAppendUpdate && noteAppendUpdate.trim()) {
+        const timestamp = new Date().toLocaleString();
+        const updateHeader = `\n\n--- [UPDATE by ${authorName} @ ${timestamp}] ---\n`;
+        finalDescription = finalDescription + updateHeader + noteAppendUpdate.trim();
+      }
+
       const base64Photos = await Promise.all((notePhotos || []).map(f => fileToBase64(f)));
       const cleanPhotos = base64Photos.filter(Boolean);
 
@@ -447,20 +556,23 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
         title: noteTitle.trim(),
         category: noteCategory,
         priority: notePriority,
-        description: noteDescription.trim(),
-        created_by: activeUser.full_name || activeUser.username || 'Field SDM',
+        status: noteStatus,
+        description: finalDescription,
+        created_by: authorName,
         created_at: noteIncidentTime ? new Date(noteIncidentTime).toISOString() : new Date().toISOString(),
         photos: cleanPhotos
       };
 
-      if (isOnline) {
-        try {
+      if (editingNote && editingNote.id) {
+        // Editing existing note online
+        if (isOnline) {
           const formData = new FormData();
           formData.append('site_id_input', notePayload.site_id_str);
           formData.append('site_id_str', notePayload.site_id_str);
           formData.append('title', notePayload.title);
           formData.append('category', notePayload.category);
           formData.append('priority', notePayload.priority);
+          formData.append('status', notePayload.status);
           formData.append('description', notePayload.description);
           formData.append('created_by', notePayload.created_by);
           if (noteIncidentTime) {
@@ -468,32 +580,55 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
           }
           notePhotos.forEach(file => {
             formData.append('photos', file);
-            formData.append('uploaded_photos', file);
           });
 
-          await createNote(formData);
-          setSyncStatusMsg({ type: 'success', text: `🟢 Note created & saved directly to server for site ${notePayload.site_id_str}!` });
-          alert(`✅ Success! Note for site ${notePayload.site_id_str} saved to server.`);
+          await updateNote(editingNote.id, formData);
+          setSyncStatusMsg({ type: 'success', text: `🟢 Note updated successfully on server for site ${notePayload.site_id_str}!` });
+          alert(`✅ Success! Note for site ${notePayload.site_id_str} updated.`);
           loadLiveServerFeeds();
-        } catch (e) {
-          saveOfflineNote(notePayload);
-          refreshPendingQueues();
-          const serverErr = e.response?.data?.error || e.message || 'Server network error';
-          setSyncStatusMsg({ type: 'warning', text: `📦 Note saved to Offline Queue (${serverErr}). It will auto-sync when server connects.` });
-          alert(`📦 Saved to Offline Queue! Note for site ${notePayload.site_id_str} saved locally for auto-sync.`);
+        } else {
+          alert('⚠️ Network offline: Note updates require an online connection.');
         }
       } else {
-        saveOfflineNote(notePayload);
-        refreshPendingQueues();
-        setSyncStatusMsg({ type: 'warning', text: `📦 Offline Mode: Note saved to local device queue for site ${notePayload.site_id_str}!` });
-        alert(`📦 Offline Mode: Note for site ${notePayload.site_id_str} saved to local device queue.`);
+        // Creating new note
+        if (isOnline) {
+          try {
+            const formData = new FormData();
+            formData.append('site_id_input', notePayload.site_id_str);
+            formData.append('site_id_str', notePayload.site_id_str);
+            formData.append('title', notePayload.title);
+            formData.append('category', notePayload.category);
+            formData.append('priority', notePayload.priority);
+            formData.append('status', notePayload.status);
+            formData.append('description', notePayload.description);
+            formData.append('created_by', notePayload.created_by);
+            if (noteIncidentTime) {
+              formData.append('created_at', noteIncidentTime);
+            }
+            notePhotos.forEach(file => {
+              formData.append('photos', file);
+            });
+
+            await createNote(formData);
+            setSyncStatusMsg({ type: 'success', text: `🟢 Note created & saved directly to server for site ${notePayload.site_id_str}!` });
+            alert(`✅ Success! Note for site ${notePayload.site_id_str} saved to server.`);
+            loadLiveServerFeeds();
+          } catch (e) {
+            saveOfflineNote(notePayload);
+            refreshPendingQueues();
+            const serverErr = e.response?.data?.error || e.message || 'Server network error';
+            setSyncStatusMsg({ type: 'warning', text: `📦 Note saved to Offline Queue (${serverErr}). It will auto-sync when server connects.` });
+            alert(`📦 Saved to Offline Queue! Note for site ${notePayload.site_id_str} saved locally for auto-sync.`);
+          }
+        } else {
+          saveOfflineNote(notePayload);
+          refreshPendingQueues();
+          setSyncStatusMsg({ type: 'warning', text: `📦 Offline Mode: Note saved to local device queue for site ${notePayload.site_id_str}!` });
+          alert(`📦 Offline Mode: Note for site ${notePayload.site_id_str} saved to local device queue.`);
+        }
       }
 
-      setNoteSiteId('');
-      setNoteTitle('');
-      setNoteDescription('');
-      setNotePhotos([]);
-      setNotePhotoPreviews([]);
+      handleResetNoteForm();
     } catch (err) {
       alert('Error saving note: ' + err.message);
     } finally {
@@ -547,14 +682,25 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
     }
   };
 
-  // Delete Live Note
-  const handleDeleteLiveNote = async (note) => {
-    if (!window.confirm(`Delete note "${note.title}"?`)) return;
+  // Delete Live Note Modal State & Handler
+  const [mobileNoteToDelete, setMobileNoteToDelete] = useState(null);
+  const [isDeletingMobileNote, setIsDeletingMobileNote] = useState(false);
+
+  const handleDeleteLiveNote = (note) => {
+    setMobileNoteToDelete(note);
+  };
+
+  const handleConfirmDeleteLiveNote = async () => {
+    if (!mobileNoteToDelete) return;
+    setIsDeletingMobileNote(true);
     try {
-      await deleteNote(note.id, { user: currentUser?.full_name, sdm: currentUser?.full_name, is_superuser: currentUser?.is_superuser });
+      await deleteNote(mobileNoteToDelete.id, { user: currentUser?.full_name, sdm: currentUser?.full_name, is_superuser: currentUser?.is_superuser });
+      setMobileNoteToDelete(null);
       loadLiveServerFeeds();
     } catch (e) {
       alert('Error deleting note: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setIsDeletingMobileNote(false);
     }
   };
 
@@ -753,120 +899,197 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
       )}
 
       {/* Mobile Touch Navigation Sub-Tabs */}
-      <div className="flex overflow-x-auto p-1 bg-slate-900/90 rounded-xl border border-slate-800 text-xs font-bold gap-1 no-scrollbar">
+      <div className="flex overflow-x-auto p-1.5 bg-slate-900/95 rounded-2xl border border-slate-800 text-xs font-bold gap-1.5 no-scrollbar shadow-lg sticky top-0 z-30 backdrop-blur-md">
         <button
-          onClick={() => setActiveSubTab('overview')}
-          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'overview' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('overview'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'overview' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
           }`}
         >
-          <BarChart3 className="w-4 h-4" />
+          <BarChart3 className="w-4 h-4 text-cyan-400" />
           <span>Overview</span>
         </button>
 
         <button
-          onClick={() => setActiveSubTab('note')}
-          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'note' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('sites'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'sites' || activeSubTab === 'profile' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
           }`}
         >
-          <FileText className="w-4 h-4" />
-          <span>SDM Notes</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('whatsapp')}
-          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'whatsapp' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4" />
-          <span>WhatsApp</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('ai')}
-          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'ai' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Bot className="w-4 h-4 text-cyan-400" />
-          <span>AI Assistant</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('sites')}
-          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'sites' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
+          <Layers className="w-4 h-4 text-blue-400" />
           <span>Sites ({cachedSites.length})</span>
         </button>
 
         <button
-          onClick={() => setActiveSubTab('queue')}
-          className={`flex-1 py-2.5 px-3 rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'queue' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white'
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('map'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'map' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
           }`}
         >
-          <UploadCloud className="w-4 h-4" />
+          <MapPin className="w-4 h-4 text-emerald-400" />
+          <span>Live Map</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('fse'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'fse' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-amber-400" />
+          <span>FSE Audit</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('tnl'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'tnl' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Radio className="w-4 h-4 text-violet-400" />
+          <span>TNL Links</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('note'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'note' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <FileText className="w-4 h-4 text-teal-400" />
+          <span>SDM Notes</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('whatsapp'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'whatsapp' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <MessageSquare className="w-4 h-4 text-emerald-400" />
+          <span>WhatsApp</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('ai'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'ai' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Bot className="w-4 h-4 text-purple-400" />
+          <span>AI Assistant</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('reports'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'reports' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4 text-pink-400" />
+          <span>Reports</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('queue'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'queue' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <UploadCloud className="w-4 h-4 text-cyan-400" />
           <span>Queue {pendingTotal > 0 ? `(${pendingTotal})` : ''}</span>
         </button>
+
+        {currentUser?.is_superuser && (
+          <button
+            onClick={() => { setSelectedSiteId(null); setActiveSubTab('admin'); }}
+            className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+              activeSubTab === 'admin' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 text-red-400" />
+            <span>Admin</span>
+          </button>
+        )}
       </div>
 
-      {/* Sub-Tab 0: Overview Summary & Mobile Shortcuts */}
+      {/* Sub-Tab 0: Overview Summary */}
       {activeSubTab === 'overview' && (
         <div className="space-y-4">
-          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
-              <Zap className="w-4 h-4 text-cyan-400" />
-              Quick Mobile Field Actions
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button
-                onClick={() => setActiveSubTab('note')}
-                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-cyan-500/30 text-left transition-all space-y-1"
-              >
-                <div className="flex items-center justify-between text-cyan-300 font-bold text-xs">
-                  <span className="flex items-center gap-1.5"><FileText className="w-4 h-4" /> Create SDM Note</span>
-                  <ChevronRight className="w-4 h-4 text-slate-400" />
-                </div>
-                <p className="text-[11px] text-slate-400">Log generator, power outage, or maintenance notes (works offline).</p>
-              </button>
+          {/* Quick Action Bar */}
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() => { setSelectedSiteId(null); setActiveSubTab('note'); }}
+              className="py-3 px-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex flex-col items-center justify-center gap-1 transition-all"
+            >
+              <FileText className="w-4 h-4 text-cyan-200" />
+              <span>Log Note</span>
+            </button>
 
-              <button
-                onClick={() => setActiveSubTab('whatsapp')}
-                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-emerald-500/30 text-left transition-all space-y-1"
-              >
-                <div className="flex items-center justify-between text-emerald-300 font-bold text-xs">
-                  <span className="flex items-center gap-1.5"><MessageSquare className="w-4 h-4" /> Log WhatsApp Intel</span>
-                  <ChevronRight className="w-4 h-4 text-slate-400" />
-                </div>
-                <p className="text-[11px] text-slate-400">Log field arrival times, diesel refills, or engineer updates.</p>
-              </button>
+            <button
+              onClick={() => { setSelectedSiteId(null); setActiveSubTab('fse'); }}
+              className="py-3 px-2 bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-xs rounded-xl border border-amber-500/30 flex flex-col items-center justify-center gap-1 transition-all"
+            >
+              <ShieldCheck className="w-4 h-4 text-amber-400" />
+              <span>FSE Audit</span>
+            </button>
 
-              <button
-                onClick={() => setActiveSubTab('ai')}
-                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-purple-500/30 text-left transition-all space-y-1"
-              >
-                <div className="flex items-center justify-between text-purple-300 font-bold text-xs">
-                  <span className="flex items-center gap-1.5"><Bot className="w-4 h-4 text-purple-400" /> AI Site Assistant</span>
-                  <ChevronRight className="w-4 h-4 text-slate-400" />
-                </div>
-                <p className="text-[11px] text-slate-400">Instant AI diagnostics for generator alarms & outage causes.</p>
-              </button>
+            <button
+              onClick={() => { setSelectedSiteId(null); setActiveSubTab('whatsapp'); }}
+              className="py-3 px-2 bg-slate-900 hover:bg-slate-800 text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/30 flex flex-col items-center justify-center gap-1 transition-all"
+            >
+              <MessageSquare className="w-4 h-4 text-emerald-400" />
+              <span>WhatsApp</span>
+            </button>
+          </div>
 
+          {/* Quick Search & Field Sites List */}
+          <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-cyan-400" /> Assigned Sites ({cachedSites.length})
+              </h3>
               <button
                 onClick={() => setActiveSubTab('sites')}
-                className="p-4 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-blue-500/30 text-left transition-all space-y-1"
+                className="text-[11px] text-cyan-400 hover:underline font-bold flex items-center gap-0.5"
               >
-                <div className="flex items-center justify-between text-blue-300 font-bold text-xs">
-                  <span className="flex items-center gap-1.5"><Layers className="w-4 h-4" /> SDM Sites Directory</span>
-                  <ChevronRight className="w-4 h-4 text-slate-400" />
-                </div>
-                <p className="text-[11px] text-slate-400">Browse {cachedSites.length} cached sites assigned to {currentUser?.full_name}.</p>
+                <span>View All</span>
+                <ChevronRight className="w-3.5 h-3.5" />
               </button>
+            </div>
+
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+              <input
+                type="text"
+                placeholder="Search site ID, state, vendor..."
+                value={siteSearch}
+                onChange={(e) => setSiteSearch(e.target.value)}
+                className="w-full bg-slate-950 text-xs text-white pl-9 pr-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-cyan-400"
+              />
+            </div>
+
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {filteredCachedSites.length === 0 ? (
+                <div className="p-6 text-center text-slate-500 text-xs">No sites found matching search.</div>
+              ) : (
+                filteredCachedSites.slice(0, 8).map(s => (
+                  <div
+                    key={s.id || s.ihs_site_id}
+                    onClick={() => handleMobileSelectSite(s.ihs_site_id)}
+                    className="p-3 bg-slate-900/90 hover:bg-slate-800/90 rounded-xl border border-slate-800/80 flex items-center justify-between cursor-pointer transition-all active:scale-[0.99]"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-cyan-300 font-mono text-xs">{s.ihs_site_id}</span>
+                        <span className="text-[10px] text-slate-400 font-medium">({s.state || 'FCT'})</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 truncate max-w-[220px]">{s.site_name || s.vendor_name || 'SDM Field Site'}</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -880,15 +1103,26 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <FileText className="w-4 h-4 text-cyan-400" />
-                Create Field SDM Operational Note
+                {editingNote ? `Edit Note: ${editingNote.site_ihs_id || noteSiteId}` : 'Create Field SDM Operational Note'}
               </h3>
-              <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
-                {isOnline ? '🟢 Live Online Save' : '📦 Local Device Queue'}
-              </span>
+              <div className="flex items-center gap-2">
+                {editingNote && (
+                  <button
+                    type="button"
+                    onClick={handleResetNoteForm}
+                    className="text-[10px] px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700"
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+                <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
+                  {isOnline ? '🟢 Live Online Save' : '📦 Local Device Queue'}
+                </span>
+              </div>
             </div>
 
             <form onSubmit={handleSaveNote} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-300 block mb-1">Target Site ID *</label>
                   <input
@@ -908,7 +1142,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                     onChange={(e) => setNoteCategory(e.target.value)}
                     className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
                   >
-                    {['Generator', 'Power', 'Battery', 'Transmission', 'SA Alarms', 'Access', 'Security', 'General'].map(cat => (
+                    {noteCategories.map(cat => (
                       <option key={cat} value={cat}>{cat}</option>
                     ))}
                   </select>
@@ -921,10 +1155,47 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                     onChange={(e) => setNotePriority(e.target.value)}
                     className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
                   >
-                    {['P1-Critical', 'High', 'Medium', 'Low'].map(p => (
+                    {notePriorities.map(p => (
                       <option key={p} value={p}>{p}</option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Status *</label>
+                  <select
+                    value={noteStatus}
+                    onChange={(e) => setNoteStatus(e.target.value)}
+                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                  >
+                    {noteStatuses.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Incident Occurrence Time *</label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={noteIncidentTime}
+                    onChange={(e) => setNoteIncidentTime(e.target.value)}
+                    className="w-full bg-slate-900 text-xs text-white font-mono p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1">Created By / Field Author *</label>
+                  <input
+                    type="text"
+                    value={noteCreatedBy}
+                    onChange={(e) => setNoteCreatedBy(e.target.value)}
+                    required
+                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                  />
                 </div>
               </div>
 
@@ -940,17 +1211,22 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                 />
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Detailed Operational Description *</label>
-                <textarea
-                  rows="3"
-                  placeholder="Describe root cause, action taken, FSE on site, status..."
-                  value={noteDescription}
-                  onChange={(e) => setNoteDescription(e.target.value)}
-                  required
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
+              {/* Progress Update Entry / New Data Field */}
+              {editingNote && (
+                <div className="p-3 bg-cyan-950/40 rounded-xl border border-cyan-500/30 space-y-1">
+                  <label className="block text-cyan-300 font-semibold text-xs flex items-center justify-between">
+                    <span>➕ Append New Progress Update / Field Data</span>
+                    <span className="text-[10px] text-cyan-400 font-normal">Appends timestamped entry to RCA history</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. FSE visited site at 18:45; swapped battery bank, power restored..."
+                    value={noteAppendUpdate}
+                    onChange={(e) => setNoteAppendUpdate(e.target.value)}
+                    className="w-full bg-slate-900 text-white p-2 rounded-lg border border-slate-700 focus:outline-none focus:border-cyan-400 text-xs"
+                  />
+                </div>
+              )}
 
               {/* Photo Picker with Camera & Watermarking */}
               <div>
@@ -1018,14 +1294,38 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                 )}
               </div>
 
-              <button
-                type="submit"
-                disabled={isSavingNote}
-                className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                <FileText className="w-4 h-4" />
-                <span>{isSavingNote ? 'Saving Operational Note...' : 'Save SDM Operational Note'}</span>
-              </button>
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">Detailed Operational Description *</label>
+                <textarea
+                  rows="3"
+                  placeholder="Describe root cause, action taken, FSE on site, status..."
+                  value={noteDescription}
+                  onChange={(e) => setNoteDescription(e.target.value)}
+                  required={!noteAppendUpdate.trim()}
+                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isSavingNote}
+                  className="flex-1 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>{isSavingNote ? 'Saving Operational Note...' : (editingNote ? 'Update SDM Operational Note' : 'Save SDM Operational Note')}</span>
+                </button>
+
+                {editingNote && (
+                  <button
+                    type="button"
+                    onClick={handleResetNoteForm}
+                    className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             </form>
           </div>
 
@@ -1059,7 +1359,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                     <div key={note.id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
                         <span 
-                          onClick={() => handleOpenSiteDetail({ ihs_site_id: note.site_ihs_id })}
+                          onClick={() => handleMobileSelectSite(note.site_ihs_id)}
                           className="font-extrabold text-cyan-300 font-mono cursor-pointer hover:underline"
                         >
                           {note.site_ihs_id}
@@ -1078,11 +1378,17 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                         </div>
                       </div>
                       <div className="text-xs font-bold text-white">{note.title}</div>
-                      <p className="text-[11px] text-slate-300 leading-relaxed">{note.description}</p>
+                      <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-line">{note.description}</p>
 
                       <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60">
-                        <span>By: {note.created_by}</span>
+                        <span>By: {note.created_by} ({new Date(note.created_at).toLocaleDateString()})</span>
                         <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => handleOpenEditNote(note)}
+                            className="text-cyan-400 hover:underline font-bold flex items-center gap-1"
+                          >
+                            <Edit3 className="w-3 h-3" /> Edit
+                          </button>
                           {note.status !== 'Resolved' && (
                             <button
                               onClick={() => handleQuickResolveLiveNote(note)}
@@ -1341,7 +1647,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
               {filteredCachedSites.slice(0, 60).map((site) => (
                 <div 
                   key={site.id} 
-                  onClick={() => handleOpenSiteDetail(site)}
+                  onClick={() => handleMobileSelectSite(site.ihs_site_id)}
                   className="p-3.5 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-slate-800 cursor-pointer transition-all space-y-1.5 group"
                 >
                   <div className="flex items-center justify-between">
@@ -1361,6 +1667,58 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Sub-Tab 5: Interactive Geo Map */}
+      {activeSubTab === 'map' && (
+        <div className="space-y-4">
+          <div className="glass-panel p-3 rounded-2xl border border-slate-800 min-h-[500px]">
+            <GeoMap currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Tab 6: FSE Audit & Inspector */}
+      {activeSubTab === 'fse' && (
+        <div className="space-y-4">
+          <SiteFseInspector currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
+        </div>
+      )}
+
+      {/* Sub-Tab 7: TNL Links Directory */}
+      {activeSubTab === 'tnl' && (
+        <div className="space-y-4">
+          <TNLLinksDirectory currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
+        </div>
+      )}
+
+      {/* Sub-Tab 8: Reports & Executive Analytics */}
+      {activeSubTab === 'reports' && (
+        <div className="space-y-4">
+          <ReportsAnalytics currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
+        </div>
+      )}
+
+      {/* Sub-Tab 9: SDM Admin & User Management */}
+      {activeSubTab === 'admin' && currentUser?.is_superuser && (
+        <div className="space-y-4">
+          <SDMUserManagement currentUser={currentUser} />
+        </div>
+      )}
+
+      {/* Sub-Tab 10: Detailed Site Profile View */}
+      {activeSubTab === 'profile' && selectedSiteId && (
+        <div className="space-y-4">
+          <SiteProfile
+            siteId={selectedSiteId}
+            currentUser={currentUser}
+            onBack={() => setActiveSubTab('sites')}
+            onOpenAIWithPrompt={(promptText) => {
+              setAiQuery(promptText);
+              setActiveSubTab('ai');
+            }}
+          />
         </div>
       )}
 
@@ -1437,6 +1795,25 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                     <button
                       onClick={() => {
                         removePendingWhatsApp(wa.local_id);
+                        refreshPendingQueues();
+                      }}
+                      className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+
+                {/* Pending FSE Audits */}
+                {pendingAudits.map((audit) => (
+                  <div key={audit.local_id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-extrabold text-amber-300 font-mono">[FSE AUDIT] {audit.site_id} - {audit.engineer_name}</div>
+                      <div className="text-[11px] text-slate-400">DG: {audit.gen_hours || 'N/A'} hrs, Fuel: {audit.fuel_level || 'N/A'}%</div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        removePendingFseAudit(audit.local_id);
                         refreshPendingQueues();
                       }}
                       className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
@@ -1547,6 +1924,22 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
           </div>
         </div>
       )}
+
+      {/* Confirm Delete Modal */}
+      <ConfirmDeleteModal
+        isOpen={!!mobileNoteToDelete}
+        title="Delete SDM Operational Note"
+        message="Are you sure you want to delete this SDM Operational Note? This will permanently erase the note and evidence from the server."
+        itemDetails={mobileNoteToDelete ? {
+          siteId: mobileNoteToDelete.site_ihs_id || mobileNoteToDelete.site_id_str,
+          itemTitle: mobileNoteToDelete.title,
+          author: mobileNoteToDelete.created_by
+        } : null}
+        confirmText="Permanently Delete Note"
+        onConfirm={handleConfirmDeleteLiveNote}
+        onCancel={() => setMobileNoteToDelete(null)}
+        isDeleting={isDeletingMobileNote}
+      />
     </div>
   );
 }
