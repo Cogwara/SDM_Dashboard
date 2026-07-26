@@ -1,11 +1,16 @@
 from rest_framework import serializers
-from .models import Site, Notification
+from .models import Site, Notification, TNLLink
 from notes.models import SiteNote, SiteAttachment, SiteTimeline
 from whatsapp.models import WhatsAppMessage
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
+        fields = '__all__'
+
+class TNLLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TNLLink
         fields = '__all__'
 
 class SimpleNoteSerializer(serializers.ModelSerializer):

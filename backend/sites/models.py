@@ -73,3 +73,26 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"[{self.alert_type}] {self.title}"
+
+
+class TNLLink(models.Model):
+    state = models.CharField(max_length=50, blank=True, default='')
+    region = models.CharField(max_length=50, blank=True, default='')
+    site_a = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    site_b = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    segment_name = models.CharField(max_length=255, blank=True, default='')
+    distance_km = models.FloatField(null=True, blank=True, default=0.0)
+    network_type = models.CharField(max_length=50, blank=True, default='')
+    old_fmp = models.CharField(max_length=100, blank=True, default='')
+    maintenance_fmp = models.CharField(max_length=100, blank=True, default='TNL')
+    
+    site_a_ref = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name='tnl_links_a')
+    site_b_ref = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name='tnl_links_b')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['state', 'segment_name']
+
+    def __str__(self):
+        return f"TNL Link [{self.state}] {self.segment_name} ({self.distance_km}km)"

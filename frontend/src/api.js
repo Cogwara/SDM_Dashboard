@@ -67,6 +67,15 @@ export const api = axios.create({
   },
 });
 
+// Dynamically evaluate baseURL before every request to eliminate stale IP connection issues
+api.interceptors.request.use(
+  (config) => {
+    config.baseURL = getBaseUrl();
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 // Update base URL dynamically when server IP changes
 export const setCustomServerIp = (ip) => {
   const currentHost = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
@@ -118,6 +127,26 @@ export const assignStateToSDM = async (sdmName, stateName = '', sdmPhone = '', s
 
 export const fetchAvailableStates = async () => {
   const res = await api.get('/auth/states/');
+  return res.data;
+};
+
+export const bulkSiteLookup = async (siteIds) => {
+  const res = await api.post('/sites/bulk_lookup/', { site_ids: siteIds });
+  return res.data;
+};
+
+export const fetchTNLLinks = async (params = {}) => {
+  const res = await api.get('/tnl_links/', { params });
+  return res.data;
+};
+
+export const fetchTNLLinkStats = async (params = {}) => {
+  const res = await api.get('/tnl_links/stats/', { params });
+  return res.data;
+};
+
+export const fetchTNLLinkImpact = async (linkId) => {
+  const res = await api.get(`/tnl_links/${linkId}/impact/`);
   return res.data;
 };
 

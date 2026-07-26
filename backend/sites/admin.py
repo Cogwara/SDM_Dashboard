@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Site, Notification
+from .models import Site, Notification, TNLLink
 
 @admin.register(Site)
 class SiteAdmin(admin.ModelAdmin):
@@ -65,4 +65,12 @@ class NotificationAdmin(admin.ModelAdmin):
     list_filter = ('alert_type', 'is_read', 'created_at')
     search_fields = ('title', 'message', 'site__ihs_site_id')
     ordering = ('-created_at',)
+    list_per_page = 50
+
+@admin.register(TNLLink)
+class TNLLinkAdmin(admin.ModelAdmin):
+    list_display = ('segment_name', 'state', 'region', 'site_a', 'site_b', 'distance_km', 'network_type', 'maintenance_fmp', 'old_fmp')
+    list_filter = ('state', 'region', 'network_type', 'maintenance_fmp', 'old_fmp')
+    search_fields = ('segment_name', 'site_a', 'site_b', 'state', 'region', 'old_fmp')
+    ordering = ('state', 'segment_name')
     list_per_page = 50
