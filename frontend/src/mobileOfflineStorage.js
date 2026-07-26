@@ -37,6 +37,14 @@ export const saveCachedSites = (sites) => {
   }
 };
 
+export const clearCachedSites = () => {
+  try {
+    localStorage.removeItem(CACHED_SITES_KEY);
+  } catch (e) {
+    console.error('Failed to clear cached sites:', e);
+  }
+};
+
 export const getLastSyncTime = () => {
   return localStorage.getItem(LAST_SYNC_KEY) || null;
 };

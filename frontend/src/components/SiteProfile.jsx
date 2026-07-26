@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, Radio, Zap, Shield, Phone, User, MapPin, Calendar, Clock, 
   FileText, MessageSquare, AlertTriangle, ChevronRight, CheckCircle2, 
-  ExternalLink, Layers, Search, Database, Cpu, Wifi, Edit3, Camera, Upload, X, Maximize2
+  ExternalLink, Layers, Search, Database, Cpu, Wifi, Edit3, Camera, Upload, X, Maximize2, Trash2
 } from 'lucide-react';
-import { lookupSite, createNote, updateNote, resolveNote } from '../api';
+import { lookupSite, createNote, updateNote, resolveNote, deleteNote } from '../api';
 
 export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithPrompt }) {
   const [site, setSite] = useState(null);
@@ -119,6 +119,20 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
       loadSite();
     } catch (err) {
       alert('Error resolving note: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDeleteNote = async (n) => {
+    if (!window.confirm(`Are you sure you want to delete note "${n.title}"?`)) return;
+    try {
+      await deleteNote(n.id, {
+        user: userSdmName,
+        sdm: userSdmName,
+        is_superuser: isSuperuser
+      });
+      loadSite();
+    } catch (err) {
+      alert('Error deleting note: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -533,13 +547,22 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
                           </button>
                         )}
                         {canEdit && (
-                          <button
-                            onClick={() => handleOpenEditNote(n)}
-                            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 rounded transition-all"
-                            title="Edit / Update Note"
-                          >
-                            <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
-                          </button>
+                          <div className="flex items-center space-x-1">
+                            <button
+                              onClick={() => handleOpenEditNote(n)}
+                              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 rounded transition-all"
+                              title="Edit / Update Note"
+                            >
+                              <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteNote(n)}
+                              className="p-1 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded transition-all"
+                              title={isSuperuser ? "Delete Note (Superuser)" : "Delete Note"}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                            </button>
+                          </div>
                         )}
                       </div>
                       <div className="flex items-center space-x-1.5">
