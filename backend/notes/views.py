@@ -333,10 +333,13 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
 
     def _save_uploaded_photos(self, request, site, note):
         files = []
+        seen_files = set()
         for key in ['photos', 'attachments', 'file', 'photo', 'uploaded_photos', 'uploaded_photo']:
-            files.extend(request.FILES.getlist(key))
-            if key in request.FILES and request.FILES[key] not in files:
-                files.append(request.FILES[key])
+            for f in request.FILES.getlist(key):
+                file_sig = (f.name, getattr(f, 'size', 0))
+                if file_sig not in seen_files:
+                    seen_files.add(file_sig)
+                    files.append(f)
 
         for f in files:
             content_type = getattr(f, 'content_type', '') or ''

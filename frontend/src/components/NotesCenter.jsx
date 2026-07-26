@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, Plus, Search, Filter, Clock, Tag, AlertTriangle, CheckCircle, User, Radio, Lock, Edit3, Download, CheckCircle2, Camera, Upload, X, Maximize2, Calendar, Trash2 } from 'lucide-react';
 import { fetchNotes, createNote, updateNote, resolveNote, deleteNote, exportNotesExcel } from '../api';
+import ConfirmDeleteModal from './ConfirmDeleteModal';
 
 export default function NotesCenter({ onSelectSite, currentUser }) {
   const isSuperuser = currentUser?.is_superuser;
@@ -103,6 +104,7 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
 
     const newPreviews = files.map((file) => URL.createObjectURL(file));
     setPhotoPreviews((prev) => [...prev, ...newPreviews]);
+    try { e.target.value = ''; } catch {}
   };
 
   const handleRemoveSelectedPhoto = (index) => {
@@ -156,17 +158,28 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
     }
   };
 
-  const handleDeleteNote = async (note) => {
-    if (!window.confirm(`Are you sure you want to delete note "${note.title}" for site ${note.site_ihs_id}?`)) return;
+  const [noteToDelete, setNoteToDelete] = useState(null);
+  const [isDeletingNote, setIsDeletingNote] = useState(false);
+
+  const handleDeleteNote = (note) => {
+    setNoteToDelete(note);
+  };
+
+  const handleConfirmDeleteNote = async () => {
+    if (!noteToDelete) return;
+    setIsDeletingNote(true);
     try {
-      await deleteNote(note.id, {
+      await deleteNote(noteToDelete.id, {
         user: userSdmName,
         sdm: userSdmName,
         is_superuser: isSuperuser
       });
+      setNoteToDelete(null);
       loadNotes();
     } catch (err) {
       alert('Error deleting note: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setIsDeletingNote(false);
     }
   };
 
@@ -773,6 +786,21 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
         </div>
       )}
 
+      {/* Confirm Delete Modal */}
+      <ConfirmDeleteModal
+        isOpen={!!noteToDelete}
+        title="Delete SDM Operational Note"
+        message="Are you sure you want to delete this SDM Operational Note? This will remove the note and all attached evidence from the server."
+        itemDetails={noteToDelete ? {
+          siteId: noteToDelete.site_ihs_id,
+          itemTitle: noteToDelete.title,
+          author: noteToDelete.created_by
+        } : null}
+        confirmText="Permanently Delete Note"
+        onConfirm={handleConfirmDeleteNote}
+        onCancel={() => setNoteToDelete(null)}
+        isDeleting={isDeletingNote}
+      />
     </div>
   );
 }
