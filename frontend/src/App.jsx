@@ -11,7 +11,10 @@ import GeoMap from './components/GeoMap';
 import SDMLoginModal from './components/SDMLoginModal';
 import SDMUserManagement from './components/SDMUserManagement';
 import MobileAppView from './components/MobileAppView';
+import SiteFseInspector from './components/SiteFseInspector';
+import TNLLinksDirectory from './components/TNLLinksDirectory';
 import { fetchDashboardStats, fetchNotes, fetchWhatsAppMessages, fetchNotifications, markAllNotificationsRead } from './api';
+import { getSDMStateInfo } from './utils/userUtils';
 import { Bell, CheckCircle, AlertTriangle, Radio, Eye, Bot, X, ShieldAlert, Clock, MapPin, User } from 'lucide-react';
 
 export default function App() {
@@ -57,22 +60,23 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState(null);
 
-  const loadGlobalData = async () => {
-    if (!currentUser) return;
+  const loadGlobalData = async (userToUse = currentUser) => {
+    const targetUser = userToUse || currentUser;
+    if (!targetUser) return;
     try {
-      const sdmParam = !currentUser.is_superuser ? currentUser.full_name : undefined;
+      const sdmParam = !targetUser.is_superuser ? targetUser.full_name : undefined;
 
-      const statsRes = await fetchDashboardStats({ sdm: sdmParam });
-      setStats(statsRes);
+      const [statsRes, notesRes, waRes, notifRes] = await Promise.all([
+        fetchDashboardStats({ sdm: sdmParam }),
+        fetchNotes({ sdm: sdmParam, page_size: 5 }),
+        fetchWhatsAppMessages({ sdm: sdmParam, page_size: 5 }),
+        fetchNotifications({ sdm: sdmParam })
+      ]);
 
-      const notesRes = await fetchNotes({ sdm: sdmParam, page_size: 5 });
-      setRecentNotes(notesRes.results || notesRes);
-
-      const waRes = await fetchWhatsAppMessages({ sdm: sdmParam, page_size: 5 });
-      setRecentWhatsApp(waRes.results || waRes);
-
-      const notifRes = await fetchNotifications({ sdm: sdmParam });
-      setNotifications(notifRes.results || notifRes);
+      if (statsRes) setStats(statsRes);
+      if (notesRes) setRecentNotes(Array.isArray(notesRes) ? notesRes : notesRes.results || []);
+      if (waRes) setRecentWhatsApp(Array.isArray(waRes) ? waRes : waRes.results || []);
+      if (notifRes) setNotifications(Array.isArray(notifRes) ? notifRes : notifRes.results || []);
     } catch (e) {
       console.error('Data load error:', e);
     }
@@ -80,8 +84,8 @@ export default function App() {
 
   useEffect(() => {
     if (currentUser) {
-      loadGlobalData();
-      const interval = setInterval(loadGlobalData, 30000);
+      loadGlobalData(currentUser);
+      const interval = setInterval(() => loadGlobalData(currentUser), 30000);
       return () => clearInterval(interval);
     }
   }, [currentUser]);
@@ -90,6 +94,7 @@ export default function App() {
     localStorage.setItem('fct_sdm_token', token);
     localStorage.setItem('fct_sdm_user', JSON.stringify(userObj));
     setCurrentUser(userObj);
+    loadGlobalData(userObj);
   };
 
   const handleLogout = () => {
@@ -175,6 +180,7 @@ export default function App() {
             recentWhatsApp={recentWhatsApp}
             setActiveTab={setActiveTab}
             onNavigateWithFilter={handleNavigateWithFilter}
+            currentUser={currentUser}
           />
         )}
 
@@ -195,6 +201,14 @@ export default function App() {
             onBack={() => setActiveTab('database')}
             onOpenAIWithPrompt={() => setActiveTab('ai')}
           />
+        )}
+
+        {activeTab === 'tnl_links' && (
+          <TNLLinksDirectory currentUser={currentUser} onSelectSite={handleSelectSite} />
+        )}
+
+        {activeTab === 'fse_inspector' && (
+          <SiteFseInspector currentUser={currentUser} onSelectSite={handleSelectSite} />
         )}
 
         {activeTab === 'notes' && (
@@ -224,7 +238,7 @@ export default function App() {
           <MobileAppView currentUser={currentUser} onSelectSite={handleSelectSite} />
         )}
 
-        {activeTab === 'admin' && currentUser && (
+        {activeTab === 'admin' && currentUser?.is_superuser && (
           <SDMUserManagement currentUser={currentUser} />
         )}
 
@@ -380,7 +394,9 @@ export default function App() {
 
       {/* Footer */}
       <footer className="glass-panel border-t border-slate-800/80 py-4 mt-8 text-center text-xs text-slate-500">
-        <p>FCT SDM Dashboard v2.0 &bull; Logged in as: <b className="text-slate-300">{currentUser.full_name}</b> ({currentUser.role}) &bull; Federal Capital Territory</p>
+        <p>
+          {getSDMStateInfo(currentUser).footerText}
+        </p>
       </footer>
 
     </div>

@@ -3,13 +3,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Sum
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
-from .models import Site, Notification
+from .models import Site, Notification, TNLLink
 from notes.models import SiteNote
 from whatsapp.models import WhatsAppMessage
-from .serializers import SiteSerializer, SiteDetailSerializer, NotificationSerializer
+from .serializers import SiteSerializer, SiteDetailSerializer, NotificationSerializer, TNLLinkSerializer
 
 class FlexiblePagination(PageNumberPagination):
     page_size = 50
@@ -143,10 +143,38 @@ class SDMLoginView(APIView):
 
         if user:
             full_name = f"{user.first_name} {user.last_name}".strip() or user.username
-            site_sample = Site.objects.filter(sdm_name__icontains=user.first_name).first()
-            phone = site_sample.sdm_phone if site_sample else '0800-000-000'
-            assigned_count = Site.objects.filter(sdm_name__icontains=user.first_name).count()
+            
+            # Smart search matching for SDM sites
+            assigned_sites_qs = Site.objects.filter(sdm_name__iexact=full_name)
+            if not assigned_sites_qs.exists() and full_name:
+                assigned_sites_qs = Site.objects.filter(sdm_name__icontains=full_name)
+            if not assigned_sites_qs.exists() and user.first_name and user.last_name:
+                assigned_sites_qs = Site.objects.filter(sdm_name__icontains=user.first_name).filter(sdm_name__icontains=user.last_name)
+            if not assigned_sites_qs.exists() and user.first_name:
+                assigned_sites_qs = Site.objects.filter(sdm_name__icontains=user.first_name)
+
+            site_sample = assigned_sites_qs.first()
+            phone = site_sample.sdm_phone if (site_sample and site_sample.sdm_phone) else '0800-000-000'
+            assigned_count = assigned_sites_qs.count()
             role = 'Super Administrator' if user.is_superuser else 'State Delivery Manager'
+
+            # Gather all assigned state territories
+            all_states_raw = assigned_sites_qs.values_list('state', flat=True).distinct()
+            all_assigned_states = []
+            for st in all_states_raw:
+                if not st: continue
+                clean_st = st.strip().upper()
+                if clean_st.startswith('RT') and len(clean_st) > 2:
+                    clean_st = clean_st[2:]
+                if clean_st and clean_st not in all_assigned_states:
+                    all_assigned_states.append(clean_st)
+
+            user_state = 'FCT'
+            if all_assigned_states:
+                user_state = all_assigned_states[0]
+
+            if not all_assigned_states:
+                all_assigned_states = ['FCT']
 
             return Response({
                 'token': f"sdm-jwt-token-{user.id}-fct-2026",
@@ -154,12 +182,14 @@ class SDMLoginView(APIView):
                     'id': user.id,
                     'username': user.username,
                     'full_name': full_name,
-                    'email': user.email,
+                    'email': user.email or f"{user.username}@fcttelecom.ng",
                     'phone': phone,
                     'role': role,
                     'is_superuser': user.is_superuser,
                     'assigned_sites_count': assigned_count if not user.is_superuser else Site.objects.count(),
-                    'region': 'Federal Capital Territory (FCT)'
+                    'state': user_state if not user.is_superuser else 'ALL',
+                    'assigned_states': all_assigned_states if not user.is_superuser else ['ALL'],
+                    'region': f"{user_state} Territory" if not user.is_superuser else 'All Nigeria State Territories'
                 }
             })
 
@@ -419,6 +449,116 @@ class AvailableStatesView(APIView):
         res = [{'state': st, 'count': cnt} for st, cnt in sorted(aggregated.items()) if cnt > 0]
         return Response(res)
 
+
+class BulkSiteNotesLookupView(APIView):
+    def post(self, request):
+        raw_ids = request.data.get('site_ids', '')
+        if isinstance(raw_ids, list):
+            site_ids_list = [str(x).strip().upper() for x in raw_ids if str(x).strip()]
+        elif isinstance(raw_ids, str):
+            import re
+            tokens = re.split(r'[,\s\n\r\t]+', raw_ids)
+            site_ids_list = [t.strip().upper() for t in tokens if t.strip()]
+        else:
+            site_ids_list = []
+
+        if not site_ids_list:
+            return Response({'error': 'Please provide at least one Site ID.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        unique_ids = list(dict.fromkeys(site_ids_list))
+
+        sites = Site.objects.filter(
+            Q(ihs_site_id__in=unique_ids) | Q(mtn_id__in=unique_ids) | Q(cascade__in=unique_ids)
+        ).prefetch_related('notes', 'notes__attachments')
+
+        site_map = {}
+        for s in sites:
+            site_map[s.ihs_site_id.upper()] = s
+            if s.mtn_id:
+                site_map[s.mtn_id.upper()] = s
+            if s.cascade:
+                site_map[s.cascade.upper()] = s
+
+        results = []
+        for sid in unique_ids:
+            site_obj = site_map.get(sid)
+            if site_obj:
+                raw_specs = site_obj.raw_data or {}
+                fse_name = site_obj.smc_fse_name or raw_specs.get('FSE NAME') or 'Unassigned'
+                fse_phone = site_obj.smc_fse_phone or raw_specs.get('FSE CONTACT NO.') or 'N/A'
+                efs_name = site_obj.efs_name or raw_specs.get('Project MANAGER') or 'N/A'
+                efs_phone = site_obj.efs_phone or raw_specs.get('Project MANAGER CONTACT') or 'N/A'
+                rto_name = site_obj.rto_name or raw_specs.get('Switch Engineer') or 'N/A'
+                
+                notes_data = []
+                for n in site_obj.notes.all().order_by('-created_at'):
+                    notes_data.append({
+                        'id': n.id,
+                        'title': n.title,
+                        'category': n.category,
+                        'priority': n.priority,
+                        'status': n.status,
+                        'description': n.description,
+                        'created_by': n.created_by,
+                        'created_at': n.created_at.strftime('%Y-%m-%d %H:%M'),
+                        'attachments_count': n.attachments.count()
+                    })
+
+                tnl_segment = raw_specs.get('TNL Segment') or 'N/A'
+                tnl_distance_km = raw_specs.get('TNL Link Distance km') or 0.0
+                maintenance_fmp = raw_specs.get('Maintenance FMP') or 'TNL'
+
+                results.append({
+                    'query_id': sid,
+                    'found': True,
+                    'id': site_obj.id,
+                    'ihs_site_id': site_obj.ihs_site_id,
+                    'mtn_id': site_obj.mtn_id or 'N/A',
+                    'cascade': site_obj.cascade or 'N/A',
+                    'state': site_obj.state or 'FCT',
+                    'region': site_obj.region or 'Abuja',
+                    'lga': site_obj.lga or 'N/A',
+                    'cluster_name': site_obj.cluster_name or 'N/A',
+                    'priority': site_obj.priority or 'P2',
+                    'operational_status': site_obj.operational_status or 'Operational',
+                    'is_down': site_obj.is_down,
+                    'is_critical': site_obj.is_critical,
+                    'fse_name': fse_name,
+                    'fse_phone': fse_phone,
+                    'efs_name': efs_name,
+                    'efs_phone': efs_phone,
+                    'rto_name': rto_name,
+                    'sdm_name': site_obj.sdm_name or 'Unassigned',
+                    'sdm_phone': site_obj.sdm_phone or 'N/A',
+                    'site_address': site_obj.site_address or '',
+                    'tnl_segment': tnl_segment,
+                    'tnl_distance_km': tnl_distance_km,
+                    'maintenance_fmp': maintenance_fmp,
+                    'notes_count': len(notes_data),
+                    'notes': notes_data
+                })
+            else:
+                results.append({
+                    'query_id': sid,
+                    'found': False,
+                    'ihs_site_id': sid,
+                    'mtn_id': 'N/A',
+                    'state': 'Unknown',
+                    'operational_status': 'Not Found',
+                    'fse_name': 'Not Found',
+                    'fse_phone': 'N/A',
+                    'sdm_name': 'N/A',
+                    'notes_count': 0,
+                    'notes': []
+                })
+
+        return Response({
+            'total_queried': len(unique_ids),
+            'found_count': sum(1 for r in results if r['found']),
+            'not_found_count': sum(1 for r in results if not r['found']),
+            'results': results
+        }, status=status.HTTP_200_OK)
+
     @action(detail=False, methods=['post'])
     def mark_all_read(self, request):
         sdm = request.query_params.get('sdm', '').strip()
@@ -427,3 +567,219 @@ class AvailableStatesView(APIView):
             qs = qs.filter(Q(site__sdm_name__icontains=sdm) | Q(site__isnull=True))
         qs.update(is_read=True)
         return Response({'status': 'all marked as read'})
+
+
+class TNLLinkViewSet(viewsets.ModelViewSet):
+    queryset = TNLLink.objects.all()
+    serializer_class = TNLLinkSerializer
+    pagination_class = FlexiblePagination
+
+    def get_queryset(self):
+        qs = TNLLink.objects.all()
+
+        sdm_name = self.request.query_params.get('sdm', None)
+        is_superuser = self.request.query_params.get('is_superuser', 'true').lower() == 'true'
+
+        if sdm_name and not is_superuser:
+            sdm_states_raw = Site.objects.filter(sdm_name__icontains=sdm_name).values_list('state', flat=True).distinct()
+            sdm_states = []
+            for st in sdm_states_raw:
+                if not st: continue
+                clean_st = st.strip().upper()
+                if clean_st.startswith('RT') and len(clean_st) > 2:
+                    clean_st = clean_st[2:]
+                if clean_st and clean_st not in sdm_states:
+                    sdm_states.append(clean_st)
+
+            if sdm_states:
+                qs = qs.filter(state__in=sdm_states)
+
+        q = self.request.query_params.get('search', None)
+        if q:
+            qs = qs.filter(
+                Q(segment_name__icontains=q) |
+                Q(site_a__icontains=q) |
+                Q(site_b__icontains=q) |
+                Q(state__icontains=q) |
+                Q(region__icontains=q) |
+                Q(network_type__icontains=q) |
+                Q(old_fmp__icontains=q) |
+                Q(maintenance_fmp__icontains=q)
+            )
+
+        state = self.request.query_params.get('state', None)
+        if state and state != 'All':
+            clean_st = state.split('(')[0].strip()
+            qs = qs.filter(state__iexact=clean_st)
+
+        network_type = self.request.query_params.get('network_type', None)
+        if network_type and network_type != 'All':
+            qs = qs.filter(network_type__iexact=network_type)
+
+        return qs
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        qs = TNLLink.objects.all()
+
+        sdm_name = request.query_params.get('sdm', None)
+        is_superuser = request.query_params.get('is_superuser', 'true').lower() == 'true'
+
+        sdm_assigned_states = []
+        if sdm_name and not is_superuser:
+            sdm_states_raw = Site.objects.filter(sdm_name__icontains=sdm_name).values_list('state', flat=True).distinct()
+            for st in sdm_states_raw:
+                if not st: continue
+                clean_st = st.strip().upper()
+                if clean_st.startswith('RT') and len(clean_st) > 2:
+                    clean_st = clean_st[2:]
+                if clean_st and clean_st not in sdm_assigned_states:
+                    sdm_assigned_states.append(clean_st)
+
+            if sdm_assigned_states:
+                qs = qs.filter(state__in=sdm_assigned_states)
+
+        total_links = qs.count()
+        fct_links = qs.filter(state__iexact='FCT').count()
+        lagos_links = qs.filter(state__iexact='LAGOS').count()
+        total_km = qs.aggregate(total=Sum('distance_km'))['total'] or 0.0
+        
+        states = list(qs.values('state').annotate(count=Count('id')).order_by('-count'))
+        
+        return Response({
+            'total_links': total_links,
+            'fct_links': fct_links,
+            'lagos_links': lagos_links,
+            'total_distance_km': round(total_km, 2),
+            'states': states,
+            'sdm_assigned_states': sdm_assigned_states
+        })
+
+    @action(detail=True, methods=['get'])
+    def impact(self, request, pk=None):
+        import math
+        tnl = self.get_object()
+        
+        site_a_code = tnl.site_a.strip().upper() if tnl.site_a else ''
+        site_b_code = tnl.site_b.strip().upper() if tnl.site_b else ''
+        
+        site_a_obj = tnl.site_a_ref or (Site.objects.filter(ihs_site_id__iexact=site_a_code).first() if site_a_code else None)
+        site_b_obj = tnl.site_b_ref or (Site.objects.filter(ihs_site_id__iexact=site_b_code).first() if site_b_code else None)
+        
+        def haversine_km(lat1, lon1, lat2, lon2):
+            if None in (lat1, lon1, lat2, lon2):
+                return 9999.0
+            R = 6371.0
+            dlat = math.radians(lat2 - lat1)
+            dlon = math.radians(lon2 - lon1)
+            a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            return R * c
+
+        def serialize_site(site_obj, code, role):
+            if site_obj:
+                raw_specs = site_obj.raw_data or {}
+                return {
+                    'query_id': code,
+                    'found': True,
+                    'id': site_obj.id,
+                    'ihs_site_id': site_obj.ihs_site_id,
+                    'mtn_id': site_obj.mtn_id or 'N/A',
+                    'cascade': site_obj.cascade or 'N/A',
+                    'role': role,
+                    'priority': site_obj.priority or 'P2',
+                    'operational_status': site_obj.operational_status or 'Operational',
+                    'is_down': site_obj.is_down,
+                    'state': site_obj.state or tnl.state,
+                    'cluster_name': site_obj.cluster_name or tnl.region,
+                    'fse_name': site_obj.smc_fse_name or raw_specs.get('FES NAME') or 'Unassigned',
+                    'fse_phone': site_obj.smc_fse_phone or raw_specs.get('FES CONTACT NUMBER') or 'N/A',
+                    'efs_name': site_obj.efs_name or raw_specs.get('Project MANAGER NAME') or 'N/A',
+                    'sdm_name': site_obj.sdm_name or 'Unassigned',
+                    'sdm_phone': site_obj.sdm_phone or 'N/A',
+                }
+            else:
+                return {
+                    'query_id': code,
+                    'found': False,
+                    'ihs_site_id': code,
+                    'role': role,
+                    'priority': 'P2',
+                    'operational_status': 'Unknown',
+                    'is_down': True,
+                    'state': tnl.state,
+                    'cluster_name': tnl.region or 'FCT',
+                    'fse_name': 'Unassigned',
+                    'fse_phone': 'N/A',
+                    'efs_name': 'N/A',
+                    'sdm_name': 'Unassigned',
+                    'sdm_phone': 'N/A',
+                }
+
+        impacted_sites = []
+        if site_a_code:
+            impacted_sites.append(serialize_site(site_a_obj, site_a_code, 'Site A (Transmission Hub)'))
+        if site_b_code:
+            impacted_sites.append(serialize_site(site_b_obj, site_b_code, 'Site B (Downstream Receiver)'))
+
+        # Cascading downstream sites
+        cascading_codes = set()
+        if site_b_code:
+            downstream_links = TNLLink.objects.filter(site_a__iexact=site_b_code).exclude(id=tnl.id)
+            for d_link in downstream_links:
+                if d_link.site_b and d_link.site_b != site_a_code and d_link.site_b not in [site_a_code, site_b_code]:
+                    cascading_codes.add(d_link.site_b)
+
+        for c_code in cascading_codes:
+            c_obj = Site.objects.filter(ihs_site_id__iexact=c_code).first()
+            impacted_sites.append(serialize_site(c_obj, c_code, 'Cascading Downstream Site'))
+
+        # Geospatial Proximity Scan (Sites within 2.5km of Site A or Site B)
+        already_added_ids = set()
+        if site_a_obj: already_added_ids.add(site_a_obj.id)
+        if site_b_obj: already_added_ids.add(site_b_obj.id)
+        for s in impacted_sites:
+            if s.get('id'): already_added_ids.add(s['id'])
+
+        proximate_sites = []
+        anchor_coords = []
+        if site_a_obj and site_a_obj.latitude and site_a_obj.longitude:
+            anchor_coords.append(('Site A', site_a_obj.latitude, site_a_obj.longitude))
+        if site_b_obj and site_b_obj.latitude and site_b_obj.longitude:
+            anchor_coords.append(('Site B', site_b_obj.latitude, site_b_obj.longitude))
+
+        if anchor_coords:
+            cand_qs = Site.objects.filter(latitude__isnull=False, longitude__isnull=False).exclude(id__in=already_added_ids)
+            for c_site in cand_qs:
+                min_d = 9999.0
+                closest_anchor = ''
+                for anchor_name, a_lat, a_lon in anchor_coords:
+                    d = haversine_km(a_lat, a_lon, c_site.latitude, c_site.longitude)
+                    if d < min_d:
+                        min_d = d
+                        closest_anchor = anchor_name
+                
+                if min_d <= 1.5: # 1.5 km radius threshold
+                    s_data = serialize_site(c_site, c_site.ihs_site_id, f"Geographical Proximity ({min_d:.2f}km from {closest_anchor})")
+                    s_data['distance_from_anchor_km'] = round(min_d, 2)
+                    proximate_sites.append(s_data)
+
+            proximate_sites.sort(key=lambda x: x.get('distance_from_anchor_km', 9999))
+            impacted_sites.extend(proximate_sites[:15])
+
+        return Response({
+            'link_id': tnl.id,
+            'segment_name': tnl.segment_name,
+            'state': tnl.state,
+            'region': tnl.region,
+            'site_a': tnl.site_a,
+            'site_b': tnl.site_b,
+            'distance_km': tnl.distance_km,
+            'network_type': tnl.network_type,
+            'maintenance_fmp': tnl.maintenance_fmp,
+            'total_sites_at_risk': len(impacted_sites),
+            'direct_sites_count': 2 if (site_a_code and site_b_code) else 1,
+            'cascading_sites_count': len(cascading_codes),
+            'proximate_sites_count': len(proximate_sites[:15]),
+            'impacted_sites': impacted_sites
+        })

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Radio, Search, Bell, Bot, Layers, FileText, MessageSquare, BarChart3, 
-  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone 
+  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone, FileSpreadsheet, Network 
 } from 'lucide-react';
 import { getPendingTotalCount } from '../mobileOfflineStorage';
+import { getSDMStateInfo } from '../utils/userUtils';
 
 export default function Navbar({ 
   activeTab, 
@@ -20,6 +21,8 @@ export default function Navbar({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+
+  const stateInfo = getSDMStateInfo(currentUser);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -61,6 +64,8 @@ export default function Navbar({
   const baseNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Layers },
     { id: 'database', label: 'Site Database', icon: Radio },
+    { id: 'tnl_links', label: 'TNL Links', icon: Network },
+    { id: 'fse_inspector', label: 'FSE & Notes Inspector', icon: FileSpreadsheet },
     { id: 'notes', label: 'SDM Notes', icon: FileText },
     { id: 'whatsapp', label: 'WhatsApp Intel', icon: MessageSquare },
     { id: 'ai', label: 'AI Assistant', icon: Bot },
@@ -69,7 +74,7 @@ export default function Navbar({
     { id: 'mobile', label: `📱 Field Mobile App ${pendingCount > 0 ? `(${pendingCount})` : ''}`, icon: Smartphone },
   ];
 
-  if (currentUser) {
+  if (currentUser && currentUser.is_superuser) {
     baseNavItems.push({ id: 'admin', label: 'SDM Directory & Admin', icon: ShieldCheck });
   }
 
@@ -88,10 +93,16 @@ export default function Navbar({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="font-bold text-lg tracking-wider text-white">FCT SDM DASHBOARD</span>
-                <span className="px-2 py-0.5 text-xs font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded-full">v2.0</span>
+                <span className="font-bold text-lg tracking-wider text-white">
+                  {stateInfo.dashboardTitle}
+                </span>
+                <span className="px-2 py-0.5 text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-full">
+                  v3.0
+                </span>
               </div>
-              <p className="text-xs text-slate-400">State Delivery Manager - Federal Capital Territory</p>
+              <p className="text-xs text-slate-400">
+                {stateInfo.subtitle}
+              </p>
             </div>
           </div>
 

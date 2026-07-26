@@ -4,9 +4,11 @@ import {
   FileText, MessageSquare, Search, ArrowRight, Activity, TrendingUp, CheckCircle, Clock
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { getSDMStateInfo } from '../utils/userUtils';
 
-export default function DashboardOverview({ stats, onSearchSite, onSelectSite, recentNotes, recentWhatsApp, setActiveTab, onNavigateWithFilter }) {
+export default function DashboardOverview({ stats, onSearchSite, onSelectSite, recentNotes, recentWhatsApp, setActiveTab, onNavigateWithFilter, currentUser }) {
   const [siteQuery, setSiteQuery] = useState('');
+  const stateInfo = getSDMStateInfo(currentUser);
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -126,17 +128,17 @@ export default function DashboardOverview({ stats, onSearchSite, onSelectSite, r
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-extrabold text-white tracking-wide flex items-center gap-2">
-              FCT Telecom Operational Control Center
+              {stateInfo.controlCenterTitle}
               <span className="inline-block w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping"></span>
             </h1>
             <p className="text-sm text-slate-400 mt-1">
-              AI-Powered Site Memory & Real-Time Incident Intelligence for Federal Capital Territory
+              {stateInfo.intelligenceSubtitle}
             </p>
           </div>
 
           <div className="flex items-center space-x-2">
             <span className="text-xs px-3 py-1 bg-slate-800 text-slate-300 rounded-lg border border-slate-700">
-              Region: <b>Federal Capital Territory (FCT)</b>
+              Region: <b>{stateInfo.regionText}</b>
             </span>
           </div>
         </div>
