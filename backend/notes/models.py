@@ -38,11 +38,14 @@ class SiteNote(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField()
     category = models.CharField(max_length=100, choices=CATEGORY_CHOICES, default='General')
+    tower_co = models.CharField(max_length=100, default='IHS', blank=True, null=True)
     priority = models.CharField(max_length=50, choices=PRIORITY_CHOICES, default='Medium')
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Open')
     created_by = models.CharField(max_length=150, default='State Delivery Manager')
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    smc_fse_name = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
         ordering = ['-created_at']

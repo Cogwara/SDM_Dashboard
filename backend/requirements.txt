@@ -11,6 +11,6 @@ pandas==3.0.5
 pillow==12.3.0
 python-dateutil==2.9.0.post0
 pyxlsb==1.0.10
-rest-framework-simplejwt==0.0.2
+djangorestframework-simplejwt>=5.3.0
 six==1.17.0
 sqlparse==0.5.5

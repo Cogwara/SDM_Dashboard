@@ -95,7 +95,7 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         }
 
         # Banner Title (Row 1)
-        ws.merge_cells('A1:L1')
+        ws.merge_cells('A1:M1')
         title_cell = ws['A1']
         title_cell.value = "FEDERAL CAPITAL TERRITORY (FCT) SDM DASHBOARD - OPERATIONAL NOTES REPORT"
         title_cell.font = font_title
@@ -104,7 +104,7 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         ws.row_dimensions[1].height = 32
 
         # Subtitle (Row 2)
-        ws.merge_cells('A2:L2')
+        ws.merge_cells('A2:M2')
         sub_cell = ws['A2']
         now_str = timezone.now().strftime('%Y-%m-%d %H:%M:%S UTC')
         
@@ -133,9 +133,9 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         # Spacing Row 3
         ws.row_dimensions[3].height = 10
 
-        # Headers (Row 4) - Note ID removed!
+        # Headers (Row 4)
         headers = [
-            'Site ID', 'Site MTN ID', 'Cluster', 'State', 'Category', 
+            'Site ID', 'Site MTN ID', 'Cluster', 'State', 'Tower Co', 'Category', 
             'Priority', 'Status', 'Logged By', 'Created Date & Time', 
             'Resolution Time', 'Title', 'Description & RCA History'
         ]
@@ -155,7 +155,7 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
             if not created:
                 return 'N/A'
             if note.status == 'Resolved':
-                end_time = getattr(note, 'updated_at', None) or timezone.now()
+                end_time = note.resolved_at or getattr(note, 'updated_at', None) or timezone.now()
                 diff = end_time - created
                 sec = max(0, int(diff.total_seconds()))
                 days, rem = divmod(sec, 86400)
@@ -166,7 +166,7 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
                 elif hrs > 0:
                     return f"{hrs}h {mins}m"
                 elif mins > 0:
-                    return f"{mins} mins"
+                    return f"{mins}mins"
                 else:
                     return "< 1 min"
             else:
@@ -179,9 +179,33 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
                     dur = f"{days}d {hrs}h"
                 elif hrs > 0:
                     dur = f"{hrs}h {mins}m"
+                elif mins > 0:
+                    dur = f"{mins}mins"
                 else:
-                    dur = f"{mins}m"
+                    dur = "< 1 min"
                 return f"Open ({dur})"
+
+        def calc_dur_clean(note):
+            created = note.created_at
+            if not created:
+                return ''
+            if note.status == 'Resolved':
+                end_time = note.resolved_at or getattr(note, 'updated_at', None) or timezone.now()
+            else:
+                end_time = timezone.now()
+            diff = end_time - created
+            sec = max(0, int(diff.total_seconds()))
+            days, rem = divmod(sec, 86400)
+            hrs, rem = divmod(rem, 3600)
+            mins, _ = divmod(rem, 60)
+            if days > 0:
+                return f"{days}d{hrs}h"
+            elif hrs > 0:
+                return f"{hrs}h{mins}m"
+            elif mins > 0:
+                return f"{mins}mins"
+            else:
+                return "<1min"
 
         # Data Rows (Row 5+)
         current_row = 5
@@ -189,11 +213,68 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
             res_time = calc_res_time(note)
             created_str = note.created_at.strftime('%Y-%m-%d %H:%M') if note.created_at else ''
 
+            site_id = note.site.ihs_site_id if note.site else ''
+            title_text = (note.title or '').strip()
+            desc_text = (note.description or '').strip()
+
+            # Clean site_id prefixes to avoid duplicate site IDs in formatted RCA
+            if site_id:
+                if title_text.upper().startswith(f"{site_id.upper()}-"):
+                    title_clean = title_text[len(site_id) + 1:].strip(' -:\t\n')
+                elif title_text.upper().startswith(site_id.upper()):
+                    title_clean = title_text[len(site_id):].strip(' -:\t\n')
+                else:
+                    title_clean = title_text
+
+                if desc_text.upper().startswith(f"{site_id.upper()}-"):
+                    desc_clean = desc_text[len(site_id) + 1:].strip(' -:\t\n')
+                elif desc_text.upper().startswith(site_id.upper()):
+                    desc_clean = desc_text[len(site_id):].strip(' -:\t\n')
+                else:
+                    desc_clean = desc_text
+            else:
+                title_clean = title_text
+                desc_clean = desc_text
+
+            if title_clean and desc_clean and desc_clean != title_clean:
+                if not title_clean.endswith(('.', ':', ';', '-')):
+                    combined_text = f"{title_clean}. {desc_clean}"
+                else:
+                    combined_text = f"{title_clean} {desc_clean}"
+            elif desc_clean:
+                combined_text = desc_clean
+            else:
+                combined_text = title_clean
+
+            # Auto-lookup Tower Co from site DB record if available
+            tower_co_str = 'IHS'
+            if note.site:
+                if note.site.raw_data and isinstance(note.site.raw_data, dict):
+                    tco = note.site.raw_data.get('Tower Co') or note.site.raw_data.get('TowerCo') or note.site.raw_data.get('Tower_Co')
+                    if tco:
+                        c_tco = str(tco).strip()
+                        tower_co_str = 'IHS' if c_tco.replace('.', '').upper() in ['IHS', 'I H S', 'HIS'] else c_tco
+                if tower_co_str == 'IHS' and note.site.smc:
+                    c_smc = str(note.site.smc).strip()
+                    tower_co_str = 'IHS' if c_smc.replace('.', '').upper() in ['IHS', 'I H S', 'HIS'] else c_smc
+            if tower_co_str == 'IHS' and getattr(note, 'tower_co', None):
+                tower_co_str = note.tower_co
+
+            dur_str = calc_dur_clean(note)
+            tco_formatted = f"({tower_co_str})" if tower_co_str else ""
+
+            # Requested Format: FC2005- restored unstable grid. DG was powered 37mins (IHS)
+            if site_id:
+                desc_rca_val = f"{site_id}- {combined_text} {dur_str} {tco_formatted}".strip()
+            else:
+                desc_rca_val = f"{combined_text} {dur_str} {tco_formatted}".strip()
+
             row_data = [
-                note.site.ihs_site_id if note.site else '',
+                site_id,
                 note.site.mtn_id if note.site else '',
                 note.site.cluster_name if note.site else '',
                 note.site.state if note.site else '',
+                tower_co_str,
                 note.category,
                 note.priority,
                 note.status,
@@ -201,7 +282,7 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
                 created_str,
                 res_time,
                 note.title,
-                note.description,
+                desc_rca_val,
             ]
 
             ws.row_dimensions[current_row].height = 36
@@ -213,7 +294,7 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
                 cell.fill = row_fill
                 cell.border = border_cell
 
-                if col_num in [1, 2, 3, 4, 5, 6, 7, 9, 10]:
+                if col_num in [1, 2, 3, 4, 5, 6, 7, 8, 10, 11]:
                     cell.alignment = align_center
                 else:
                     cell.alignment = align_left
@@ -221,17 +302,17 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
                 if col_num == 1:
                     cell.font = font_bold
 
-                if col_num == 6 and val in priority_styles:
+                if col_num == 7 and val in priority_styles:
                     p_font, p_fill = priority_styles[val]
                     cell.font = p_font
                     cell.fill = p_fill
 
-                if col_num == 7 and val in status_styles:
+                if col_num == 8 and val in status_styles:
                     s_font, s_fill = status_styles[val]
                     cell.font = s_font
                     cell.fill = s_fill
 
-                if col_num == 10:
+                if col_num == 11:
                     if 'Resolved' in str(note.status):
                         cell.font = Font(name='Segoe UI', size=9.5, bold=True, color='047857')
                     else:
@@ -244,14 +325,15 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
             2: 14, # Site MTN ID
             3: 18, # Cluster
             4: 12, # State
-            5: 22, # Category
-            6: 14, # Priority
-            7: 15, # Status
-            8: 24, # Logged By
-            9: 20, # Created Date & Time
-            10: 22, # Resolution Time
-            11: 32, # Title
-            12: 55, # Description
+            5: 14, # Tower Co
+            6: 22, # Category
+            7: 14, # Priority
+            8: 15, # Status
+            9: 24, # Logged By
+            10: 20, # Created Date & Time
+            11: 22, # Resolution Time
+            12: 32, # Title
+            13: 55, # Description & RCA History
         }
 
         for col_idx, width in col_widths.items():
@@ -386,6 +468,27 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
             return Response({'error': f'Site "{site_id_input}" not found in database. Please verify Site ID.'}, status=status.HTTP_400_BAD_REQUEST)
 
         data['site'] = site.id
+        
+        # Auto-pick Tower Co from Site DB record
+        site_tco = None
+        if site.raw_data and isinstance(site.raw_data, dict):
+            site_tco = site.raw_data.get('Tower Co') or site.raw_data.get('TowerCo') or site.raw_data.get('Tower_Co')
+        if not site_tco and site.smc:
+            site_tco = site.smc
+        if site_tco:
+            clean = str(site_tco).strip()
+            data['tower_co'] = 'IHS' if clean.replace('.', '').upper() in ['IHS', 'I H S'] else clean
+        else:
+            data['tower_co'] = 'IHS'
+
+        # Auto-pick SMC FSE Engineer Name from Site DB record
+        site_fse = site.smc_fse_name
+        if not site_fse and site.raw_data and isinstance(site.raw_data, dict):
+            site_fse = site.raw_data.get('SMC FSE Name') or site.raw_data.get('FSE NAME') or site.raw_data.get('FSE Name')
+        if site_fse and str(site_fse).strip() and str(site_fse).strip() != '0':
+            data['smc_fse_name'] = str(site_fse).strip()
+        else:
+            data['smc_fse_name'] = 'Unassigned'
 
         custom_created_at = data.get('created_at') or data.get('incident_time')
         if custom_created_at:
@@ -403,6 +506,10 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         serializer.is_validate_custom = True
         serializer.is_valid(raise_exception=True)
         note = serializer.save()
+
+        if note.status == 'Resolved' and not note.resolved_at:
+            note.resolved_at = timezone.now()
+            note.save(update_fields=['resolved_at'])
 
         # Save photos / attachments
         self._save_uploaded_photos(request, site, note)
@@ -499,6 +606,16 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         updated_note = serializer.save()
 
+        # Handle resolved_at timestamp
+        if updated_note.status == 'Resolved':
+            if not updated_note.resolved_at:
+                updated_note.resolved_at = timezone.now()
+                updated_note.save(update_fields=['resolved_at'])
+        else:
+            if updated_note.resolved_at:
+                updated_note.resolved_at = None
+                updated_note.save(update_fields=['resolved_at'])
+
         # Save photos / attachments
         self._save_uploaded_photos(request, updated_note.site, updated_note)
 
@@ -556,6 +673,8 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
                 )
 
         instance.status = 'Resolved'
+        if not instance.resolved_at:
+            instance.resolved_at = timezone.now()
         instance.save()
 
         updater_name = requester_sdm or instance.created_by

@@ -26,7 +26,7 @@ echo ======================================================================
 echo [SUCCESS] FCT SDM Dashboard is now continuously running in Docker!
 echo.
 echo  - Frontend Dashboard URL : http://localhost/ or http://localhost:5173/
-echo  - Backend REST API URL   : http://localhost:8000/api/v1/
+echo  - Backend REST API URL   : http://localhost:8001/api/v1/
 echo  - Container Restart Policy: ALWAYS (Auto-starts on system boot)
 echo ======================================================================
 echo.

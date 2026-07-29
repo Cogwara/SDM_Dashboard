@@ -1,0 +1,36 @@
+{
+  "name": "fct-sdm-dashboard-desktop",
+  "version": "3.0.0",
+  "description": "FCT SDM Operations Dashboard & IHS Matrix Desktop App for Windows",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win nsis"
+  },
+  "author": "State Delivery Manager Team",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^34.3.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.fctsdm.dashboard",
+    "productName": "FCT SDM Dashboard Desktop",
+    "directories": {
+      "output": "../dist_desktop"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

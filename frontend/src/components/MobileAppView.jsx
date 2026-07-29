@@ -1364,7 +1364,13 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                         >
                           {note.site_ihs_id}
                         </span>
-                        <div className="flex items-center space-x-1">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            {note.tower_co || 'IHS'}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            FSE: {note.smc_fse_name || 'Unassigned'}
+                          </span>
                           <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
                             note.priority === 'Critical' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-300'
                           }`}>

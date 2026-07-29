@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:apk": "vite build && npx cap sync android && cd android && export ANDROID_HOME=/usr/lib/android-sdk && ./gradlew assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk ../FCT_SDM_Dashboard.apk && cp app/build/outputs/apk/debug/app-debug.apk ../../FCT_SDM_Dashboard.apk",
     "build:release": "vite build && npx cap sync android && cd android && gradlew.bat assembleRelease && copy /Y app\\build\\outputs\\apk\\release\\app-release.apk ..\\FCT_SDM_Dashboard.apk && copy /Y app\\build\\outputs\\apk\\release\\app-release.apk ..\\..\\FCT_SDM_Dashboard.apk",
     "lint": "oxlint",
     "preview": "vite preview"

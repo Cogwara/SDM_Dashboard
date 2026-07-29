@@ -41,6 +41,7 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
   const [category, setCategory] = useState('General');
   const [priority, setPriority] = useState('Medium');
   const [status, setStatus] = useState('Open');
+  const [towerCo, setTowerCo] = useState('IHS');
   const [createdBy, setCreatedBy] = useState(userSdmName || 'State Delivery Manager');
   const [submitting, setSubmitting] = useState(false);
 
@@ -121,6 +122,7 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
     setCategory('General');
     setPriority('Medium');
     setStatus('Open');
+    setTowerCo('IHS');
     setCreatedBy(userSdmName || 'State Delivery Manager');
     setIncidentTime(toLocalISOString(new Date()));
     setSelectedPhotos([]);
@@ -137,6 +139,7 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
     setCategory(note.category || 'General');
     setPriority(note.priority || 'Medium');
     setStatus(note.status || 'Open');
+    setTowerCo(note.tower_co || 'IHS');
     setCreatedBy(note.created_by || userSdmName || 'State Delivery Manager');
     setIncidentTime(note.created_at ? toLocalISOString(note.created_at) : toLocalISOString(new Date()));
     setSelectedPhotos([]);
@@ -222,6 +225,7 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
       formData.append('category', category);
       formData.append('priority', priority);
       formData.append('status', status);
+      formData.append('tower_co', towerCo);
       if (incidentTime) {
         formData.append('created_at', incidentTime);
       }
@@ -446,6 +450,12 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
                   </div>
 
                   <div className="flex items-center space-x-2">
+                    <span className="px-2.5 py-0.5 text-xs font-bold rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      Tower Co: {note.tower_co || 'IHS'}
+                    </span>
+                    <span className="px-2.5 py-0.5 text-xs font-bold rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      FSE: {note.smc_fse_name || 'Unassigned'}
+                    </span>
                     <span className="px-2.5 py-0.5 text-xs font-semibold bg-slate-800 text-cyan-300 rounded-md border border-slate-700">
                       {note.category}
                     </span>
@@ -460,6 +470,33 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
                       isResolved ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-800 text-slate-300 border border-slate-700'
                     }`}>
                       Status: {note.status}
+                    </span>
+
+                    <span className={`px-2.5 py-0.5 text-xs font-bold rounded-md font-mono ${
+                      isResolved 
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                    }`}>
+                      ⏱️ {isResolved ? 'Resolution Time:' : 'Duration:'} {(() => {
+                        if (!note || !note.created_at) return '';
+                        const created = new Date(note.created_at).getTime();
+                        if (isNaN(created)) return '';
+                        let endTime;
+                        if (note.status === 'Resolved') {
+                          endTime = note.resolved_at ? new Date(note.resolved_at).getTime() : (note.updated_at ? new Date(note.updated_at).getTime() : Date.now());
+                        } else {
+                          endTime = Date.now();
+                        }
+                        const diffSec = Math.max(0, Math.floor((endTime - created) / 1000));
+                        const days = Math.floor(diffSec / 86400);
+                        const remSec = diffSec % 86400;
+                        const hrs = Math.floor(remSec / 3600);
+                        const mins = Math.floor((remSec % 3600) / 60);
+                        if (days > 0) return `${days}d ${hrs}h ${mins}m`;
+                        if (hrs > 0) return `${hrs}h ${mins}m`;
+                        if (mins > 0) return `${mins}mins`;
+                        return '< 1 min';
+                      })()}
                     </span>
 
                     {/* Quick Resolve Button for Open/In Progress Notes */}
@@ -568,7 +605,10 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
             <form onSubmit={handleSaveNote} className="space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Site ID (IHS / MTN Code)</label>
+                  <label className="block text-slate-300 font-semibold mb-1 flex items-center justify-between">
+                    <span>Site ID (IHS / MTN Code) *</span>
+                    <span className="text-[10px] text-purple-400 font-normal">Tower Co auto-picked from DB</span>
+                  </label>
                   <input
                     type="text"
                     required

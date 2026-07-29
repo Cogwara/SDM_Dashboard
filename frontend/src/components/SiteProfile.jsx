@@ -25,6 +25,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
   const [noteCategory, setNoteCategory] = useState('General');
   const [notePriority, setNotePriority] = useState('Medium');
   const [noteStatus, setNoteStatus] = useState('Open');
+  const [noteTowerCo, setNoteTowerCo] = useState('IHS');
   const [noteDesc, setNoteDesc] = useState('');
   const [noteAppendUpdate, setNoteAppendUpdate] = useState('');
   const [noteAuthor, setNoteAuthor] = useState(userSdmName || 'State Delivery Manager');
@@ -88,6 +89,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
     setNoteCategory('General');
     setNotePriority('Medium');
     setNoteStatus('Open');
+    setNoteTowerCo('IHS');
     setNoteDesc('');
     setNoteAppendUpdate('');
     setNoteAuthor(userSdmName || 'State Delivery Manager');
@@ -102,6 +104,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
     setNoteCategory(n.category || 'General');
     setNotePriority(n.priority || 'Medium');
     setNoteStatus(n.status || 'Open');
+    setNoteTowerCo(n.tower_co || 'IHS');
     setNoteDesc(n.description || '');
     setNoteAppendUpdate('');
     setNoteAuthor(n.created_by || userSdmName || 'State Delivery Manager');
@@ -164,6 +167,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
       formData.append('category', noteCategory);
       formData.append('priority', notePriority);
       formData.append('status', noteStatus);
+      formData.append('tower_co', noteTowerCo);
 
       noteSelectedPhotos.forEach((file) => {
         formData.append('photos', file);
@@ -582,7 +586,32 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
                         <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${isResolved ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-800 text-slate-300 border border-slate-700'}`}>
                           {n.status}
                         </span>
+                        <span className="text-[10px] px-2 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded font-bold">
+                          FSE: {n.smc_fse_name || 'Unassigned'}
+                        </span>
                         <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-cyan-300 rounded border border-slate-700">{n.category}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold font-mono ${isResolved ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'}`}>
+                          ⏱️ {isResolved ? 'Resolved in:' : 'Duration:'} {(() => {
+                            if (!n || !n.created_at) return '';
+                            const created = new Date(n.created_at).getTime();
+                            if (isNaN(created)) return '';
+                            let endTime;
+                            if (n.status === 'Resolved') {
+                              endTime = n.resolved_at ? new Date(n.resolved_at).getTime() : (n.updated_at ? new Date(n.updated_at).getTime() : Date.now());
+                            } else {
+                              endTime = Date.now();
+                            }
+                            const diffSec = Math.max(0, Math.floor((endTime - created) / 1000));
+                            const days = Math.floor(diffSec / 86400);
+                            const remSec = diffSec % 86400;
+                            const hrs = Math.floor(remSec / 3600);
+                            const mins = Math.floor((remSec % 3600) / 60);
+                            if (days > 0) return `${days}d ${hrs}h ${mins}m`;
+                            if (hrs > 0) return `${hrs}h ${mins}m`;
+                            if (mins > 0) return `${mins}mins`;
+                            return '< 1 min';
+                          })()}
+                        </span>
                       </div>
                     </div>
                     <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{n.description}</p>

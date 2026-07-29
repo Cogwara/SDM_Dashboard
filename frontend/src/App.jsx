@@ -13,6 +13,7 @@ import SDMUserManagement from './components/SDMUserManagement';
 import MobileAppView from './components/MobileAppView';
 import SiteFseInspector from './components/SiteFseInspector';
 import TNLLinksDirectory from './components/TNLLinksDirectory';
+import IHSMatrixDirectory from './components/IHSMatrixDirectory';
 import { fetchDashboardStats, fetchNotes, fetchWhatsAppMessages, fetchNotifications, markAllNotificationsRead } from './api';
 import { getSDMStateInfo } from './utils/userUtils';
 import { Bell, CheckCircle, AlertTriangle, Radio, Eye, Bot, X, ShieldAlert, Clock, MapPin, User } from 'lucide-react';
@@ -201,6 +202,10 @@ export default function App() {
             onBack={() => setActiveTab('database')}
             onOpenAIWithPrompt={() => setActiveTab('ai')}
           />
+        )}
+
+        {activeTab === 'ihs_matrix' && (
+          <IHSMatrixDirectory currentUser={currentUser} onSelectSite={handleSelectSite} />
         )}
 
         {activeTab === 'tnl_links' && (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Radio, Search, Bell, Bot, Layers, FileText, MessageSquare, BarChart3, 
-  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone, FileSpreadsheet, Network 
+  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone, FileSpreadsheet, Network, PhoneCall, Wifi, WifiOff 
 } from 'lucide-react';
 import { getPendingTotalCount } from '../mobileOfflineStorage';
 import { getSDMStateInfo } from '../utils/userUtils';
@@ -21,8 +21,20 @@ export default function Navbar({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
   const stateInfo = getSDMStateInfo(currentUser);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -64,6 +76,7 @@ export default function Navbar({
   const baseNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Layers },
     { id: 'database', label: 'Site Database', icon: Radio },
+    { id: 'ihs_matrix', label: 'IHS Matrix', icon: FileSpreadsheet },
     { id: 'tnl_links', label: 'TNL Links', icon: Network },
     { id: 'fse_inspector', label: 'FSE & Notes Inspector', icon: FileSpreadsheet },
     { id: 'notes', label: 'SDM Notes', icon: FileText },
@@ -123,6 +136,21 @@ export default function Navbar({
           {/* Right Controls & SDM User Profile */}
           <div className="flex items-center space-x-3">
             
+            {/* Live Online / Offline Network Status Pill */}
+            <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-bold transition-all">
+              {isOnline ? (
+                <span className="flex items-center gap-1.5 text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-lg shadow-sm" title="Connected to SDM Server">
+                  <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                  <span>Online</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-lg shadow-sm" title="Working Offline - Actions will sync automatically when online">
+                  <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-ping" />
+                  <span>Offline ({pendingCount} pending)</span>
+                </span>
+              )}
+            </div>
+
             {/* AI Ops Pill */}
             <button
               onClick={() => setActiveTab('ai')}
