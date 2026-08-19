@@ -1269,16 +1269,45 @@ def get_availability_queryset(request):
             lga_q |= Q(lga__icontains='AMAC') | Q(lga__icontains='MUNICIPAL')
         qs = qs.filter(lga_q)
 
+    site_ids_param = request.query_params.get('site_ids', None) or (request.data.get('site_ids', None) if hasattr(request, 'data') and isinstance(request.data, dict) else None)
     search = request.query_params.get('search', None)
-    if search:
-        qs = qs.filter(
-            Q(site_id__icontains=search) |
-            Q(element_name__icontains=search) |
-            Q(lga__icontains=search) |
-            Q(state__icontains=search) |
-            Q(tower_co__icontains=search) |
-            Q(vendor__icontains=search)
-        )
+
+    if site_ids_param:
+        import re
+        from functools import reduce
+        import operator
+        if isinstance(site_ids_param, list):
+            raw_tokens = [str(x).strip() for x in site_ids_param if str(x).strip()]
+        else:
+            raw_tokens = [t.strip() for t in re.split(r'[,;\s\n\r\t]+', str(site_ids_param)) if t.strip()]
+        clean_tokens = [t.upper() for t in raw_tokens if t]
+        if clean_tokens:
+            q_conditions = [Q(site_id__iexact=t) | Q(site_id__icontains=t) | Q(element_name__icontains=t) for t in clean_tokens]
+            qs = qs.filter(reduce(operator.or_, q_conditions))
+    elif search:
+        import re
+        from functools import reduce
+        import operator
+        search_str = search.strip()
+        tokens = [t.strip() for t in re.split(r'[,;\n\r\t]+', search_str) if t.strip()]
+        if len(tokens) <= 1 and ' ' in search_str:
+            space_tokens = [t.strip() for t in search_str.split() if t.strip()]
+            if len(space_tokens) > 1 and any(re.match(r'^[A-Za-z]{1,4}\d{2,6}', st) for st in space_tokens):
+                tokens = space_tokens
+        
+        if len(tokens) > 1:
+            clean_tokens = [t.upper() for t in tokens if t]
+            q_conditions = [Q(site_id__iexact=t) | Q(site_id__icontains=t) | Q(element_name__icontains=t) for t in clean_tokens]
+            qs = qs.filter(reduce(operator.or_, q_conditions))
+        else:
+            qs = qs.filter(
+                Q(site_id__icontains=search_str) |
+                Q(element_name__icontains=search_str) |
+                Q(lga__icontains=search_str) |
+                Q(state__icontains=search_str) |
+                Q(tower_co__icontains=search_str) |
+                Q(vendor__icontains=search_str)
+            )
 
     fse_param = request.query_params.get('fse', '').strip()
     if fse_param and fse_param != 'All':

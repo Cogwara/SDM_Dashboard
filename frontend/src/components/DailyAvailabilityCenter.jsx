@@ -4,10 +4,11 @@ import {
   ShieldAlert, Search, Filter, Calendar, BarChart3, Database, ArrowUpRight, 
   ChevronRight, Radio, Layers, Server, Download, Sparkles, TrendingUp, Archive,
   Clock, CalendarDays, CalendarRange, Sliders, LayoutGrid, List, Eye, TrendingDown, Info, X,
-  FileText, Printer, Copy, MapPin, Check, Share2, Wrench, Map
+  FileText, Printer, Copy, MapPin, Check, Share2, Wrench, Map,
+  ClipboardList, CheckCheck, ArrowUpDown, MessageSquare, Plus, ExternalLink
 } from 'lucide-react';
 import { 
-  fetchAvailabilityStats, fetchAvailabilityRecords, fetchAvailabilityArchives, uploadAvailabilityFile, resetBaseAvailability, exportAvailabilityExcel, fetchNotes 
+  fetchAvailabilityStats, fetchAvailabilityRecords, fetchAvailabilityArchives, uploadAvailabilityFile, resetBaseAvailability, exportAvailabilityExcel, fetchNotes, exportNotesExcel 
 } from '../api';
 import { getSDMStateInfo } from '../utils/userUtils';
 import LgaExecutiveReportModal from './LgaExecutiveReportModal';
@@ -274,6 +275,77 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     { id: '2026-08', label: 'August 2026' }
   ];
 
+  // Multi-Site Bulk List Search States
+  const [isMultiSiteModalOpen, setIsMultiSiteModalOpen] = useState(false);
+  const [multiSiteRawInput, setMultiSiteRawInput] = useState('');
+  const [multiSiteParsedList, setMultiSiteParsedList] = useState([]);
+  
+  // Multi-Site SDM Notes Modal States
+  const [isMultiNotesModalOpen, setIsMultiNotesModalOpen] = useState(false);
+  const [multiSiteNotes, setMultiSiteNotes] = useState([]);
+  const [loadingMultiNotes, setLoadingMultiNotes] = useState(false);
+  const [notesSiteFilter, setNotesSiteFilter] = useState('All');
+  const [notesCategoryFilter, setNotesCategoryFilter] = useState('All');
+  const [notesPriorityFilter, setNotesPriorityFilter] = useState('All');
+  const [notesStatusFilter, setNotesStatusFilter] = useState('All');
+  const [notesSearchQuery, setNotesSearchQuery] = useState('');
+
+  // Helper to parse pasted raw text into clean, deduplicated Site IDs
+  const parseSiteIdsFromText = (text) => {
+    if (!text || typeof text !== 'string') return [];
+    const tokens = text
+      .split(/[\s,;\n\r\t]+/)
+      .map(t => t.trim().replace(/^['"\[\](){}\.,;:\/\\]+|['"\[\](){}\.,;:\/\\]+$/g, '').toUpperCase())
+      .filter(t => t.length >= 2 && !['AND', 'OR', 'THE', 'SITE', 'SITES', 'ID', 'IDS', 'NULL', 'UNDEFINED', 'N/A'].includes(t));
+    return Array.from(new Set(tokens));
+  };
+
+  const handleApplyMultiSiteSearch = (siteListOrText, sortAsWorst = true) => {
+    let list = [];
+    if (Array.isArray(siteListOrText)) {
+      list = siteListOrText;
+    } else {
+      list = parseSiteIdsFromText(siteListOrText);
+    }
+    setMultiSiteParsedList(list);
+    if (sortAsWorst) {
+      setSortBy('worst');
+    }
+    setPage(1);
+    setIsMultiSiteModalOpen(false);
+    if (list.length > 0) {
+      loadMultiSiteNotes(list);
+    }
+  };
+
+  const handleClearMultiSiteSearch = () => {
+    setMultiSiteParsedList([]);
+    setMultiSiteRawInput('');
+    setPage(1);
+  };
+
+  const loadMultiSiteNotes = async (targetSites = multiSiteParsedList) => {
+    const sites = targetSites && targetSites.length > 0 ? targetSites : records.map(r => r.site_id);
+    if (!sites || sites.length === 0) {
+      setMultiSiteNotes([]);
+      return;
+    }
+    setLoadingMultiNotes(true);
+    try {
+      const res = await fetchNotes({
+        site_ids: sites.join(','),
+        page_size: 500
+      });
+      const list = Array.isArray(res) ? res : (res.results || []);
+      setMultiSiteNotes(list);
+    } catch (e) {
+      console.error('Error loading multi-site notes:', e);
+      setMultiSiteNotes([]);
+    } finally {
+      setLoadingMultiNotes(false);
+    }
+  };
+
   const handleResetFilters = () => {
     setSelectedTech('All');
     setSelectedState('All');
@@ -284,6 +356,8 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     setSelectedFse('All');
     setSortBy('worst');
     setSearchQuery('');
+    setMultiSiteParsedList([]);
+    setMultiSiteRawInput('');
     setSlaFilter('all');
     setMinAvailInput('');
     setMaxAvailInput('');
@@ -337,6 +411,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         status: selectedStatus,
         sort_by: sortBy,
         search: searchQuery,
+        site_ids: multiSiteParsedList.length > 0 ? multiSiteParsedList.join(',') : undefined,
         sla_filter: slaFilter,
         min_avail: minAvailInput,
         max_avail: maxAvailInput,
@@ -398,6 +473,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         status: selectedStatus,
         sort_by: sortBy,
         search: searchQuery,
+        site_ids: multiSiteParsedList.length > 0 ? multiSiteParsedList.join(',') : undefined,
         sla_filter: slaFilter,
         min_avail: minAvailInput,
         max_avail: maxAvailInput,
@@ -425,7 +501,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     loadRecordsData();
   }, [
     selectedState, selectedLga, selectedTech, selectedTowerCo, selectedVendor, selectedStatus, 
-    selectedFse, sortBy, searchQuery, slaFilter, minAvailInput, maxAvailInput, 
+    selectedFse, sortBy, searchQuery, multiSiteParsedList, slaFilter, minAvailInput, maxAvailInput, 
     dateMode, selectedDateInput, selectedWeek, selectedMonth, startDateInput, endDateInput, page,
     selectedArchiveLogId
   ]);
@@ -514,6 +590,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         status: selectedStatus,
         sort_by: sortBy,
         search: searchQuery,
+        site_ids: multiSiteParsedList.length > 0 ? multiSiteParsedList.join(',') : undefined,
         sla_filter: slaFilter,
         min_avail: minAvailInput,
         max_avail: maxAvailInput,
@@ -987,23 +1064,59 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
 
 
 
-      {/* ENHANCED: Search & Filter Bar with Date Mode and % Filter */}
+      {/* ENHANCED: Search & Filter Bar with Multi-Site Bulk Search and Date Mode */}
       <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4">
         
         {/* Row 1: Search and Basic Filters */}
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="relative w-full md:w-80">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search Site ID, LGA, State, Tower Co..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setPage(1);
+        <div className="flex flex-col lg:flex-row items-center justify-between gap-3">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto flex-1 max-w-2xl">
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search Site ID, LGA, or paste multiple IDs (e.g. FC0001, FC0002)..."
+                value={searchQuery}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSearchQuery(val);
+                  setPage(1);
+                  const parsed = parseSiteIdsFromText(val);
+                  if (parsed.length > 1) {
+                    setMultiSiteParsedList(parsed);
+                  } else if (multiSiteParsedList.length > 0 && !val) {
+                    setMultiSiteParsedList([]);
+                  }
+                }}
+                className="w-full bg-slate-950 text-xs text-white placeholder-slate-500 pl-9 pr-3 py-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
+              />
+            </div>
+
+            {/* Multi-Site Paste List Button */}
+            <button
+              onClick={() => setIsMultiSiteModalOpen(true)}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-md ${
+                multiSiteParsedList.length > 0
+                  ? 'bg-cyan-500 text-slate-950 font-black border border-cyan-400 shadow-cyan-500/20'
+                  : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700'
+              }`}
+              title="Paste a list of multiple site IDs from Excel, WhatsApp, or email"
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              <span>{multiSiteParsedList.length > 0 ? `📋 Multi-Site (${multiSiteParsedList.length})` : '📋 Paste Site List'}</span>
+            </button>
+
+            {/* Quick SDM Notes Button */}
+            <button
+              onClick={() => {
+                loadMultiSiteNotes(multiSiteParsedList.length > 0 ? multiSiteParsedList : records.map(r => r.site_id));
+                setIsMultiNotesModalOpen(true);
               }}
-              className="w-full bg-slate-950 text-xs text-white placeholder-slate-500 pl-9 pr-3 py-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400"
-            />
+              className="px-3 py-2 bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-md"
+              title="View all SDM operational notes for currently displayed sites"
+            >
+              <FileText className="w-3.5 h-3.5 text-purple-400" />
+              <span>SDM Notes {multiSiteNotes.length > 0 ? `(${multiSiteNotes.length})` : ''}</span>
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
@@ -1382,6 +1495,123 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
           </div>
         </div>
       </div>
+
+
+      {/* 🎯 MULTI-SITE ACTIVE INTELLIGENCE & CONTROL BANNER */}
+      {multiSiteParsedList.length > 0 && (
+        <div className="glass-panel p-5 rounded-3xl border-2 border-cyan-500/50 bg-gradient-to-r from-cyan-950/70 via-slate-900/90 to-purple-950/70 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 border-b border-cyan-500/20 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-cyan-500/20 text-cyan-400 rounded-2xl border border-cyan-500/40 shrink-0">
+                <ClipboardList className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm font-black text-white">
+                    Multi-Site Search Active
+                  </h4>
+                  <span className="px-2.5 py-0.5 bg-cyan-500 text-slate-950 font-black font-mono text-xs rounded-full shadow-sm">
+                    {multiSiteParsedList.length} Site IDs Queried
+                  </span>
+                  <span className="px-2.5 py-0.5 bg-slate-800 text-cyan-300 font-bold font-mono text-xs rounded-full border border-slate-700">
+                    {records.length} Matched in Current Filter
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 mt-0.5">
+                  Analyzing daily availability metrics, outage trends, and SDM operational notes for your pasted site portfolio.
+                </p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-end">
+              {/* Worst Performing Sort Button */}
+              <button
+                onClick={() => {
+                  setSortBy('worst');
+                  setPage(1);
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-md ${
+                  sortBy === 'worst'
+                    ? 'bg-amber-500 text-slate-950 shadow-amber-500/20 ring-2 ring-amber-400/50 scale-[1.02]'
+                    : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40'
+                }`}
+                title="Sort pulled sites by worst availability performance first"
+              >
+                <TrendingDown className="w-4 h-4 text-slate-950" />
+                <span>{sortBy === 'worst' ? '✓ Filter: Worst Performing First' : 'Sort Worst Performing'}</span>
+              </button>
+
+              {/* View All SDM Notes Button */}
+              <button
+                onClick={() => {
+                  loadMultiSiteNotes(multiSiteParsedList);
+                  setIsMultiNotesModalOpen(true);
+                }}
+                className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-black shadow-lg shadow-purple-950/40 transition-all flex items-center gap-1.5"
+                title="View all SDM operational notes and RCA history for these sites"
+              >
+                <FileText className="w-4 h-4" />
+                <span>View SDM Notes ({multiSiteNotes.length > 0 ? multiSiteNotes.length : '...'})</span>
+              </button>
+
+              {/* Edit / Paste New Sites */}
+              <button
+                onClick={() => setIsMultiSiteModalOpen(true)}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-xl text-xs font-bold border border-slate-700 transition-all flex items-center gap-1"
+              >
+                <span>Edit Site List</span>
+              </button>
+
+              {/* Clear Multi-Site Search */}
+              <button
+                onClick={handleClearMultiSiteSearch}
+                className="px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-xl text-xs font-bold border border-red-500/40 transition-all flex items-center gap-1"
+                title="Clear multi-site filter"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Clear</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Queried Site Tags Row */}
+          <div className="flex flex-wrap items-center gap-1.5 max-h-24 overflow-y-auto pr-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1 font-mono">Pasted Site IDs:</span>
+            {multiSiteParsedList.map((sid) => {
+              const isMatched = records.some(r => r.site_id === sid);
+              return (
+                <span
+                  key={sid}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-bold border ${
+                    isMatched 
+                      ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50 shadow-sm' 
+                      : 'bg-slate-950 text-slate-400 border-slate-800'
+                  }`}
+                >
+                  <button
+                    onClick={() => onSelectSite && onSelectSite(sid)}
+                    className="hover:underline"
+                    title={`Inspect site ${sid}`}
+                  >
+                    {sid}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const next = multiSiteParsedList.filter(x => x !== sid);
+                      handleApplyMultiSiteSearch(next, sortBy === 'worst');
+                    }}
+                    className="hover:text-red-400 text-slate-500 font-black text-sm leading-none"
+                    title={`Remove ${sid} from search`}
+                  >
+                    ×
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
 
       {/* 🗺️ LGA AVAILABILITY BREAKDOWN GRID (% FOR EACH LGA) - PLACED BELOW FILTER */}
@@ -1991,21 +2221,37 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   </div>
 
                   {/* Card Actions Footer */}
-                  <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => setSelectedSiteModal({ record: r })}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white rounded-xl text-xs font-bold border border-slate-700 transition-all flex items-center gap-1.5"
-                    >
-                      <Eye className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Daily Logs Modal</span>
-                    </button>
+                  <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setSelectedSiteModal({ record: r })}
+                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white rounded-xl text-xs font-bold border border-slate-700 transition-all flex items-center gap-1"
+                        title="View daily breakdown logs"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Daily UI</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          loadMultiSiteNotes([r.site_id]);
+                          setNotesSiteFilter(r.site_id);
+                          setIsMultiNotesModalOpen(true);
+                        }}
+                        className="px-2.5 py-1.5 bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 hover:text-purple-200 rounded-xl text-xs font-bold border border-purple-500/40 transition-all flex items-center gap-1"
+                        title={`View SDM operational notes for ${r.site_id}`}
+                      >
+                        <FileText className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Notes</span>
+                      </button>
+                    </div>
 
                     {onSelectSite && (
                       <button
                         onClick={() => onSelectSite(r.site_id)}
                         className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1"
                       >
-                        <span>Inspect Site</span>
+                        <span>Inspect</span>
                         <ChevronRight className="w-3.5 h-3.5" />
                       </button>
                     )}
@@ -2067,8 +2313,21 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                         <button
                           onClick={() => setSelectedSiteModal({ record: r })}
                           className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg text-[10px] font-bold border border-slate-700"
+                          title="View daily breakdown logs"
                         >
                           Daily UI
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            loadMultiSiteNotes([r.site_id]);
+                            setNotesSiteFilter(r.site_id);
+                            setIsMultiNotesModalOpen(true);
+                          }}
+                          className="px-2 py-1 bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 rounded-lg text-[10px] font-bold border border-purple-500/40"
+                          title={`View SDM operational notes for ${r.site_id}`}
+                        >
+                          Notes
                         </button>
 
                         {onSelectSite && (
@@ -2473,6 +2732,455 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
           onClose={() => setSelectedLgaReport(null)}
           onSelectSite={onSelectSite}
         />
+      )}
+
+
+      {/* 📋 MULTI-SITE BULK LIST SEARCH & PASTE MODAL */}
+      {isMultiSiteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-cyan-500/50 rounded-3xl max-w-2xl w-full p-6 space-y-5 shadow-2xl relative my-8 animate-in fade-in zoom-in duration-200 text-slate-100">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 rounded-2xl shrink-0">
+                  <ClipboardList className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">
+                    Multi-Site Bulk List Search
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Paste any list of Site IDs from Excel, WhatsApp, or reports to pull daily availability, sort by worst performing, and view all SDM notes.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsMultiSiteModalOpen(false)}
+                className="text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800 border border-slate-700 transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Textarea */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-300">
+                <span className="font-bold font-mono text-[11px] text-cyan-300">
+                  PASTE SITE IDs (Delimited by commas, spaces, tabs, or newlines):
+                </span>
+                <span className="font-mono text-[11px] text-slate-400">
+                  {parseSiteIdsFromText(multiSiteRawInput).length} Valid IDs Detected
+                </span>
+              </div>
+
+              <textarea
+                rows={6}
+                value={multiSiteRawInput}
+                onChange={(e) => setMultiSiteRawInput(e.target.value)}
+                placeholder="Example:&#10;FC0001, FC0002, FC0014&#10;FC0022&#10;FC0034; FC0045 FC0098&#10;T1296, T0331"
+                className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-400 rounded-2xl p-4 text-xs font-mono text-cyan-200 placeholder-slate-600 focus:outline-none leading-relaxed shadow-inner"
+              />
+
+              {/* Sample Quick Load Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] text-slate-500 uppercase font-bold">Quick Sample:</span>
+                  <button
+                    onClick={() => setMultiSiteRawInput('FC0001, FC0002, FC0012, FC0014, FC0022, FC0024, FC0034, FC0066, FC0098, FC2123, FC2266, FC2881, T0331, T1296')}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[10px] font-bold rounded-lg border border-slate-700"
+                  >
+                    Sample FCT Sites
+                  </button>
+                  {stats?.worst_sites && stats.worst_sites.length > 0 && (
+                    <button
+                      onClick={() => setMultiSiteRawInput(stats.worst_sites.map(s => s.site_id).join(', '))}
+                      className="px-2.5 py-1 bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 text-[10px] font-bold rounded-lg border border-amber-500/40"
+                    >
+                      Top Worst Outage Sites ({stats.worst_sites.length})
+                    </button>
+                  )}
+                </div>
+
+                {multiSiteRawInput && (
+                  <button
+                    onClick={() => setMultiSiteRawInput('')}
+                    className="text-[10px] text-red-400 hover:text-red-300 font-bold"
+                  >
+                    Clear Text
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Parsed Preview Tags */}
+            {parseSiteIdsFromText(multiSiteRawInput).length > 0 && (
+              <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-2">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                  Preview Parsed Unique IDs ({parseSiteIdsFromText(multiSiteRawInput).length}):
+                </span>
+                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                  {parseSiteIdsFromText(multiSiteRawInput).map((id) => (
+                    <span key={id} className="px-2 py-0.5 bg-cyan-950 text-cyan-300 text-[11px] font-mono font-bold rounded border border-cyan-500/30">
+                      {id}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-800">
+              <button
+                onClick={() => setIsMultiSiteModalOpen(false)}
+                className="w-full sm:w-auto px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl border border-slate-700 transition-all"
+              >
+                Cancel
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  onClick={() => {
+                    const ids = parseSiteIdsFromText(multiSiteRawInput);
+                    if (ids.length > 0) {
+                      handleApplyMultiSiteSearch(ids, true);
+                      loadMultiSiteNotes(ids);
+                      setIsMultiNotesModalOpen(true);
+                    }
+                  }}
+                  disabled={parseSiteIdsFromText(multiSiteRawInput).length === 0}
+                  className="flex-1 sm:flex-none px-4 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-extrabold rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Pull Sites & View Notes</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const ids = parseSiteIdsFromText(multiSiteRawInput);
+                    if (ids.length > 0) {
+                      handleApplyMultiSiteSearch(ids, true);
+                    }
+                  }}
+                  disabled={parseSiteIdsFromText(multiSiteRawInput).length === 0}
+                  className="flex-1 sm:flex-none px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 text-xs font-black rounded-xl shadow-lg shadow-cyan-500/30 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <TrendingDown className="w-4 h-4" />
+                  <span>Search & Filter Worst First</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* 📝 MULTI-SITE SDM OPERATIONAL NOTES & RCA MODAL */}
+      {isMultiNotesModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-purple-500/50 rounded-3xl max-w-5xl w-full p-6 space-y-5 shadow-2xl relative my-8 animate-in fade-in zoom-in duration-200 text-slate-100">
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 bg-purple-500/20 border border-purple-500/40 text-purple-400 rounded-2xl shrink-0">
+                  <FileText className="w-7 h-7" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2.5 py-0.5 bg-purple-950 text-purple-300 font-mono font-black text-xs rounded border border-purple-500/30">
+                      SDM OPERATIONAL NOTES
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-slate-800 text-slate-300 font-bold text-xs rounded border border-slate-700">
+                      {multiSiteParsedList.length > 0 ? `${multiSiteParsedList.length} Filtered Sites` : 'All Filtered Sites'}
+                    </span>
+                  </div>
+                  <h2 className="text-lg font-black text-white mt-1">
+                    Multi-Site SDM Operational Notes & Incident RCA Log
+                  </h2>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const sids = multiSiteParsedList.length > 0 ? multiSiteParsedList.join(',') : undefined;
+                    exportNotesExcel({ site_ids: sids });
+                  }}
+                  className="px-3.5 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/40 transition-all flex items-center gap-1.5 shadow-sm"
+                  title="Export all operational notes for these sites to Excel"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export Notes Excel</span>
+                </button>
+
+                <button
+                  onClick={() => setIsMultiNotesModalOpen(false)}
+                  className="text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800 border border-slate-700 transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Metrics Bar */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
+                <span className="text-[10px] text-slate-400 uppercase font-bold">Total SDM Notes</span>
+                <div className="text-2xl font-black text-purple-300 font-mono mt-0.5">
+                  {multiSiteNotes.length}
+                </div>
+              </div>
+
+              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
+                <span className="text-[10px] text-slate-400 uppercase font-bold">Critical Priority</span>
+                <div className="text-2xl font-black text-red-400 font-mono mt-0.5">
+                  {multiSiteNotes.filter(n => n.priority === 'Critical').length}
+                </div>
+              </div>
+
+              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
+                <span className="text-[10px] text-slate-400 uppercase font-bold">Active / In Progress</span>
+                <div className="text-2xl font-black text-amber-400 font-mono mt-0.5">
+                  {multiSiteNotes.filter(n => n.status === 'Open' || n.status === 'In Progress').length}
+                </div>
+              </div>
+
+              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
+                <span className="text-[10px] text-slate-400 uppercase font-bold">Resolved Tickets</span>
+                <div className="text-2xl font-black text-emerald-400 font-mono mt-0.5">
+                  {multiSiteNotes.filter(n => n.status === 'Resolved').length}
+                </div>
+              </div>
+            </div>
+
+            {/* Filters Row Inside Notes Modal */}
+            <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
+                {/* Search within notes */}
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search within notes, RCA, or author..."
+                    value={notesSearchQuery}
+                    onChange={(e) => setNotesSearchQuery(e.target.value)}
+                    className="w-full bg-slate-900 text-xs text-white placeholder-slate-500 pl-8 pr-3 py-1.5 rounded-xl border border-slate-700 focus:outline-none focus:border-purple-400"
+                  />
+                </div>
+
+                {/* Filter by Site ID */}
+                <select
+                  value={notesSiteFilter}
+                  onChange={(e) => setNotesSiteFilter(e.target.value)}
+                  className="bg-slate-900 text-xs text-cyan-300 px-3 py-1.5 rounded-xl border border-slate-700 focus:outline-none font-bold"
+                >
+                  <option value="All">All Sites ({multiSiteNotes.length})</option>
+                  {Array.from(new Set(multiSiteNotes.map(n => n.site?.ihs_site_id || n.site_id_str || n.site_id_input).filter(Boolean))).map((sid) => (
+                    <option key={sid} value={sid}>Site: {sid}</option>
+                  ))}
+                </select>
+
+                {/* Filter by Category */}
+                <select
+                  value={notesCategoryFilter}
+                  onChange={(e) => setNotesCategoryFilter(e.target.value)}
+                  className="bg-slate-900 text-xs text-slate-200 px-3 py-1.5 rounded-xl border border-slate-700 focus:outline-none"
+                >
+                  <option value="All">All Categories</option>
+                  <option value="Power">Power</option>
+                  <option value="DG">DG / Generator</option>
+                  <option value="Grid">PHCN / Grid</option>
+                  <option value="Fiber">Fiber</option>
+                  <option value="Battery">Battery</option>
+                  <option value="Security">Security</option>
+                  <option value="Hardware">Hardware</option>
+                </select>
+
+                {/* Filter by Status */}
+                <select
+                  value={notesStatusFilter}
+                  onChange={(e) => setNotesStatusFilter(e.target.value)}
+                  className="bg-slate-900 text-xs text-slate-200 px-3 py-1.5 rounded-xl border border-slate-700 focus:outline-none"
+                >
+                  <option value="All">All Statuses</option>
+                  <option value="Open">Open</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Resolved">Resolved</option>
+                  <option value="Escalated">Escalated</option>
+                </select>
+
+                {/* Filter by Priority */}
+                <select
+                  value={notesPriorityFilter}
+                  onChange={(e) => setNotesPriorityFilter(e.target.value)}
+                  className="bg-slate-900 text-xs text-slate-200 px-3 py-1.5 rounded-xl border border-slate-700 focus:outline-none"
+                >
+                  <option value="All">All Priorities</option>
+                  <option value="Critical">Critical</option>
+                  <option value="High">High</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Low">Low</option>
+                </select>
+              </div>
+
+              <button
+                onClick={() => {
+                  setNotesSiteFilter('All');
+                  setNotesCategoryFilter('All');
+                  setNotesPriorityFilter('All');
+                  setNotesStatusFilter('All');
+                  setNotesSearchQuery('');
+                }}
+                className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 text-xs font-bold rounded-xl border border-slate-800"
+              >
+                Reset
+              </button>
+            </div>
+
+            {/* Notes List */}
+            {loadingMultiNotes ? (
+              <div className="py-16 text-center text-slate-400 space-y-2">
+                <RefreshCw className="w-8 h-8 animate-spin mx-auto text-purple-400" />
+                <div className="text-xs font-bold">Loading SDM operational notes for matched sites...</div>
+              </div>
+            ) : multiSiteNotes.length === 0 ? (
+              <div className="py-16 text-center text-slate-400 space-y-2 bg-slate-950/60 rounded-2xl border border-slate-800 p-8">
+                <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
+                <h4 className="text-sm font-bold text-white">No SDM Notes Found</h4>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  No operational incident logs or trouble tickets have been logged yet for the queried sites.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                {multiSiteNotes
+                  .filter((n) => {
+                    const sid = (n.site?.ihs_site_id || n.site_id_str || n.site_id_input || '').toUpperCase();
+                    if (notesSiteFilter !== 'All' && sid !== notesSiteFilter.toUpperCase()) return false;
+                    if (notesCategoryFilter !== 'All' && n.category !== notesCategoryFilter) return false;
+                    if (notesPriorityFilter !== 'All' && n.priority !== notesPriorityFilter) return false;
+                    if (notesStatusFilter !== 'All' && n.status !== notesStatusFilter) return false;
+                    if (notesSearchQuery) {
+                      const q = notesSearchQuery.toLowerCase();
+                      const t = (n.title || '').toLowerCase();
+                      const d = (n.description || '').toLowerCase();
+                      const author = (n.created_by || '').toLowerCase();
+                      if (!t.includes(q) && !d.includes(q) && !author.includes(q) && !sid.toLowerCase().includes(q)) return false;
+                    }
+                    return true;
+                  })
+                  .map((note) => {
+                    const sid = note.site?.ihs_site_id || note.site_id_str || note.site_id_input || 'N/A';
+                    const isCritical = note.priority === 'Critical';
+                    const isResolved = note.status === 'Resolved';
+
+                    return (
+                      <div
+                        key={note.id}
+                        className={`p-4 rounded-2xl border transition-all space-y-2.5 ${
+                          isCritical
+                            ? 'bg-red-950/20 border-red-500/50 shadow-md shadow-red-950/30'
+                            : isResolved
+                            ? 'bg-emerald-950/10 border-emerald-500/30'
+                            : 'bg-slate-950/70 border-slate-800'
+                        }`}
+                      >
+                        {/* Note Top Row */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              onClick={() => {
+                                setIsMultiNotesModalOpen(false);
+                                if (onSelectSite) onSelectSite(sid);
+                              }}
+                              className="px-2.5 py-0.5 bg-cyan-950 text-cyan-300 font-mono font-black text-xs rounded border border-cyan-500/40 hover:underline flex items-center gap-1"
+                            >
+                              <Radio className="w-3 h-3" />
+                              <span>{sid}</span>
+                            </button>
+
+                            <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-[10px] font-mono font-bold rounded border border-purple-500/30">
+                              {note.category || 'General'}
+                            </span>
+
+                            <span className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded border ${
+                              isCritical ? 'bg-red-500/20 text-red-300 border-red-500/40' : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                            }`}>
+                              {note.priority || 'Normal'} Priority
+                            </span>
+
+                            <span className={`px-2 py-0.5 text-[10px] font-mono font-extrabold rounded border ${
+                              isResolved ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            }`}>
+                              {note.status || 'Open'}
+                            </span>
+                          </div>
+
+                          <span className="text-[11px] font-mono text-slate-400">
+                            🕒 {note.created_at ? new Date(note.created_at).toLocaleString() : 'N/A'}
+                          </span>
+                        </div>
+
+                        {/* Note Title & Description */}
+                        <div>
+                          <h4 className="text-xs font-black text-white mb-1">
+                            {note.title}
+                          </h4>
+                          <p className="text-xs text-slate-300 font-sans leading-relaxed whitespace-pre-line bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            {note.description}
+                          </p>
+                        </div>
+
+                        {/* Note Footer */}
+                        <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 pt-1">
+                          <span>
+                            Logged By: <b className="text-cyan-300">{note.created_by || 'State Delivery Manager'}</b>
+                            {note.smc_fse_name && note.smc_fse_name !== 'Unassigned' && (
+                              <span> • FSE: <b className="text-purple-300">{note.smc_fse_name}</b></span>
+                            )}
+                          </span>
+
+                          <div className="flex items-center gap-2">
+                            {note.attachments && note.attachments.length > 0 && (
+                              <span className="text-emerald-400 font-bold text-[10px] bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                                📎 {note.attachments.length} Attachments
+                              </span>
+                            )}
+
+                            {onSelectSite && (
+                              <button
+                                onClick={() => {
+                                  setIsMultiNotesModalOpen(false);
+                                  onSelectSite(sid);
+                                }}
+                                className="text-cyan-400 hover:text-cyan-300 font-bold hover:underline"
+                              >
+                                Inspect Site →
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+              <span className="text-xs text-slate-400 font-mono">
+                Showing {multiSiteNotes.length} total operational notes across queried sites
+              </span>
+
+              <button
+                onClick={() => setIsMultiNotesModalOpen(false)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl border border-slate-700 transition-all"
+              >
+                Close Notes
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

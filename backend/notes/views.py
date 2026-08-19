@@ -524,13 +524,57 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         if status_param and status_param != 'All':
             qs = qs.filter(status__iexact=status_param)
 
+        site_ids_param = self.request.query_params.get('site_ids', None)
         search = self.request.query_params.get('search', None)
-        if search:
+
+        if site_ids_param:
+            import re
+            from functools import reduce
+            import operator
+            if isinstance(site_ids_param, list):
+                raw_tokens = [str(x).strip() for x in site_ids_param if str(x).strip()]
+            else:
+                raw_tokens = [t.strip() for t in re.split(r'[,;\s\n\r\t]+', str(site_ids_param)) if t.strip()]
+            clean_tokens = [t.upper() for t in raw_tokens if t]
+            if clean_tokens:
+                note_q = [
+                    Q(site__ihs_site_id__iexact=t) |
+                    Q(site__mtn_id__iexact=t) |
+                    Q(site__cascade__iexact=t) |
+                    Q(site__ihs_site_id__icontains=t) |
+                    Q(title__icontains=t) |
+                    Q(description__icontains=t)
+                    for t in clean_tokens
+                ]
+                qs = qs.filter(reduce(operator.or_, note_q))
+        elif search:
+            import re
+            from functools import reduce
+            import operator
             s_clean = search.strip()
-            search_q = Q(title__icontains=s_clean) | Q(description__icontains=s_clean) | Q(created_by__icontains=s_clean) | Q(site__ihs_site_id__icontains=s_clean) | Q(site__lga__icontains=s_clean)
-            if s_clean.upper() in ['AMAC', 'MUNICIPAL AREA COUNCIL', 'MUNICIPAL']:
-                search_q |= Q(site__lga__icontains='AMAC') | Q(site__lga__icontains='MUNICIPAL')
-            qs = qs.filter(search_q)
+            tokens = [t.strip() for t in re.split(r'[,;\n\r\t]+', s_clean) if t.strip()]
+            if len(tokens) <= 1 and ' ' in s_clean:
+                space_tokens = [t.strip() for t in s_clean.split() if t.strip()]
+                if len(space_tokens) > 1 and any(re.match(r'^[A-Za-z]{1,4}\d{2,6}', st) for st in space_tokens):
+                    tokens = space_tokens
+            
+            if len(tokens) > 1:
+                clean_tokens = [t.upper() for t in tokens if t]
+                note_q = [
+                    Q(site__ihs_site_id__iexact=t) |
+                    Q(site__mtn_id__iexact=t) |
+                    Q(site__cascade__iexact=t) |
+                    Q(site__ihs_site_id__icontains=t) |
+                    Q(title__icontains=t) |
+                    Q(description__icontains=t)
+                    for t in clean_tokens
+                ]
+                qs = qs.filter(reduce(operator.or_, note_q))
+            else:
+                search_q = Q(title__icontains=s_clean) | Q(description__icontains=s_clean) | Q(created_by__icontains=s_clean) | Q(site__ihs_site_id__icontains=s_clean) | Q(site__lga__icontains=s_clean)
+                if s_clean.upper() in ['AMAC', 'MUNICIPAL AREA COUNCIL', 'MUNICIPAL']:
+                    search_q |= Q(site__lga__icontains='AMAC') | Q(site__lga__icontains='MUNICIPAL')
+                qs = qs.filter(search_q)
 
         # Date Filter (today, yesterday, 7days, 30days, or custom start_date/end_date)
         date_filter = self.request.query_params.get('date_filter', None) or self.request.query_params.get('days', None)
