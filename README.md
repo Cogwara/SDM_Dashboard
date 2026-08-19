@@ -1,4 +1,3 @@
-
 # 🛰️ SDM Dashboard — Telecom Operations & Intelligent Availability Platform
 
 [![React](https://img.shields.io/badge/Frontend-React_19_%2B_Vite_8-61DAFB?logo=react&logoColor=black)](https://react.dev/)
