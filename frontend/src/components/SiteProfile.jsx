@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, Radio, Zap, Shield, Phone, User, MapPin, Calendar, Clock, 
   FileText, MessageSquare, AlertTriangle, ChevronRight, CheckCircle2, 
-  ExternalLink, Layers, Search, Database, Cpu, Wifi, Edit3, Camera, Upload, X, Maximize2, Trash2
+  ExternalLink, Layers, Search, Database, Cpu, Wifi, Edit3, Camera, Upload, X, Maximize2, Trash2,
+  Activity, BarChart3, RefreshCw, ArrowRight
 } from 'lucide-react';
-import { lookupSite, createNote, updateNote, resolveNote, deleteNote } from '../api';
+import { lookupSite, createNote, updateNote, resolveNote, deleteNote, fetchAvailabilityRecords, getMediaUrl } from '../api';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 
-export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithPrompt }) {
+export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithPrompt, onNavigateTab, onNavigateToAvailability }) {
   const [site, setSite] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -553,6 +554,16 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
                     <div className="flex items-center justify-between font-bold text-xs text-white">
                       <div className="flex items-center space-x-2">
                         <span>{n.title}</span>
+                        {onNavigateToAvailability && (
+                          <button
+                            onClick={() => onNavigateToAvailability(n.site_ihs_id || site.ihs_site_id)}
+                            className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold text-[10px] rounded border border-emerald-500/40 transition-all flex items-center gap-1"
+                            title={`Filter Daily Availability for site ${n.site_ihs_id || site.ihs_site_id}`}
+                          >
+                            <Activity className="w-3 h-3 text-emerald-400" />
+                            <span>Daily Availability</span>
+                          </button>
+                        )}
                         {canEdit && !isResolved && (
                           <button
                             onClick={() => handleQuickResolveNote(n)}
@@ -628,10 +639,10 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
                             <div
                               key={att.id}
                               className="relative group rounded-lg overflow-hidden border border-slate-700 bg-slate-900 cursor-pointer"
-                              onClick={() => setLightboxImage(att.file)}
+                              onClick={() => setLightboxImage(getMediaUrl(att.file))}
                               title={att.file_name}
                             >
-                              <img src={att.file} alt={att.file_name} className="w-14 h-14 object-cover group-hover:scale-105 transition-transform" />
+                              <img src={getMediaUrl(att.file)} alt={att.file_name} className="w-14 h-14 object-cover group-hover:scale-105 transition-transform" />
                               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                 <Maximize2 className="w-3 h-3 text-white" />
                               </div>
@@ -858,7 +869,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
             >
               <X className="w-5 h-5" />
             </button>
-            <img src={lightboxImage} alt="Site Inspection Evidence" className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain border border-slate-700" />
+            <img src={getMediaUrl(lightboxImage)} alt="Site Inspection Evidence" className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain border border-slate-700" />
           </div>
         </div>
       )}

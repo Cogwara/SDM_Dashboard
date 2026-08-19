@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Site, Notification, TNLLink
+from .models import Site, Notification, TNLLink, IHSFiberLink, HuaweiFiberLink
 from notes.models import SiteNote, SiteAttachment, SiteTimeline
 from whatsapp.models import WhatsAppMessage
 
@@ -11,6 +11,16 @@ class NotificationSerializer(serializers.ModelSerializer):
 class TNLLinkSerializer(serializers.ModelSerializer):
     class Meta:
         model = TNLLink
+        fields = '__all__'
+
+class IHSFiberLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IHSFiberLink
+        fields = '__all__'
+
+class HuaweiFiberLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HuaweiFiberLink
         fields = '__all__'
 
 class SimpleNoteSerializer(serializers.ModelSerializer):

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Search, Filter, ChevronLeft, ChevronRight, Eye, RefreshCw, Radio, 
-  MapPin, Shield, Zap, User, FileText, CheckCircle, Database, UserCheck, Lock, Phone
+  MapPin, Shield, Zap, User, FileText, CheckCircle, Database, UserCheck, Lock, Phone, Activity, ArrowUpRight
 } from 'lucide-react';
 import { fetchSites, fetchFilterOptions } from '../api';
 
 export default function SiteDatabase({ 
   onSelectSite, 
+  onNavigateToAvailability,
   currentUser,
   initialSearch = '', 
   initialStatus = 'All', 
@@ -14,7 +15,9 @@ export default function SiteDatabase({
   initialCluster = 'All' 
 }) {
   const isSuperuser = currentUser?.is_superuser;
-  const userSdmName = currentUser?.full_name || '';
+  const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
+  const isSdm = !isSuperuser && !isFse && (currentUser?.role === 'State Delivery Manager' || currentUser?.role === 'SDM Manager');
+  const userName = currentUser?.full_name || currentUser?.username || '';
 
   const [sites, setSites] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -25,6 +28,7 @@ export default function SiteDatabase({
   // Filter Options loaded dynamically from Backend
   const [options, setOptions] = useState({
     states: [],
+    lgas: [],
     sdm_names: [],
     fse_names: [],
     rdm_names: []
@@ -35,8 +39,9 @@ export default function SiteDatabase({
   const [status, setStatus] = useState(initialStatus);
   const [priority, setPriority] = useState(initialPriority);
   const [stateFilter, setStateFilter] = useState('All');
-  const [sdmFilter, setSdmFilter] = useState(isSuperuser ? 'All' : userSdmName);
-  const [fseFilter, setFseFilter] = useState('All');
+  const [lgaFilter, setLgaFilter] = useState('All');
+  const [sdmFilter, setSdmFilter] = useState(isSdm ? userName : 'All');
+  const [fseFilter, setFseFilter] = useState(isFse ? userName : 'All');
   const [rdmFilter, setRdmFilter] = useState('All');
 
   // Quick 87-Column Specs Modal
@@ -46,10 +51,14 @@ export default function SiteDatabase({
     setSearch(initialSearch);
     setStatus(initialStatus);
     setPriority(initialPriority);
-    if (!isSuperuser && userSdmName) {
-      setSdmFilter(userSdmName);
+    if (isSdm && userName) {
+      setSdmFilter(userName);
+      setFseFilter('All');
+    } else if (isFse && userName) {
+      setFseFilter(userName);
+      setSdmFilter('All');
     }
-  }, [initialSearch, initialStatus, initialPriority, userSdmName, isSuperuser]);
+  }, [initialSearch, initialStatus, initialPriority, userName, isSdm, isFse]);
 
   // Load cascading filter options dynamically
   useEffect(() => {
@@ -58,13 +67,14 @@ export default function SiteDatabase({
       status: status !== 'All' ? status : undefined,
       priority: priority !== 'All' ? priority : undefined,
       state: stateFilter !== 'All' ? stateFilter : undefined,
+      lga: lgaFilter !== 'All' ? lgaFilter : undefined,
       sdm: sdmFilter !== 'All' ? sdmFilter : undefined,
       fse: fseFilter !== 'All' ? fseFilter : undefined,
       rdm: rdmFilter !== 'All' ? rdmFilter : undefined,
     })
       .then(res => setOptions(res))
       .catch(err => console.error(err));
-  }, [search, status, priority, stateFilter, sdmFilter, fseFilter, rdmFilter]);
+  }, [search, status, priority, stateFilter, lgaFilter, sdmFilter, fseFilter, rdmFilter]);
 
   // Load site records matching active filters
   const loadSitesData = async () => {
@@ -75,6 +85,7 @@ export default function SiteDatabase({
         status: status !== 'All' ? status : undefined,
         priority: priority !== 'All' ? priority : undefined,
         state: stateFilter !== 'All' ? stateFilter : undefined,
+        lga: lgaFilter !== 'All' ? lgaFilter : undefined,
         sdm: sdmFilter !== 'All' ? sdmFilter : undefined,
         fse: fseFilter !== 'All' ? fseFilter : undefined,
         rdm: rdmFilter !== 'All' ? rdmFilter : undefined,
@@ -92,7 +103,7 @@ export default function SiteDatabase({
 
   useEffect(() => {
     loadSitesData();
-  }, [search, status, priority, stateFilter, sdmFilter, fseFilter, rdmFilter, page]);
+  }, [search, status, priority, stateFilter, lgaFilter, sdmFilter, fseFilter, rdmFilter, page]);
 
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
 
@@ -101,13 +112,14 @@ export default function SiteDatabase({
     setStatus('All');
     setPriority('All');
     setStateFilter('All');
-    setSdmFilter(isSuperuser ? 'All' : userSdmName);
-    setFseFilter('All');
+    setLgaFilter('All');
+    setSdmFilter(isSuperuser ? 'All' : (isSdm ? userName : 'All'));
+    setFseFilter(isFse ? userName : 'All');
     setRdmFilter('All');
     setPage(1);
   };
 
-  const hasActiveFilters = search || status !== 'All' || priority !== 'All' || stateFilter !== 'All' || (isSuperuser ? sdmFilter !== 'All' : false) || fseFilter !== 'All' || rdmFilter !== 'All';
+  const hasActiveFilters = search || status !== 'All' || priority !== 'All' || stateFilter !== 'All' || lgaFilter !== 'All' || sdmFilter !== 'All' || fseFilter !== 'All' || rdmFilter !== 'All';
 
   return (
     <div className="space-y-6">
@@ -169,7 +181,7 @@ export default function SiteDatabase({
         </div>
 
         {/* Filter Dropdowns Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 text-xs">
           
           {/* State Filter */}
           <div>
@@ -188,6 +200,23 @@ export default function SiteDatabase({
             </select>
           </div>
 
+          {/* LGA Filter */}
+          <div>
+            <label className="block text-slate-400 font-bold mb-1 flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-purple-400" /> LGA
+            </label>
+            <select
+              value={lgaFilter}
+              onChange={(e) => { setLgaFilter(e.target.value); setPage(1); }}
+              className="w-full bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 focus:outline-none"
+            >
+              <option value="All">All LGAs ({options.lgas?.length || 0})</option>
+              {(options.lgas || []).map((lga) => (
+                <option key={lga} value={lga}>{lga}</option>
+              ))}
+            </select>
+          </div>
+
           {/* SDM Manager Filter */}
           <div>
             <label className="block text-slate-400 font-bold mb-1 flex items-center gap-1">
@@ -195,14 +224,14 @@ export default function SiteDatabase({
             </label>
             <select
               value={sdmFilter}
-              disabled={!isSuperuser}
+              disabled={isSdm}
               onChange={(e) => { setSdmFilter(e.target.value); setPage(1); }}
               className={`w-full text-white text-xs px-2.5 py-1.5 rounded-lg border focus:outline-none ${
-                !isSuperuser ? 'bg-slate-950 border-cyan-500/40 text-cyan-300 font-bold cursor-not-allowed' : 'bg-slate-900 border-slate-700'
+                isSdm ? 'bg-slate-950 border-cyan-500/40 text-cyan-300 font-bold cursor-not-allowed' : 'bg-slate-900 border-slate-700'
               }`}
             >
-              {!isSuperuser ? (
-                <option value={userSdmName}>{userSdmName} (Your SDM Scope)</option>
+              {isSdm ? (
+                <option value={userName}>{userName} (Your SDM Scope)</option>
               ) : (
                 <>
                   <option value="All">All SDMs ({options.sdm_names.length})</option>
@@ -221,13 +250,22 @@ export default function SiteDatabase({
             </label>
             <select
               value={fseFilter}
+              disabled={isFse}
               onChange={(e) => { setFseFilter(e.target.value); setPage(1); }}
-              className="w-full bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 focus:outline-none"
+              className={`w-full text-white text-xs px-2.5 py-1.5 rounded-lg border focus:outline-none ${
+                isFse ? 'bg-slate-950 border-emerald-500/40 text-emerald-300 font-bold cursor-not-allowed' : 'bg-slate-900 border-slate-700'
+              }`}
             >
-              <option value="All">All FSEs ({options.fse_names.length})</option>
-              {options.fse_names.map((fse) => (
-                <option key={fse} value={fse}>{fse}</option>
-              ))}
+              {isFse ? (
+                <option value={userName}>{userName} (Your FSE Scope)</option>
+              ) : (
+                <>
+                  <option value="All">All FSEs ({options.fse_names.length})</option>
+                  {options.fse_names.map((fse) => (
+                    <option key={fse} value={fse}>{fse}</option>
+                  ))}
+                </>
+              )}
             </select>
           </div>
 
@@ -424,7 +462,7 @@ export default function SiteDatabase({
                       </td>
 
                       {/* Actions */}
-                      <td className="p-3 text-right space-x-1.5">
+                      <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
                         <button
                           onClick={() => setQuickSpecSite(s)}
                           className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-bold rounded-lg border border-slate-700 transition-all inline-flex items-center gap-1"
@@ -435,8 +473,19 @@ export default function SiteDatabase({
                         </button>
                         
                         <button
+                          onClick={() => onNavigateToAvailability ? onNavigateToAvailability(siteId) : onSelectSite(siteId)}
+                          className="px-2.5 py-1 bg-gradient-to-r from-emerald-500/20 via-teal-500/20 to-cyan-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 text-emerald-300 hover:text-emerald-200 text-[11px] font-bold rounded-lg border border-emerald-500/40 hover:border-emerald-400/60 shadow-sm transition-all inline-flex items-center gap-1.5 group cursor-pointer"
+                          title={`Filter Daily Availability & view SLA performance data for site ${siteId}`}
+                        >
+                          <Activity className="w-3 h-3 text-emerald-400 group-hover:scale-110 transition-transform" />
+                          <span>View Availability</span>
+                          <ArrowUpRight className="w-3 h-3 text-emerald-400/70" />
+                        </button>
+
+                        <button
                           onClick={() => onSelectSite(siteId)}
-                          className="px-2 py-1 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 text-[11px] font-bold rounded-lg border border-cyan-500/40 transition-all inline-flex items-center gap-1"
+                          className="px-2 py-1 bg-slate-800 hover:bg-cyan-600/30 text-slate-300 hover:text-cyan-300 text-[11px] font-bold rounded-lg border border-slate-700 hover:border-cyan-500/40 transition-all inline-flex items-center gap-1"
+                          title="View Full Technical Site Profile"
                         >
                           <Eye className="w-3 h-3" />
                           <span>Profile</span>
@@ -458,84 +507,97 @@ export default function SiteDatabase({
         </div>
 
         {/* Pagination Footer */}
-        <div className="p-4 bg-slate-900/80 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between text-xs gap-3">
-          <div className="text-slate-400">
-            Showing Page <b className="text-white">{page}</b> of <b className="text-white">{totalPages}</b> &bull; Total Filtered Sites: <b className="text-cyan-300">{totalCount.toLocaleString()}</b>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between pt-2 text-xs text-slate-400">
+            <div>
+              Showing <span className="font-bold text-white">{(page - 1) * pageSize + 1}</span> to <span className="font-bold text-white">{Math.min(page * pageSize, totalCount)}</span> of <span className="font-bold text-white">{totalCount}</span> sites
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setPage((p) => Math.max(p - 1, 1))}
+                disabled={page === 1}
+                className="p-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded-lg border border-slate-700 transition-all"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="font-mono text-cyan-300 font-bold px-2">Page {page} of {totalPages}</span>
+              <button
+                onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
+                disabled={page === totalPages}
+                className="p-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 rounded-lg border border-slate-700 transition-all"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
+        )}
 
-          <div className="flex items-center space-x-2">
-            <button
-              disabled={page <= 1}
-              onClick={() => setPage(page - 1)}
-              className="p-1.5 bg-slate-800 disabled:opacity-40 text-slate-300 rounded-lg border border-slate-700 hover:bg-slate-700"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-
-            <span className="px-3 py-1 bg-slate-950 font-mono text-cyan-300 rounded-lg border border-slate-800">
-              Page {page}
-            </span>
-
-            <button
-              disabled={page >= totalPages}
-              onClick={() => setPage(page + 1)}
-              className="p-1.5 bg-slate-800 disabled:opacity-40 text-slate-300 rounded-lg border border-slate-700 hover:bg-slate-700"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
       </div>
 
-      {/* Quick 87-Specs Modal */}
+      {/* Modal: Quick Site Technical Specs Inspector */}
       {quickSpecSite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="glass-panel max-w-4xl w-full max-h-[85vh] flex flex-col p-6 rounded-2xl border border-slate-700 shadow-2xl space-y-4">
-            
+          <div className="glass-panel max-w-2xl w-full p-6 rounded-2xl border border-slate-700 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center space-x-3">
-                <Database className="w-5 h-5 text-cyan-400" />
-                <div>
-                  <h3 className="text-base font-extrabold text-white font-mono">
-                    {quickSpecSite.ihs_site_id} &bull; All 87 Excel Parameters
-                  </h3>
-                  <p className="text-xs text-slate-400">{quickSpecSite.site_address || 'Abuja FCT Site'}</p>
-                </div>
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Database className="w-5 h-5 text-cyan-400" />
+                  Technical Parameters & Specs: {quickSpecSite.ihs_site_id}
+                </h3>
+                <p className="text-xs text-slate-400">{quickSpecSite.site_name || 'MTN Site'} &bull; {quickSpecSite.state} State ({quickSpecSite.cluster_name})</p>
               </div>
-              
               <button
                 onClick={() => setQuickSpecSite(null)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
               >
                 ✕
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto pr-1">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-900 text-cyan-300 font-bold sticky top-0 border-b border-slate-800">
-                  <tr>
-                    <th className="p-2.5 w-10 text-slate-500">#</th>
-                    <th className="p-2.5 w-1/3">Excel Column Parameter Name</th>
-                    <th className="p-2.5">Parameter Value</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {Object.entries(quickSpecSite.raw_data || {}).map(([k, v], idx) => (
-                    <tr key={k} className="hover:bg-slate-900/50">
-                      <td className="p-2.5 text-slate-500 font-mono text-[11px]">{idx + 1}</td>
-                      <td className="p-2.5 font-semibold text-slate-300">{k}</td>
-                      <td className="p-2.5 font-mono font-bold text-cyan-300 break-all">{String(v)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">MTN Site ID</span>
+                <span className="text-cyan-300 font-mono font-bold">{quickSpecSite.mtn_site_id || 'N/A'}</span>
+              </div>
+              <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">Tower Company & SMC</span>
+                <span className="text-white font-bold">{quickSpecSite.tower_co} ({quickSpecSite.smc_vendor})</span>
+              </div>
+              <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">Operational Status & Priority</span>
+                <span className="text-emerald-400 font-bold">{quickSpecSite.operational_status} ({quickSpecSite.site_priority})</span>
+              </div>
+              <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">SDM Manager</span>
+                <span className="text-cyan-300 font-bold">{quickSpecSite.sdm_name || 'Christian Ogwara'}</span>
+              </div>
+              <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">Power Solution & DG Capacity</span>
+                <span className="text-amber-300 font-bold">{quickSpecSite.power_solution || 'Conventional'} ({quickSpecSite.dg_capacity_kva || '22 KVA'})</span>
+              </div>
+              <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                <span className="text-slate-500 block text-[10px] uppercase font-bold">FSE Field Engineer</span>
+                <span className="text-white font-bold">{quickSpecSite.smc_fse_name || 'N/A'} ({quickSpecSite.smc_fse_phone || 'N/A'})</span>
+              </div>
             </div>
 
             <div className="flex justify-end space-x-2 pt-2 border-t border-slate-800">
               <button
                 onClick={() => {
-                  const sId = quickSpecSite.ihs_site_id;
+                  const sId = quickSpecSite.ihs_site_id || quickSpecSite.mtn_id || quickSpecSite.site_id;
+                  setQuickSpecSite(null);
+                  if (onNavigateToAvailability) onNavigateToAvailability(sId);
+                  else onSelectSite(sId);
+                }}
+                className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center gap-1.5"
+              >
+                <Activity className="w-4 h-4" />
+                <span>View Daily Availability</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  const sId = quickSpecSite.ihs_site_id || quickSpecSite.mtn_id || quickSpecSite.site_id;
                   setQuickSpecSite(null);
                   onSelectSite(sId);
                 }}

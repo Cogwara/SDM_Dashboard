@@ -21,7 +21,7 @@ class Command(BaseCommand):
             return
 
         self.stdout.write(self.style.SUCCESS(f"Loading TNL Excel file: {file_path}..."))
-        wb = openpyxl.load_workbook(file_path, data_only=True)
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         sheet = wb['TNL']
 
         created_count = 0
@@ -43,16 +43,20 @@ class Command(BaseCommand):
         # Wipe old links to perform clean full import
         TNLLink.objects.all().delete()
 
-        for r in range(3, sheet.max_row + 1):
-            st = sheet.cell(row=r, column=1).value
-            reg = sheet.cell(row=r, column=2).value
-            sa = sheet.cell(row=r, column=3).value
-            sb = sheet.cell(row=r, column=4).value
-            seg = sheet.cell(row=r, column=5).value
-            dist = sheet.cell(row=r, column=6).value
-            net_type = sheet.cell(row=r, column=7).value
-            old_fmp = sheet.cell(row=r, column=8).value
-            maint_fmp = sheet.cell(row=r, column=9).value
+        empty_count = 0
+        for row in sheet.iter_rows(values_only=True):
+            if not any(x is not None for x in row):
+                empty_count += 1
+                if empty_count > 10:
+                    break
+                continue
+            empty_count = 0
+
+            if row[1] == 'State' or row[5] == ' List of Segment':
+                continue
+
+            row_padded = (list(row) + [None]*10)[:10]
+            cluster, st, reg, sa, sb, seg, dist, net_type, old_fmp, maint_fmp = row_padded
 
             if not st and not seg and not sa and not sb:
                 continue

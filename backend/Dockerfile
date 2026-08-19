@@ -20,5 +20,5 @@ COPY . /app/
 
 EXPOSE 8001
 
-CMD ["sh", "-c", "python manage.py migrate && python import_chris_matrix.py data/Matrix\\ -\\ CHRIS.xlsx && gunicorn core.wsgi:application --bind 0.0.0.0:8001 --workers 3"]
+CMD ["sh", "-c", "python manage.py migrate && gunicorn core.wsgi:application --bind 0.0.0.0:8001 --workers 2 --threads 4 --timeout 300 --worker-tmp-dir /tmp --worker-class gthread"]
 

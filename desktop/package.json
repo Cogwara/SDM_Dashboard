@@ -1,13 +1,19 @@
 {
   "name": "fct-sdm-dashboard-desktop",
   "version": "3.0.0",
-  "description": "FCT SDM Operations Dashboard & IHS Matrix Desktop App for Windows",
+  "description": "FCT SDM Operations Dashboard & IHS Matrix Desktop App",
+  "homepage": "https://github.com/Cogwara/SDM_Dashboard",
+  "author": {
+    "name": "State Delivery Manager Team",
+    "email": "sdm-admin@fct-telecom.ng"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build:win": "electron-builder --win nsis"
+    "build:win": "electron-builder --win nsis portable",
+    "build:linux": "electron-builder --linux AppImage deb",
+    "build:all": "electron-builder -wl"
   },
-  "author": "State Delivery Manager Team",
   "license": "MIT",
   "dependencies": {},
   "devDependencies": {
@@ -19,6 +25,14 @@
     "productName": "FCT SDM Dashboard Desktop",
     "directories": {
       "output": "../dist_desktop"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "maintainer": "State Delivery Manager Team <sdm-admin@fct-telecom.ng>"
     },
     "win": {
       "target": [

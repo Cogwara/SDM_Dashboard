@@ -9,6 +9,7 @@ services:
     restart: always
     ports:
       - "8001:8001"
+    shm_size: '1g'
     volumes:
       - ./backend:/app
     environment:

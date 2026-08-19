@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UserPlus, Shield, User, Mail, Phone, Lock, CheckCircle, RefreshCw, Radio, Search, Check, AlertCircle, Building2, MapPin, Globe, Layers, Send } from 'lucide-react';
-import { fetchSDMList, registerSDM, assignStateToSDM, fetchAvailableStates } from '../api';
+import { fetchSDMList, registerSDM, assignStateToSDM, fetchAvailableStates, syncFSEAccounts } from '../api';
 
 const DEFAULT_NIGERIAN_STATES = [
   { state: 'FCT', count: 1050 },
@@ -59,7 +59,7 @@ const DEFAULT_SDM_USERS = [
   {"id": 14, "username": "mustafa_musa", "full_name": "Mustafa Musa", "email": "mustafa_musa@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 755, "is_registered": true},
   {"id": 15, "username": "nwagu_kingsley", "full_name": "Nwagu Kingsley", "email": "nwagu_kingsley@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 770, "is_registered": true},
   {"id": 16, "username": "olanrewaju_kayode_olaewe", "full_name": "OLANREWAJU KAYODE OLAEWE", "email": "olanrewaju_kayode_olaewe@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 579, "is_registered": true},
-  {"id": 17, "username": "jacobs_kunle_oluwole", "full_name": "Jacobs Kunle Oluwole", "email": "jacobs_kunle_oluwole@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 601, "is_registered": true},
+  {"id": 17, "username": "ogwara_christian", "full_name": "Ogwara Christian", "email": "ogwara_christian@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 601, "is_registered": true},
   {"id": 18, "username": "nathaniel_ocheni", "full_name": "Nathaniel Ocheni", "email": "nathaniel_ocheni@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 428, "is_registered": true},
   {"id": 20, "username": "popoola_moses_oluwatoyin", "full_name": "Popoola Moses oluwatoyin", "email": "popoola_moses_oluwatoyin@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 22, "is_registered": true},
   {"id": 21, "username": "badmus_abass_olayemi", "full_name": "Badmus Abass Olayemi", "email": "badmus_abass_olayemi@fcttelecom.ng", "is_superuser": false, "role": "State Delivery Manager", "assigned_sites": 366, "is_registered": true},
@@ -95,12 +95,13 @@ export default function SDMUserManagement({ currentUser }) {
   const [assigning, setAssigning] = useState(false);
   const [assignMsg, setAssignMsg] = useState({ type: '', text: '' });
 
-  // Form states for creating new SDM
+  // Form states for creating new SDM / FSE Engineer
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('password123');
+  const [role, setRole] = useState('State Delivery Manager'); // 'State Delivery Manager' or 'SMC FSE Engineer'
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState({ type: '', text: '' });
 
@@ -139,17 +140,7 @@ export default function SDMUserManagement({ currentUser }) {
   const handleAssignStateSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!assignSdmName) {
-      setAssignMsg({ type: 'error', text: 'Please select an SDM Manager.' });
-      return;
-    }
-
-    if (assignMode === 'state' && !assignStateName) {
-      setAssignMsg({ type: 'error', text: 'Please select a Target State Territory.' });
-      return;
-    }
-
-    if (assignMode === 'sites' && !assignSiteIds.trim()) {
-      setAssignMsg({ type: 'error', text: 'Please enter at least one Site ID (e.g. FC2700, FC2437).' });
+      setAssignMsg({ type: 'error', text: 'Please select an SDM Manager or FSE Engineer.' });
       return;
     }
 
@@ -157,29 +148,38 @@ export default function SDMUserManagement({ currentUser }) {
     setAssignMsg({ type: '', text: '' });
 
     try {
-      const res = await assignStateToSDM(
-        assignSdmName, 
-        assignMode === 'state' ? assignStateName : '', 
-        '', 
-        assignMode === 'sites' ? assignSiteIds.trim() : null
-      );
-      setAssignMsg({ type: 'success', text: res.message || `Successfully assigned ${res.updated_count || 0} sites to ${assignSdmName}!` });
-      setAssignStateName('');
-      setAssignSiteIds('');
+      if (assignMode === 'sites') {
+        if (!assignSiteIds.trim()) {
+          setAssignMsg({ type: 'error', text: 'Please enter at least one Site ID.' });
+          setAssigning(false);
+          return;
+        }
+        const res = await assignStateToSDM(assignSdmName, '', '', assignSiteIds);
+        setAssignMsg({ type: 'success', text: res.message || `Successfully assigned sites to ${assignSdmName}!` });
+        setAssignSiteIds('');
+      } else {
+        if (!assignStateName) {
+          setAssignMsg({ type: 'error', text: 'Please select a target State Territory.' });
+          setAssigning(false);
+          return;
+        }
+        const res = await assignStateToSDM(assignSdmName, assignStateName, '');
+        setAssignMsg({ type: 'success', text: res.message || `Successfully assigned ${assignStateName} Territory to ${assignSdmName}!` });
+      }
       loadSdms();
     } catch (err) {
-      setAssignMsg({ type: 'error', text: err.response?.data?.error || 'Failed to assign sites to SDM.' });
+      setAssignMsg({ type: 'error', text: err.response?.data?.error || 'Failed to assign portfolio/sites.' });
     } finally {
       setAssigning(false);
     }
   };
 
-  const handleQuickAssignState = (sdm) => {
+  const handleSelectSDMForAssignment = (sdm) => {
     setAssignSdmName(sdm.full_name);
-    if (availableStates.length > 0 && !assignStateName) {
+    if (availableStates.length > 0) {
       setAssignStateName(availableStates[0].state);
     }
-    setAssignMsg({ type: 'info', text: `Selected SDM: ${sdm.full_name}. Choose target State below and click Assign State.` });
+    setAssignMsg({ type: 'info', text: `Selected Personnel: ${sdm.full_name} (${sdm.role || 'User'}). Choose target State or Site IDs below.` });
   };
 
   const handleCreateSDM = async (e) => {
@@ -198,19 +198,37 @@ export default function SDMUserManagement({ currentUser }) {
         username: username,
         email: email,
         phone: phone,
-        password: password
+        password: password,
+        role: role
       });
-      setMsg({ type: 'success', text: res.message || `SDM Account for ${fullName} created successfully!` });
+      setMsg({ type: 'success', text: res.message || `Account for ${fullName} (${role}) created successfully!` });
       setFullName('');
       setUsername('');
       setEmail('');
       setPhone('');
       setPassword('password123');
+      setRole('State Delivery Manager');
       loadSdms();
     } catch (err) {
-      setMsg({ type: 'error', text: err.response?.data?.error || 'Failed to create SDM account.' });
+      setMsg({ type: 'error', text: err.response?.data?.error || 'Failed to create user account.' });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const [syncingFse, setSyncingFse] = useState(false);
+
+  const handleSyncFSEAccounts = async () => {
+    setSyncingFse(true);
+    setMsg({ type: 'info', text: 'Auto-provisioning user accounts for all 540 SMC FSE Engineers from WSD dataset...' });
+    try {
+      const res = await syncFSEAccounts();
+      setMsg({ type: 'success', text: res.message || 'Successfully provisioned all SMC FSE Engineer accounts!' });
+      loadSdms();
+    } catch (err) {
+      setMsg({ type: 'error', text: err.response?.data?.error || 'Failed to sync FSE accounts.' });
+    } finally {
+      setSyncingFse(false);
     }
   };
 
@@ -220,20 +238,26 @@ export default function SDMUserManagement({ currentUser }) {
     setUsername(suggestedUsername);
     setEmail(sdm.email || `${suggestedUsername}@fcttelecom.ng`);
     setPassword('password123');
-    setMsg({ type: 'info', text: `Pre-filled registration form for ${sdm.full_name}. Adjust password if needed and click Register.` });
+    setRole(sdm.role === 'SMC FSE Engineer' ? 'SMC FSE Engineer' : 'State Delivery Manager');
+    setMsg({ type: 'info', text: `Pre-filled registration form for ${sdm.full_name} (${sdm.role || 'User'}). Adjust password if needed and click Register.` });
   };
 
   const registeredCount = activeSdms.filter(s => s.is_registered).length;
+  const sdmCount = activeSdms.filter(s => s.role === 'State Delivery Manager' || s.role === 'Super Administrator').length;
+  const fseCount = activeSdms.filter(s => s.role === 'SMC FSE Engineer').length;
   const portfolioCount = activeSdms.filter(s => !s.is_registered).length;
 
   const filteredSdms = activeSdms.filter(s => {
     if (filterTab === 'registered' && !s.is_registered) return false;
     if (filterTab === 'portfolio' && s.is_registered) return false;
+    if (filterTab === 'fse' && s.role !== 'SMC FSE Engineer') return false;
+    if (filterTab === 'sdm' && (s.role !== 'State Delivery Manager' && s.role !== 'Super Administrator')) return false;
 
     if (!search) return true;
     const q = search.toLowerCase();
     return (s.full_name || '').toLowerCase().includes(q) || 
            (s.username || '').toLowerCase().includes(q) || 
+           (s.role || '').toLowerCase().includes(q) ||
            (s.email && s.email.toLowerCase().includes(q));
   });
 
@@ -271,9 +295,19 @@ export default function SDMUserManagement({ currentUser }) {
           )}
 
           <button
+            onClick={handleSyncFSEAccounts}
+            disabled={syncingFse}
+            className="px-3 py-1.5 bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-500/40 text-xs font-bold rounded-xl transition-all shadow flex items-center gap-1.5"
+            title="Auto-provision user accounts for all 540 SMC FSE Engineers from WSD dataset"
+          >
+            <UserPlus className={`w-3.5 h-3.5 ${syncingFse ? 'animate-spin text-purple-400' : ''}`} />
+            <span>{syncingFse ? 'Syncing 540 FSEs...' : '⚡ Auto-Provision All 540 FSE Accounts'}</span>
+          </button>
+
+          <button
             onClick={loadSdms}
             className="p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-700 transition-all shadow"
-            title="Refresh SDM Directory"
+            title="Refresh Directory"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
           </button>
@@ -355,6 +389,36 @@ export default function SDMUserManagement({ currentUser }) {
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full bg-slate-900 text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none font-mono"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Account Role</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRole('State Delivery Manager')}
+                      className={`p-2 rounded-xl text-xs font-bold border transition-all text-center flex items-center justify-center gap-1.5 ${
+                        role === 'State Delivery Manager'
+                          ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>State Delivery Manager</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRole('SMC FSE Engineer')}
+                      className={`p-2 rounded-xl text-xs font-bold border transition-all text-center flex items-center justify-center gap-1.5 ${
+                        role === 'SMC FSE Engineer'
+                          ? 'bg-purple-500/20 border-purple-400 text-purple-300'
+                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-purple-400" />
+                      <span>SMC FSE Engineer</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div>
@@ -509,8 +573,8 @@ export default function SDMUserManagement({ currentUser }) {
             </div>
           </div>
 
-          {/* Filter Pills */}
-          <div className="flex items-center space-x-2 text-xs">
+          {/* Filter Pills with explicit Portfolio separation */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <button
               onClick={() => setFilterTab('all')}
               className={`px-3 py-1 rounded-lg font-semibold transition-all ${
@@ -519,7 +583,29 @@ export default function SDMUserManagement({ currentUser }) {
                   : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
               }`}
             >
-              All SDMs ({activeSdms.length})
+              🌐 All Personnel ({activeSdms.length})
+            </button>
+
+            <button
+              onClick={() => setFilterTab('sdm')}
+              className={`px-3 py-1 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                filterTab === 'sdm'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-sm'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-cyan-300'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5 text-cyan-400" /> SDM Managers ({sdmCount})
+            </button>
+
+            <button
+              onClick={() => setFilterTab('fse')}
+              className={`px-3 py-1 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                filterTab === 'fse'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-400 shadow-sm'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-purple-300'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5 text-purple-400" /> SMC FSE Engineers ({fseCount})
             </button>
 
             <button
@@ -530,7 +616,7 @@ export default function SDMUserManagement({ currentUser }) {
                   : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
               }`}
             >
-              <CheckCircle className="w-3 h-3 text-emerald-400" /> Registered Accounts ({registeredCount})
+              <CheckCircle className="w-3 h-3 text-emerald-400" /> Active Logins ({registeredCount})
             </button>
 
             {portfolioCount > 0 && (
@@ -542,7 +628,7 @@ export default function SDMUserManagement({ currentUser }) {
                     : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
                 }`}
               >
-                <Building2 className="w-3 h-3 text-amber-400" /> Portfolio SDMs ({portfolioCount})
+                <Building2 className="w-3 h-3 text-amber-400" /> Unregistered Portfolio ({portfolioCount})
               </button>
             )}
           </div>
@@ -575,9 +661,13 @@ export default function SDMUserManagement({ currentUser }) {
                         <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           Super Admin
                         </span>
+                      ) : sdm.role === 'SMC FSE Engineer' ? (
+                        <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1 w-fit">
+                          <UserPlus className="w-3 h-3 text-purple-400" /> {sdm.is_registered ? 'SMC FSE (Active)' : 'Unregistered FSE'}
+                        </span>
                       ) : sdm.is_registered ? (
                         <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 w-fit">
-                          <Check className="w-3 h-3" /> Registered User
+                          <Check className="w-3 h-3" /> SDM Manager (Active)
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1 w-fit">

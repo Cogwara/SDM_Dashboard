@@ -96,3 +96,161 @@ class TNLLink(models.Model):
 
     def __str__(self):
         return f"TNL Link [{self.state}] {self.segment_name} ({self.distance_km}km)"
+
+
+class IHSFiberLink(models.Model):
+    cluster_ref = models.CharField(max_length=50, blank=True, default='')
+    segment_id = models.CharField(max_length=255, db_index=True, blank=True, default='')
+    site_a = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    site_b = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    fibre_length_m = models.FloatField(null=True, blank=True, default=0.0)
+    distance_km = models.FloatField(null=True, blank=True, default=0.0)
+    state = models.CharField(max_length=50, blank=True, default='FCT')
+    
+    site_a_ref = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name='ihs_fiber_links_a')
+    site_b_ref = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name='ihs_fiber_links_b')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['cluster_ref', 'segment_id']
+
+    def __str__(self):
+        return f"IHS Fiber Link [{self.cluster_ref}] {self.segment_id} ({self.distance_km}km)"
+
+
+class HuaweiFiberLink(models.Model):
+    cluster_name = models.CharField(max_length=100, blank=True, default='')
+    state = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    region = models.CharField(max_length=50, blank=True, default='')
+    site_a = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    site_b = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    segment_name = models.CharField(max_length=255, db_index=True, blank=True, default='')
+    distance_km = models.FloatField(null=True, blank=True, default=0.0)
+    network_type = models.CharField(max_length=50, blank=True, default='')
+    old_fmp = models.CharField(max_length=100, blank=True, default='')
+    maintenance_fmp = models.CharField(max_length=100, blank=True, default='Huawei')
+    huawei_fsdm = models.CharField(max_length=100, blank=True, default='')
+    huawei_fsdm_number = models.CharField(max_length=50, blank=True, default='')
+
+    site_a_ref = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name='huawei_fiber_links_a')
+    site_b_ref = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name='huawei_fiber_links_b')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['state', 'segment_name']
+
+    def __str__(self):
+        return f"Huawei Fiber Link [{self.state}] {self.segment_name} ({self.distance_km}km)"
+
+
+
+class WSDUploadLog(models.Model):
+    filename = models.CharField(max_length=255)
+    uploaded_by = models.CharField(max_length=150, blank=True, null=True)
+    site_count = models.IntegerField(default=0)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    is_base = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"{self.filename} ({self.site_count} sites) - {self.uploaded_at.strftime('%Y-%m-%d %H:%M')}"
+
+
+class DailyAvailabilityUploadLog(models.Model):
+    filename = models.CharField(max_length=255)
+    uploaded_by = models.CharField(max_length=150, blank=True, null=True)
+    records_count = models.IntegerField(default=0)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    date_range = models.CharField(max_length=100, blank=True, null=True)
+    month_str = models.CharField(max_length=50, blank=True, null=True, db_index=True)
+    start_date = models.CharField(max_length=20, blank=True, null=True)
+    end_date = models.CharField(max_length=20, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    is_archived = models.BooleanField(default=False)
+    is_base = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"Daily Availability: {self.filename} ({self.records_count} elements) [{self.month_str or 'N/A'}]"
+
+
+class DailyAvailabilityRecord(models.Model):
+    site_id = models.CharField(max_length=50, db_index=True)
+    tech = models.CharField(max_length=10, db_index=True)  # 2G, 3G, 4G, 5G
+    element_name = models.CharField(max_length=100, blank=True, null=True)
+    state = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    region = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    lga = models.CharField(max_length=100, blank=True, default='')
+    tower_co = models.CharField(max_length=100, blank=True, default='')
+    vendor = models.CharField(max_length=100, blank=True, default='')
+    status = models.CharField(max_length=50, blank=True, default='')
+    vvip = models.CharField(max_length=50, blank=True, default='')
+    
+    daily_scores = models.JSONField(default=dict, blank=True)
+    avg_availability = models.FloatField(default=100.0, db_index=True)
+    latest_availability = models.FloatField(default=100.0, db_index=True)
+    
+    upload_log = models.ForeignKey(DailyAvailabilityUploadLog, on_delete=models.SET_NULL, null=True, blank=True, related_name='records')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('upload_log', 'site_id', 'tech')
+        ordering = ['site_id', 'tech']
+
+    def __str__(self):
+        return f"{self.site_id} [{self.tech}] - Avg: {self.avg_availability:.2f}%"
+
+
+class HourlyAvailabilityUploadLog(models.Model):
+    filename = models.CharField(max_length=255)
+    uploaded_by = models.CharField(max_length=150, blank=True, null=True)
+    records_count = models.IntegerField(default=0)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    date_str = models.CharField(max_length=100, blank=True, null=True)
+    hours_list = models.JSONField(default=list, blank=True)
+    national_regional_data = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    is_base = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"Hourly Availability: {self.filename} ({self.records_count} elements)"
+
+
+class HourlyAvailabilityRecord(models.Model):
+    site_id = models.CharField(max_length=50, db_index=True)
+    tech = models.CharField(max_length=10, db_index=True)  # 2G, 3G, 4G, 5G
+    element_name = models.CharField(max_length=100, blank=True, null=True)
+    site_name = models.CharField(max_length=255, blank=True, null=True)
+    state = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    region = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    lga = models.CharField(max_length=100, blank=True, default='')
+    territory = models.CharField(max_length=100, blank=True, default='')
+    tower_co = models.CharField(max_length=100, blank=True, default='')
+    area_name = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=50, blank=True, default='')
+    
+    hourly_scores = models.JSONField(default=dict, blank=True)
+    avg_availability = models.FloatField(default=100.0, db_index=True)
+    latest_availability = models.FloatField(default=100.0, db_index=True)
+    latest_hour = models.CharField(max_length=20, blank=True, default='')
+    
+    upload_log = models.ForeignKey(HourlyAvailabilityUploadLog, on_delete=models.SET_NULL, null=True, blank=True, related_name='records')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('site_id', 'tech')
+        ordering = ['site_id', 'tech']
+
+    def __str__(self):
+        return f"{self.site_id} [{self.tech}] Hourly - Avg: {self.avg_availability:.2f}%"

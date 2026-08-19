@@ -11,7 +11,7 @@ from notes.models import SiteNote, SiteAttachment, SiteTimeline
 from whatsapp.models import WhatsAppMessage
 
 def run_fc_merger_and_sdm_update():
-    f2 = r"C:\Users\MrChrys\Documents\Huawei Documents\SItes\WSD APRIL  2026 v 3.4-ABUJA REGION.xlsb"
+    f2 = r"/home/mrchrys/SDM/working site distribution/Huawei/WSD APRIL  2026 v 3.4-ABUJA REGION.xlsb"
     print(f"Reading File 2 for SDM names and FC site mapping: {f2}")
     
     sdm_map = {}

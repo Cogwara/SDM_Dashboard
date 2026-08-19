@@ -7,14 +7,149 @@ from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
 import pandas as pd
-from .models import SiteNote, SiteAttachment, SiteTimeline
-from .serializers import SiteNoteSerializer, SiteAttachmentSerializer, SiteTimelineSerializer
+import datetime
+from .models import SiteNote, SiteAttachment, SiteTimeline, FiberOutageNote
+from .serializers import SiteNoteSerializer, SiteAttachmentSerializer, SiteTimelineSerializer, FiberOutageNoteSerializer
 from sites.models import Site, Notification
 
 class FlexiblePagination(PageNumberPagination):
     page_size = 50
     page_size_query_param = 'page_size'
     max_page_size = 25000
+
+
+class FiberOutageNoteViewSet(viewsets.ModelViewSet):
+    queryset = FiberOutageNote.objects.all()
+    serializer_class = FiberOutageNoteSerializer
+    pagination_class = FlexiblePagination
+
+    def get_queryset(self):
+        qs = FiberOutageNote.objects.all()
+
+        search = self.request.query_params.get('search', None)
+        if search:
+            s_clean = search.strip()
+            qs = qs.filter(
+                Q(ticket_number__icontains=s_clean) |
+                Q(site_id__icontains=s_clean) |
+                Q(site_a__icontains=s_clean) |
+                Q(site_b__icontains=s_clean) |
+                Q(fiber_route__icontains=s_clean) |
+                Q(provider__icontains=s_clean) |
+                Q(title__icontains=s_clean) |
+                Q(description__icontains=s_clean) |
+                Q(location__icontains=s_clean) |
+                Q(state__icontains=s_clean) |
+                Q(reported_by__icontains=s_clean)
+            )
+
+        provider = self.request.query_params.get('provider', None)
+        if provider and provider != 'All':
+            qs = qs.filter(provider__iexact=provider)
+
+        status_param = self.request.query_params.get('status', None)
+        if status_param and status_param != 'All':
+            qs = qs.filter(status__iexact=status_param)
+
+        priority = self.request.query_params.get('priority', None)
+        if priority and priority != 'All':
+            qs = qs.filter(priority__iexact=priority)
+
+        state = self.request.query_params.get('state', None)
+        if state and state != 'All':
+            qs = qs.filter(state__iexact=state)
+
+        # Day & Date filtering
+        date_param = self.request.query_params.get('date', None)
+        if date_param and date_param.strip() and date_param != 'All':
+            qs = qs.filter(created_at__date=date_param.strip())
+
+        day_param = self.request.query_params.get('day', None)
+        if day_param and day_param != 'All':
+            today = timezone.now().date()
+            if day_param == 'today':
+                qs = qs.filter(created_at__date=today)
+            elif day_param == 'yesterday':
+                qs = qs.filter(created_at__date=today - datetime.timedelta(days=1))
+            elif day_param == 'last_7_days':
+                qs = qs.filter(created_at__date__gte=today - datetime.timedelta(days=7))
+            elif day_param == 'last_30_days':
+                qs = qs.filter(created_at__date__gte=today - datetime.timedelta(days=30))
+
+        start_date = self.request.query_params.get('start_date', None)
+        end_date = self.request.query_params.get('end_date', None)
+        if start_date and start_date.strip():
+            qs = qs.filter(created_at__date__gte=start_date.strip())
+        if end_date and end_date.strip():
+            qs = qs.filter(created_at__date__lte=end_date.strip())
+
+        return qs.order_by('-created_at')
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+
+        # Automatically create corresponding SDM SiteNote
+        target_site_id = (instance.site_id or instance.site_a or instance.site_b or '').strip().upper()
+
+        if target_site_id:
+            site_obj = Site.objects.filter(Q(ihs_site_id__iexact=target_site_id) | Q(mtn_id__iexact=target_site_id)).first()
+
+            note_title = f"🚨 Fiber Outage [{instance.ticket_number}]: {instance.title}"
+            note_description = (
+                f"AUTOMATIC SDM NOTE - FIBER OUTAGE RECORDED\n\n"
+                f"• Ticket #: {instance.ticket_number}\n"
+                f"• Provider: {instance.provider}\n"
+                f"• Fiber Route: {instance.fiber_route or 'N/A'}\n"
+                f"• Impacted Segment: {instance.site_a} <-> {instance.site_b}\n"
+                f"• Outage Distance: {instance.distance_km} km\n"
+                f"• Priority: {instance.priority}\n"
+                f"• Cut Location: {instance.location or instance.state}\n"
+                f"• Reported By: {instance.reported_by}\n"
+                f"• Contact: {instance.contact_number or 'N/A'}\n"
+                f"• Resolution ETA: {instance.eta_time or 'Pending Investigation'}\n\n"
+                f"Detailed RCA & Status:\n{instance.description}"
+            )
+
+            valid_priority = instance.priority if instance.priority in ['Critical', 'High', 'Medium', 'Low'] else 'High'
+            valid_status = instance.status if instance.status in ['Open', 'In Progress', 'Resolved', 'Escalated'] else 'Open'
+
+            try:
+                SiteNote.objects.create(
+                    site=site_obj,
+                    site_id_input=target_site_id,
+                    site_id_str=target_site_id,
+                    title=note_title,
+                    category='Fiber',
+                    priority=valid_priority,
+                    status=valid_status,
+                    description=note_description,
+                    created_by=instance.reported_by or 'State Delivery Manager',
+                    created_at=instance.created_at
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to auto-create SiteNote for Fiber Outage {instance.ticket_number}: {e}")
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        qs = self.get_queryset()
+        total_outages = qs.count()
+        active_outages = qs.filter(status='Open').count()
+        in_progress_outages = qs.filter(status='In Progress').count()
+        restored_outages = qs.filter(status='Resolved').count()
+        
+        from django.db.models import Sum
+        total_km_impacted = round(qs.aggregate(total=Sum('distance_km'))['total'] or 0.0, 2)
+
+        providers = list(qs.values('provider').annotate(count=Q()).order_by('-count')) if hasattr(qs, 'values') else []
+        
+        return Response({
+            'total_outages': total_outages,
+            'active_outages': active_outages,
+            'in_progress_outages': in_progress_outages,
+            'restored_outages': restored_outages,
+            'total_km_impacted': total_km_impacted
+        })
 
 class SiteNoteViewSet(viewsets.ModelViewSet):
     queryset = SiteNote.objects.all()
@@ -358,6 +493,24 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         site_id = self.request.query_params.get('site_id', None)
         if site_id:
             qs = qs.filter(site__ihs_site_id__iexact=site_id)
+
+        lga = self.request.query_params.get('lga', None)
+        if lga and lga != 'All':
+            clean_lga = lga.strip().upper()
+            first_word = clean_lga.split()[0]
+            lga_q = Q(site__lga__iexact=clean_lga) | Q(site__lga__icontains=clean_lga) | Q(site__lga__icontains=first_word)
+            if clean_lga in ['AMAC', 'MUNICIPAL AREA COUNCIL', 'MUNICIPAL', 'ABUJA MUNICIPAL']:
+                lga_q |= Q(site__lga__icontains='AMAC') | Q(site__lga__icontains='MUNICIPAL')
+            
+            try:
+                from sites.models import DailyAvailabilityRecord
+                lga_sites = list(DailyAvailabilityRecord.objects.filter(lga__icontains=first_word).values_list('site_id', flat=True).distinct()[:500])
+                if lga_sites:
+                    lga_q |= Q(site__ihs_site_id__in=lga_sites)
+            except Exception:
+                pass
+
+            qs = qs.filter(lga_q)
         
         category = self.request.query_params.get('category', None)
         if category and category != 'All':
@@ -373,7 +526,11 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
 
         search = self.request.query_params.get('search', None)
         if search:
-            qs = qs.filter(Q(title__icontains=search) | Q(description__icontains=search) | Q(created_by__icontains=search))
+            s_clean = search.strip()
+            search_q = Q(title__icontains=s_clean) | Q(description__icontains=s_clean) | Q(created_by__icontains=s_clean) | Q(site__ihs_site_id__icontains=s_clean) | Q(site__lga__icontains=s_clean)
+            if s_clean.upper() in ['AMAC', 'MUNICIPAL AREA COUNCIL', 'MUNICIPAL']:
+                search_q |= Q(site__lga__icontains='AMAC') | Q(site__lga__icontains='MUNICIPAL')
+            qs = qs.filter(search_q)
 
         # Date Filter (today, yesterday, 7days, 30days, or custom start_date/end_date)
         date_filter = self.request.query_params.get('date_filter', None) or self.request.query_params.get('days', None)

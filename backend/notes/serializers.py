@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SiteNote, SiteAttachment, SiteTimeline
+from .models import SiteNote, SiteAttachment, SiteTimeline, FiberOutageNote
 from sites.serializers import SiteSerializer
 
 class SiteAttachmentSerializer(serializers.ModelSerializer):
@@ -56,4 +56,11 @@ class SiteTimelineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SiteTimeline
+        fields = '__all__'
+
+class FiberOutageNoteSerializer(serializers.ModelSerializer):
+    ticket_number = serializers.CharField(required=False, allow_blank=True)
+
+    class Meta:
+        model = FiberOutageNote
         fields = '__all__'

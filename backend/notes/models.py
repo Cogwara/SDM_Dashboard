@@ -80,3 +80,39 @@ class SiteTimeline(models.Model):
 
     def __str__(self):
         return f"Timeline: {self.site.ihs_site_id} - {self.event}"
+
+
+class FiberOutageNote(models.Model):
+    ticket_number = models.CharField(max_length=50, unique=True, db_index=True)
+    site_id = models.CharField(max_length=100, blank=True, default='', db_index=True)
+    site_a = models.CharField(max_length=100, blank=True, default='')
+    site_b = models.CharField(max_length=100, blank=True, default='')
+    fiber_route = models.CharField(max_length=255, db_index=True, blank=True, default='')
+    provider = models.CharField(max_length=100, default='Huawei', blank=True)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    location = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    state = models.CharField(max_length=100, blank=True, default='FCT')
+    priority = models.CharField(max_length=50, choices=PRIORITY_CHOICES, default='High')
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Open')
+    reported_by = models.CharField(max_length=150, default='State Delivery Manager')
+    contact_number = models.CharField(max_length=100, blank=True, default='')
+    eta_time = models.CharField(max_length=100, blank=True, default='')
+    distance_km = models.FloatField(null=True, blank=True, default=0.0)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.ticket_number:
+            import uuid, datetime
+            today_str = datetime.datetime.now().strftime("%Y%m%d")
+            unique_suffix = str(uuid.uuid4().hex[:4]).upper()
+            self.ticket_number = f"FIB-{today_str}-{unique_suffix}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"[{self.ticket_number}] {self.fiber_route or self.site_id} - {self.title}"

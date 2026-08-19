@@ -12,6 +12,22 @@ export function getSDMStateInfo(user) {
     };
   }
 
+  // Handle SMC FSE Engineer Role explicitly
+  if (user?.role === 'SMC FSE Engineer' || user?.role === 'FSE Engineer') {
+    const siteCount = user.assigned_sites_count || 63;
+    const name = user.full_name || user.username || 'FSE Engineer';
+    return {
+      code: 'FSE_ONLY',
+      dashboardTitle: 'SMC FSE PORTAL',
+      controlCenterTitle: 'SMC Field Service Engineering Portal',
+      subtitle: `SMC FSE Engineer — ${name}`,
+      intelligenceSubtitle: `Assigned Sites Telemetry, Maintenance Log & Real-Time Availability for ${name}`,
+      regionText: `${name} Portfolio (${siteCount} Sites)`,
+      footerText: `SMC FSE Portal v3.0 • Logged in as: ${name} (SMC FSE Engineer) • ${siteCount} Assigned Sites`,
+      stateName: `${name} Portfolio`
+    };
+  }
+
   // 1. Check user.state
   let rawState = (user.state || '').toUpperCase().replace(/^RT/, '').trim();
   

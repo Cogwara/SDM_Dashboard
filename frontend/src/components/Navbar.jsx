@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Radio, Search, Bell, Bot, Layers, FileText, MessageSquare, BarChart3, 
-  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone, FileSpreadsheet, Network, PhoneCall, Wifi, WifiOff 
+  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone, FileSpreadsheet, Network, PhoneCall, Wifi, WifiOff, Database, UserCheck, ShieldAlert, CheckSquare, Clock, Compass, Menu, X
 } from 'lucide-react';
 import { getPendingTotalCount } from '../mobileOfflineStorage';
 import { getSDMStateInfo } from '../utils/userUtils';
@@ -21,6 +21,7 @@ export default function Navbar({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
   const stateInfo = getSDMStateInfo(currentUser);
@@ -75,22 +76,18 @@ export default function Navbar({
 
   const baseNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Layers },
-    { id: 'database', label: 'Site Database', icon: Radio },
-    { id: 'ihs_matrix', label: 'IHS Matrix', icon: FileSpreadsheet },
-    { id: 'tnl_links', label: 'TNL Links', icon: Network },
-    { id: 'fse_inspector', label: 'FSE & Notes Inspector', icon: FileSpreadsheet },
-    { id: 'notes', label: 'SDM Notes', icon: FileText },
-    { id: 'whatsapp', label: 'WhatsApp Intel', icon: MessageSquare },
-    { id: 'ai', label: 'AI Assistant', icon: Bot },
-    { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
+    { id: 'daily_availability', label: 'Daily Availability', icon: Radio },
     { id: 'map', label: 'Live Geo Map', icon: Map },
+    { id: 'database', label: 'Site Database & Matrix', icon: Database },
+    { id: 'notes', label: 'SDM Operational Notes', icon: FileText },
+    { id: 'wo_tracker', label: 'WO Tracker', icon: CheckSquare },
+    { id: 'fiber_outages', label: 'Fiber Outages', icon: ShieldAlert },
     { id: 'mobile', label: `📱 Field Mobile App ${pendingCount > 0 ? `(${pendingCount})` : ''}`, icon: Smartphone },
   ];
 
   if (currentUser && currentUser.is_superuser) {
-    baseNavItems.push({ id: 'admin', label: 'SDM Directory & Admin', icon: ShieldCheck });
+    baseNavItems.push({ id: 'admin', label: 'SDM Admin Directory', icon: ShieldCheck });
   }
-
 
   const unreadCount = notifications ? notifications.filter(n => !n.is_read).length : 0;
 
@@ -99,23 +96,33 @@ export default function Navbar({
       <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
-          {/* Logo & Title */}
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
-            <div className="p-2 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl shadow-lg shadow-cyan-500/20">
-              <Radio className="w-6 h-6 text-white animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-lg tracking-wider text-white">
-                  {stateInfo.dashboardTitle}
-                </span>
-                <span className="px-2 py-0.5 text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-full">
-                  v3.0
-                </span>
+          {/* Mobile Hamburger Toggle & Logo */}
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="p-2 rounded-xl text-slate-300 hover:text-white bg-slate-900/80 border border-slate-700/80 shadow-md transition-all flex items-center justify-center"
+              title="Toggle Navigation Menu"
+            >
+              {isMobileMenuOpen ? <X className="w-5 h-5 text-cyan-400" /> : <Menu className="w-5 h-5 text-slate-300" />}
+            </button>
+
+            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
+              <div className="p-2 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl shadow-lg shadow-cyan-500/20">
+                <Radio className="w-5 h-5 text-white animate-pulse" />
               </div>
-              <p className="text-xs text-slate-400">
-                {stateInfo.subtitle}
-              </p>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <span className="font-extrabold text-base sm:text-lg tracking-wider text-white">
+                    {stateInfo.dashboardTitle}
+                  </span>
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-full">
+                    v3.0
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 hidden sm:block">
+                  {stateInfo.subtitle}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -291,32 +298,132 @@ export default function Navbar({
               </div>
             )}
 
+            {/* Left Edge Auto-Hide Tabs Hint Callout */}
+            <div 
+              onClick={() => setActiveTab(activeTab)}
+              className="hidden xl:flex items-center space-x-1.5 px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-extrabold rounded-xl transition-all cursor-pointer shadow-md group"
+              title="Hover your cursor over the left edge of the screen to open navigation tabs"
+            >
+              <Compass className="w-4 h-4 text-cyan-400 animate-spin" style={{ animationDuration: '10s' }} />
+              <span className="font-mono text-[11px] group-hover:-translate-x-0.5 transition-transform">&larr; Pages & Tabs</span>
+            </div>
+
           </div>
 
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex space-x-1 overflow-x-auto no-scrollbar py-2 border-t border-slate-800/40">
-          {baseNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`flex items-center space-x-2 px-3.5 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-all ${
-                  isActive
-                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                }`}
-              >
-                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
       </div>
+
+      {/* Mobile Hamburger Drawer Overlay */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-xl border-b border-slate-800 animate-fadeIn">
+          {/* Drawer Header */}
+          <div className="flex items-center justify-between p-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-gradient-to-tr from-cyan-600 to-indigo-600 rounded-xl shadow-lg">
+                <Radio className="w-6 h-6 text-white animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-white">{stateInfo.dashboardTitle}</h3>
+                <p className="text-[11px] text-cyan-400 font-semibold">{stateInfo.regionText}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="p-2 text-slate-400 hover:text-white bg-slate-900 rounded-xl border border-slate-800"
+            >
+              <X className="w-6 h-6 text-cyan-400" />
+            </button>
+          </div>
+
+          {/* Drawer Body */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Logged in User Profile Card */}
+            {currentUser ? (
+              <div className="glass-panel p-4 rounded-2xl border border-cyan-500/30 bg-slate-900/80 space-y-2">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white font-extrabold text-base shadow-md">
+                    {currentUser.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'S'}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white leading-tight">{currentUser.full_name}</h4>
+                    <span className="inline-block text-[11px] font-semibold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded-md border border-cyan-500/30 mt-0.5">
+                      {currentUser.role || 'State Delivery Manager'}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-800/80">
+                  <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                    <span className="text-slate-400 block text-[10px]">Scope Territory</span>
+                    <strong className="text-slate-200">{stateInfo.code || 'National'}</strong>
+                  </div>
+                  <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                    <span className="text-slate-400 block text-[10px]">Network Status</span>
+                    <strong className={isOnline ? 'text-emerald-400' : 'text-amber-400'}>
+                      {isOnline ? 'Online (Server)' : 'Offline'}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-900/80 text-center">
+                <p className="text-xs text-slate-300 mb-3">You are not logged in to the SDM Directory.</p>
+                <button
+                  onClick={() => { setIsMobileMenuOpen(false); onLogout(); }}
+                  className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg"
+                >
+                  Log In to SDM Portal
+                </button>
+              </div>
+            )}
+
+            {/* Navigation Links */}
+            <div className="space-y-1">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 mb-2">Operational Navigation</div>
+              {baseNavItems.map((item) => {
+                const IconComp = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold transition-all ${
+                      isActive
+                        ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-lg'
+                        : 'text-slate-300 hover:bg-slate-900 border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <IconComp className={`w-5 h-5 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                      <span>{item.label}</span>
+                    </div>
+                    {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Log Out Action */}
+            {currentUser && (
+              <div className="pt-4 border-t border-slate-800">
+                <button
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    onLogout();
+                  }}
+                  className="w-full py-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl border border-rose-500/40 shadow-lg flex items-center justify-center space-x-2 transition-all"
+                >
+                  <LogOut className="w-4 h-4 text-rose-400" />
+                  <span>Log Out of Account</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }

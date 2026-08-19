@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Search, Filter, Clock, Tag, AlertTriangle, CheckCircle, User, Radio, Lock, Edit3, Download, CheckCircle2, Camera, Upload, X, Maximize2, Calendar, Trash2 } from 'lucide-react';
-import { fetchNotes, createNote, updateNote, resolveNote, deleteNote, exportNotesExcel } from '../api';
+import { FileText, Plus, Search, Filter, Clock, Tag, AlertTriangle, CheckCircle, User, Radio, Lock, Edit3, Download, CheckCircle2, Camera, Upload, X, Maximize2, Calendar, Trash2, Activity, ArrowUpRight } from 'lucide-react';
+import { fetchNotes, createNote, updateNote, resolveNote, deleteNote, exportNotesExcel, getMediaUrl } from '../api';
+import { getSDMStateInfo } from '../utils/userUtils';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 
-export default function NotesCenter({ onSelectSite, currentUser }) {
+export default function NotesCenter({ onSelectSite, onNavigateToAvailability, currentUser }) {
   const isSuperuser = currentUser?.is_superuser;
   const userSdmName = currentUser?.full_name || '';
+  const stateInfo = getSDMStateInfo(currentUser);
 
   const [notes, setNotes] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState('');
@@ -19,6 +22,14 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
   const [dateFilter, setDateFilter] = useState('All'); // 'All', 'yesterday', 'today', '7days', '30days', 'custom'
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+
+  // Pagination State (20 per page)
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 20;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, categoryFilter, priorityFilter, statusFilter, dateFilter, startDate, endDate]);
 
   // Incident Occurrence Timestamp State
   const toLocalISOString = (d) => {
@@ -65,9 +76,17 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
   const loadNotes = async () => {
     setLoading(true);
     try {
-      const sdmParam = !isSuperuser ? userSdmName : undefined;
+      const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
+      const isSdm = !isSuperuser && !isFse;
+
+      const sdmParam = isSdm ? (currentUser?.full_name || currentUser?.username) : undefined;
+      const fseParam = isFse ? (currentUser?.full_name || currentUser?.username) : undefined;
+
       const data = await fetchNotes({
         sdm: sdmParam,
+        fse: fseParam,
+        is_superuser: isSuperuser ? 'true' : 'false',
+        user_state: stateInfo?.code,
         search,
         category: categoryFilter !== 'All' ? categoryFilter : undefined,
         priority: priorityFilter !== 'All' ? priorityFilter : undefined,
@@ -75,9 +94,11 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
         date_filter: dateFilter !== 'All' ? dateFilter : undefined,
         start_date: dateFilter === 'custom' && startDate ? startDate : undefined,
         end_date: dateFilter === 'custom' && endDate ? endDate : undefined,
-        page_size: 100
+        page_size: 25000
       });
-      setNotes(data.results || data);
+      const resultsList = data.results || data || [];
+      setNotes(resultsList);
+      setTotalCount(data.count !== undefined ? data.count : resultsList.length);
     } catch (e) {
       console.error(e);
     } finally {
@@ -87,7 +108,14 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
 
   useEffect(() => {
     loadNotes();
-  }, [search, categoryFilter, priorityFilter, statusFilter, dateFilter, startDate, endDate, userSdmName, isSuperuser]);
+  }, [search, categoryFilter, priorityFilter, statusFilter, dateFilter, startDate, endDate, userSdmName, isSuperuser, currentUser]);
+
+  const totalPages = Math.ceil(notes.length / pageSize) || 1;
+
+  const paginatedNotes = React.useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return notes.slice(startIndex, startIndex + pageSize);
+  }, [notes, currentPage, pageSize]);
 
   const isCreatorOfNote = (note) => {
     if (isSuperuser) return true;
@@ -273,10 +301,10 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
           <p className="text-xs text-slate-400 mt-1">
             {!isSuperuser ? (
               <span className="text-cyan-300 font-semibold flex items-center gap-1 mt-0.5">
-                <Lock className="w-3 h-3 text-cyan-400" /> Scoped to SDM Portfolio: <b>{userSdmName}</b> ({notes.length} Portfolio Notes Logged)
+                <Lock className="w-3 h-3 text-cyan-400" /> Scoped to SDM Portfolio: <b>{stateInfo.regionText}</b> ({totalCount || notes.length} Portfolio Notes Logged)
               </span>
             ) : (
-              'Super Administrator Access &bull; Full Operational Memory Log Across All State Delivery Managers'
+              `Super Administrator Access \u2022 Full Operational Memory Log Across All State Delivery Managers (${totalCount || notes.length} Notes Logged)`
             )}
           </p>
         </div>
@@ -424,8 +452,8 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
             <Radio className="w-8 h-8 text-cyan-400 animate-spin mx-auto mb-2" />
             Fetching SDM operational notes for your portfolio...
           </div>
-        ) : notes.length > 0 ? (
-          notes.map((note) => {
+        ) : paginatedNotes.length > 0 ? (
+          paginatedNotes.map((note) => {
             const dt = new Date(note.created_at);
             const dateStr = dt.toLocaleDateString();
             const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -439,12 +467,22 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
                 className="glass-card p-5 rounded-2xl border border-slate-800 hover:border-cyan-500/40 transition-all space-y-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                  <div className="flex items-center space-x-3">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                     <button
                       onClick={() => onSelectSite(note.site_ihs_id)}
                       className="px-3 py-1 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-mono font-extrabold text-sm rounded-lg border border-cyan-500/40 transition-all"
+                      title="View Site Profile"
                     >
                       {note.site_ihs_id}
+                    </button>
+                    <button
+                      onClick={() => onNavigateToAvailability ? onNavigateToAvailability(note.site_ihs_id) : onSelectSite(note.site_ihs_id)}
+                      className="px-2.5 py-1 bg-gradient-to-r from-emerald-500/20 via-teal-500/20 to-cyan-500/20 hover:from-emerald-500/30 hover:to-cyan-500/30 text-emerald-300 hover:text-emerald-200 font-bold text-xs rounded-lg border border-emerald-500/40 hover:border-emerald-400/70 shadow-md transition-all flex items-center gap-1.5 group cursor-pointer"
+                      title={`Filter Daily Availability & view SLA performance data for site ${note.site_ihs_id}`}
+                    >
+                      <Activity className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                      <span>Daily Availability</span>
+                      <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400/80 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                     </button>
                     <h3 className="font-bold text-base text-white">{note.title}</h3>
                   </div>
@@ -545,24 +583,18 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
                 {photos.length > 0 && (
                   <div className="pt-2 border-t border-slate-800/80">
                     <div className="text-[11px] font-bold text-slate-300 mb-2 flex items-center gap-1.5">
-                      <Camera className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Attached Field Photos & Inspection Evidence ({photos.length}):</span>
+                      <Camera className="w-3.5 h-3.5 text-cyan-400" /> Attached Evidence Photos ({photos.length})
                     </div>
                     <div className="flex flex-wrap gap-2.5">
                       {photos.map((att) => (
-                        <div
-                          key={att.id}
-                          className="relative group rounded-xl overflow-hidden border border-slate-700 bg-slate-900 cursor-pointer shadow-lg hover:border-cyan-400 transition-all"
-                          onClick={() => setLightboxImage(att.file)}
-                          title={`Click to view ${att.file_name}`}
-                        >
+                        <div key={att.id} className="relative group cursor-pointer" onClick={() => setLightboxImage(att.file)}>
                           <img
-                            src={att.file}
-                            alt={att.file_name}
-                            className="w-20 h-20 object-cover group-hover:scale-110 transition-transform duration-300"
+                            src={getMediaUrl(att.file)}
+                            alt={att.file_name || 'Evidence'}
+                            className="w-20 h-20 object-cover rounded-xl border border-slate-700 group-hover:border-cyan-400 transition-all shadow-md"
                           />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <Maximize2 className="w-4 h-4 text-white drop-shadow-md" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl flex items-center justify-center">
+                            <Maximize2 className="w-4 h-4 text-white" />
                           </div>
                         </div>
                       ))}
@@ -589,6 +621,76 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
           </div>
         )}
       </div>
+
+      {/* Pagination Controls (20 Notes Per Page) */}
+      {!loading && notes.length > 0 && (
+        <div className="glass-panel p-4 rounded-2xl border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+          <div className="text-slate-400">
+            Showing <span className="font-bold text-slate-200">{(currentPage - 1) * pageSize + 1}</span> to{' '}
+            <span className="font-bold text-slate-200">{Math.min(currentPage * pageSize, notes.length)}</span> of{' '}
+            <span className="font-bold text-cyan-400">{notes.length}</span> Portfolio Notes
+          </div>
+
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+              className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+            >
+              First
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+            >
+              Prev
+            </button>
+
+            {/* Dynamic Page Buttons */}
+            {Array.from({ length: Math.min(5, totalPages) }, (_, idx) => {
+              let pageNum;
+              if (totalPages <= 5) {
+                pageNum = idx + 1;
+              } else if (currentPage <= 3) {
+                pageNum = idx + 1;
+              } else if (currentPage >= totalPages - 2) {
+                pageNum = totalPages - 4 + idx;
+              } else {
+                pageNum = currentPage - 2 + idx;
+              }
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => setCurrentPage(pageNum)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                    currentPage === pageNum
+                      ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+            >
+              Next
+            </button>
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+              className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+            >
+              Last
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Write / Edit SDM Note */}
       {showModal && (
@@ -821,7 +923,7 @@ export default function NotesCenter({ onSelectSite, currentUser }) {
             >
               <X className="w-5 h-5" />
             </button>
-            <img src={lightboxImage} alt="Site Inspection Evidence" className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain border border-slate-700" />
+            <img src={getMediaUrl(lightboxImage)} alt="Site Inspection Evidence" className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain border border-slate-700" />
           </div>
         </div>
       )}

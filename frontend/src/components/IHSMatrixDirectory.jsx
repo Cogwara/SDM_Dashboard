@@ -11,6 +11,7 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
   const [search, setSearch] = useState('');
   const [smcFilter, setSmcFilter] = useState('All');
   const [clusterFilter, setClusterFilter] = useState('All');
+  const [lgaFilter, setLgaFilter] = useState('All');
   const [copiedPhone, setCopiedPhone] = useState(null);
 
   // Pagination state
@@ -44,10 +45,11 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
     setTimeout(() => setCopiedPhone(null), 2000);
   };
 
-  // Filter sites matching search query & SMC/Cluster
+  // Filter sites matching search query & SMC/Cluster/LGA
   const filteredSites = sites.filter((site) => {
     if (smcFilter !== 'All' && site.smc !== smcFilter) return false;
     if (clusterFilter !== 'All' && site.cluster_name !== clusterFilter) return false;
+    if (lgaFilter !== 'All' && site.lga !== lgaFilter) return false;
 
     if (!search.trim()) return true;
     const q = search.trim().toLowerCase();
@@ -77,6 +79,7 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
 
   const smcOptions = ['All', ...new Set(sites.map(s => s.smc).filter(Boolean))];
   const clusterOptions = ['All', ...new Set(sites.map(s => s.cluster_name).filter(Boolean))];
+  const lgaOptions = ['All', ...new Set(sites.map(s => s.lga).filter(Boolean)).sort()];
 
   return (
     <div className="space-y-6">
@@ -156,6 +159,22 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
           >
             {clusterOptions.map((c) => (
               <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* LGA Filter */}
+        <div className="flex items-center space-x-1.5 text-xs">
+          <span className="text-slate-400 font-semibold flex items-center gap-1">
+            <MapPin className="w-3.5 h-3.5 text-purple-400" /> LGA:
+          </span>
+          <select
+            value={lgaFilter}
+            onChange={(e) => { setLgaFilter(e.target.value); setPage(1); }}
+            className="bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 focus:outline-none font-bold max-w-[180px]"
+          >
+            {lgaOptions.map((lga) => (
+              <option key={lga} value={lga}>{lga}</option>
             ))}
           </select>
         </div>

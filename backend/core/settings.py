@@ -119,11 +119,25 @@ USE_I18N = True
 
 USE_TZ = True
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-MEDIA_URL = 'media/'
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+CSRF_TRUSTED_ORIGINS = [
+    'https://*.trycloudflare.com',
+    'http://*.trycloudflare.com',
+    'http://localhost',
+    'http://127.0.0.1',
+    'http://localhost:8001',
+    'http://localhost:5173',
+]
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2621440    # 2.5MB - streams large files to disk storage
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

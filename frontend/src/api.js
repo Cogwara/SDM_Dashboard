@@ -15,53 +15,82 @@ const checkIsCapacitorNative = () => {
   );
 };
 
+const DEFAULT_MOBILE_SERVER_URL = 'https://during-duke-susan-binary.trycloudflare.com';
+
 const getBaseUrl = () => {
-  const savedIp = localStorage.getItem('fct_sdm_server_ip');
+  let savedIp = localStorage.getItem('fct_sdm_server_ip');
+  if (savedIp && savedIp.includes('brighton-hours-strengthen-grown.trycloudflare.com')) {
+    savedIp = null;
+    localStorage.removeItem('fct_sdm_server_ip');
+  }
   const nativeApp = checkIsCapacitorNative();
   
   if (typeof window !== 'undefined') {
     const currentHost = window.location.hostname || 'localhost';
-    const currentPort = window.location.port;
 
-    // In web browser, clear stale default mobile IP fallback if stored
-    if (!nativeApp && savedIp && (savedIp.trim() === '192.168.1.120' || savedIp.trim() === 'localhost' || savedIp.trim() === '127.0.0.1' || savedIp.trim() === currentHost)) {
-      localStorage.removeItem('fct_sdm_server_ip');
-    } else if (savedIp && savedIp.trim()) {
-      let host = cleanHost(savedIp);
-      if (!host.includes(':')) {
-        host = `${host}:8001`;
-      }
-      return `http://${host}/api/v1`;
-    }
-
-    // If running inside Capacitor APK on mobile device, default to 192.168.1.120:8001
+    // If running inside Capacitor APK on mobile device, default to Cloudflare Tunnel URL
     if (nativeApp) {
-      const mobileHost = (savedIp && savedIp.trim()) ? cleanHost(savedIp) : '192.168.1.120';
-      const formattedHost = mobileHost.includes(':') ? mobileHost : `${mobileHost}:8001`;
+      const rawHost = (savedIp && savedIp.trim()) ? savedIp.trim() : DEFAULT_MOBILE_SERVER_URL;
+      const cleanH = cleanHost(rawHost);
+      if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
+        const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
+        return `${formatted.replace(/\/$/, '')}/api/v1`;
+      }
+      const formattedHost = cleanH.includes(':') ? cleanH : `${cleanH}:8001`;
       return `http://${formattedHost}/api/v1`;
     }
 
-    // Vite dev server runs on 5173, backend Django runs on 8000
-    if (currentPort === '5173') {
-      return `http://${currentHost}:8001/api/v1`;
+    // In web browser
+    if (savedIp && savedIp.trim() && savedIp.trim() !== currentHost && savedIp.trim() !== 'localhost') {
+      const rawHost = savedIp.trim();
+      const cleanH = cleanHost(rawHost);
+      if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
+        const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
+        return `${formatted.replace(/\/$/, '')}/api/v1`;
+      }
+      const formattedHost = cleanH.includes(':') ? cleanH : `${cleanH}:8001`;
+      return `http://${formattedHost}/api/v1`;
     }
 
-    // Nginx / Docker container (port 80 or 443) proxies /api/
-    if (!currentPort || currentPort === '80' || currentPort === '443') {
-      return `/api/v1`;
-    }
-
-    return `http://${currentHost}:8001/api/v1`;
+    return `/api/v1`;
   }
 
-  return `http://localhost:8001/api/v1`;
+  return `/api/v1`;
+};
+
+export const getMediaUrl = (fileUrl) => {
+  if (!fileUrl) return '';
+  if (typeof window === 'undefined') return fileUrl;
+
+  let mediaPath = fileUrl;
+  if (fileUrl.includes('/media/')) {
+    mediaPath = '/media/' + fileUrl.split('/media/')[1];
+  } else if (!mediaPath.startsWith('/')) {
+    mediaPath = '/' + mediaPath;
+  }
+
+  const nativeApp = checkIsCapacitorNative();
+  const savedIp = localStorage.getItem('fct_sdm_server_ip');
+
+  if (!nativeApp && (!savedIp || !savedIp.includes('.trycloudflare.com'))) {
+    return `${window.location.origin}${mediaPath}`;
+  }
+
+  const rawHost = (savedIp && savedIp.trim()) ? savedIp.trim() : DEFAULT_MOBILE_SERVER_URL;
+  const cleanH = cleanHost(rawHost);
+  if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
+    const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
+    return `${formatted.replace(/\/$/, '')}${mediaPath}`;
+  }
+  const formattedHost = cleanH.includes(':') ? cleanH : `${cleanH}:8001`;
+  return `http://${formattedHost}${mediaPath}`;
 };
 
 export const API_BASE_URL = getBaseUrl();
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 25000,
+  timeout: 300000, // 5 minutes
   headers: {
     'Content-Type': 'application/json',
   },
@@ -71,9 +100,30 @@ export const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     config.baseURL = getBaseUrl();
+    const token = localStorage.getItem('fct_sdm_token');
+    if (token && token !== 'undefined' && token !== 'null') {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => Promise.reject(error)
+);
+
+// Automatic 401 Recovery Interceptor: Clear expired/invalid token and retry seamlessly
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response && error.response.status === 401 && originalRequest && !originalRequest._retry) {
+      originalRequest._retry = true;
+      localStorage.removeItem('fct_sdm_token');
+      if (originalRequest.headers) {
+        delete originalRequest.headers.Authorization;
+      }
+      return api(originalRequest);
+    }
+    return Promise.reject(error);
+  }
 );
 
 // Update base URL dynamically when server IP changes
@@ -113,6 +163,11 @@ export const registerSDM = async (sdmData) => {
   return res.data;
 };
 
+export const syncFSEAccounts = async () => {
+  const res = await api.post('/auth/sync_fse_accounts/');
+  return res.data;
+};
+
 export const assignStateToSDM = async (sdmName, stateName = '', sdmPhone = '', siteIds = null) => {
   const payload = { sdm_name: sdmName, sdm_phone: sdmPhone };
   if (siteIds) {
@@ -135,6 +190,11 @@ export const bulkSiteLookup = async (siteIds) => {
   return res.data;
 };
 
+export const identifyHubSites = async (siteIds, state = 'FCT') => {
+  const res = await api.post('/sites/identify_hubs/', { site_ids: siteIds, state });
+  return res.data;
+};
+
 export const fetchTNLLinks = async (params = {}) => {
   const res = await api.get('/tnl_links/', { params });
   return res.data;
@@ -147,6 +207,54 @@ export const fetchTNLLinkStats = async (params = {}) => {
 
 export const fetchTNLLinkImpact = async (linkId) => {
   const res = await api.get(`/tnl_links/${linkId}/impact/`);
+  return res.data;
+};
+
+// IHS Fiber Links
+export const fetchIHSFiberLinks = async (params = {}) => {
+  const res = await api.get('/ihs_fiber_links/', { params });
+  return res.data;
+};
+
+export const fetchIHSFiberLinkStats = async (params = {}) => {
+  const res = await api.get('/ihs_fiber_links/stats/', { params });
+  return res.data;
+};
+
+// Huawei Fiber Links
+export const fetchHuaweiFiberLinks = async (params = {}) => {
+  const res = await api.get('/huawei_fiber_links/', { params });
+  return res.data;
+};
+
+export const fetchHuaweiFiberLinkStats = async (params = {}) => {
+  const res = await api.get('/huawei_fiber_links/stats/', { params });
+  return res.data;
+};
+
+// Fiber Outage Notes
+export const fetchFiberOutageNotes = async (params = {}) => {
+  const res = await api.get('/fiber_outages/', { params });
+  return res.data;
+};
+
+export const fetchFiberOutageStats = async (params = {}) => {
+  const res = await api.get('/fiber_outages/stats/', { params });
+  return res.data;
+};
+
+export const createFiberOutageNote = async (data) => {
+  const res = await api.post('/fiber_outages/', data);
+  return res.data;
+};
+
+export const updateFiberOutageNote = async (id, data) => {
+  const res = await api.patch(`/fiber_outages/${id}/`, data);
+  return res.data;
+};
+
+export const deleteFiberOutageNote = async (id) => {
+  const res = await api.delete(`/fiber_outages/${id}/`);
   return res.data;
 };
 
@@ -273,4 +381,79 @@ export const createWhatsAppMessage = async (waData) => {
   const res = await api.post('/whatsapp/messages/', waData);
   return res.data;
 };
+
+// Daily Availability API Helpers
+export const fetchAvailabilityStats = async (params = {}) => {
+  const res = await api.get('/availability/stats/', { params });
+  return res.data;
+};
+
+export const fetchAvailabilityRecords = async (params = {}) => {
+  const res = await api.get('/availability/records/', { params });
+  return res.data;
+};
+
+export const fetchAvailabilityArchives = async () => {
+  const res = await api.get('/availability/archives/');
+  return res.data;
+};
+
+export const uploadAvailabilityFile = async (formData) => {
+  const res = await api.post('/availability/upload/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  });
+  return res.data;
+};
+
+export const resetBaseAvailability = async (uploaderName) => {
+  const res = await api.post('/availability/reset_base/', { uploaded_by: uploaderName });
+  return res.data;
+};
+
+export const exportAvailabilityExcel = async (params = {}) => {
+  const res = await api.get('/availability/export/', {
+    params,
+    responseType: 'blob'
+  });
+  return res.data;
+};
+
+// Site to FSE Lookup Helpers
+export const lookupSiteFSE = async (payload) => {
+  const res = await api.post('/sites/lookup_fse/', payload);
+  return res.data;
+};
+
+export const exportSiteFSEExcel = async (payload) => {
+  const res = await api.post('/sites/lookup_fse/export_excel/', payload, {
+    responseType: 'blob'
+  });
+  return res.data;
+};
+
+// Hourly Availability API Helpers
+export const fetchHourlyAvailabilityStats = async (params = {}) => {
+  const res = await api.get('/hourly_availability/stats/', { params });
+  return res.data;
+};
+
+export const fetchHourlyAvailabilityRecords = async (params = {}) => {
+  const res = await api.get('/hourly_availability/records/', { params });
+  return res.data;
+};
+
+export const uploadHourlyAvailabilityFile = async (formData) => {
+  const res = await api.post('/hourly_availability/upload/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000
+  });
+  return res.data;
+};
+
+export const resetHourlyBaseAvailability = async (uploaderName) => {
+  const res = await api.post('/hourly_availability/reset_base/', { uploaded_by: uploaderName });
+  return res.data;
+};
+
 

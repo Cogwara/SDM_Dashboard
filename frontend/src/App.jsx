@@ -14,6 +14,13 @@ import MobileAppView from './components/MobileAppView';
 import SiteFseInspector from './components/SiteFseInspector';
 import TNLLinksDirectory from './components/TNLLinksDirectory';
 import IHSMatrixDirectory from './components/IHSMatrixDirectory';
+import HubSiteAnalyzerView from './components/HubSiteAnalyzerView';
+import DailyAvailabilityCenter from './components/DailyAvailabilityCenter';
+import HourlyAvailabilityCenter from './components/HourlyAvailabilityCenter';
+import SiteFSELookupView from './components/SiteFSELookupView';
+import FiberOutagesTracker from './components/FiberOutagesTracker';
+import WOTrackerView from './components/WOTrackerView';
+import RightNavDrawer from './components/RightNavDrawer';
 import { fetchDashboardStats, fetchNotes, fetchWhatsAppMessages, fetchNotifications, markAllNotificationsRead } from './api';
 import { getSDMStateInfo } from './utils/userUtils';
 import { Bell, CheckCircle, AlertTriangle, Radio, Eye, Bot, X, ShieldAlert, Clock, MapPin, User } from 'lucide-react';
@@ -65,13 +72,20 @@ export default function App() {
     const targetUser = userToUse || currentUser;
     if (!targetUser) return;
     try {
-      const sdmParam = !targetUser.is_superuser ? targetUser.full_name : undefined;
+      const scopeParams = {
+        is_superuser: targetUser.is_superuser ? 'true' : 'false',
+        user_role: targetUser.role,
+        user_state: targetUser.state,
+        user_name: targetUser.full_name || targetUser.username,
+        sdm: targetUser.role === 'State Delivery Manager' ? (targetUser.full_name || targetUser.username) : undefined,
+        fse: targetUser.role === 'SMC FSE Engineer' ? (targetUser.full_name || targetUser.username) : undefined,
+      };
 
       const [statsRes, notesRes, waRes, notifRes] = await Promise.all([
-        fetchDashboardStats({ sdm: sdmParam }),
-        fetchNotes({ sdm: sdmParam, page_size: 5 }),
-        fetchWhatsAppMessages({ sdm: sdmParam, page_size: 5 }),
-        fetchNotifications({ sdm: sdmParam })
+        fetchDashboardStats(scopeParams),
+        fetchNotes({ ...scopeParams, page_size: 5 }),
+        fetchWhatsAppMessages({ ...scopeParams, page_size: 5 }),
+        fetchNotifications({ ...scopeParams })
       ]);
 
       if (statsRes) setStats(statsRes);
@@ -104,9 +118,16 @@ export default function App() {
     setCurrentUser(null);
   };
 
+  const [availabilitySearch, setAvailabilitySearch] = useState('');
+
   const handleSelectSite = (siteId) => {
     setSelectedSiteId(siteId);
     setActiveTab('profile');
+  };
+
+  const handleNavigateToAvailability = (siteId) => {
+    setAvailabilitySearch(siteId || '');
+    setActiveTab('daily_availability');
   };
 
   const handleNavigateWithFilter = (targetTab, filters = {}) => {
@@ -169,6 +190,20 @@ export default function App() {
         onLogout={handleLogout}
       />
 
+      {/* Right Edge Floating Auto-Hide Navigation Drawer */}
+      <RightNavDrawer
+        activeTab={activeTab === 'profile' ? 'database' : activeTab}
+        setActiveTab={(tab) => {
+          if (tab === 'database') {
+            setDbSearch('');
+            setDbStatus('All');
+            setDbPriority('All');
+          }
+          setActiveTab(tab);
+        }}
+        currentUser={currentUser}
+      />
+
       {/* Main Workspace Container */}
       <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6">
         
@@ -177,6 +212,7 @@ export default function App() {
             stats={stats}
             onSearchSite={handleSelectSite}
             onSelectSite={handleSelectSite}
+            onNavigateToAvailability={handleNavigateToAvailability}
             recentNotes={recentNotes}
             recentWhatsApp={recentWhatsApp}
             setActiveTab={setActiveTab}
@@ -189,6 +225,7 @@ export default function App() {
           <SiteDatabase
             currentUser={currentUser}
             onSelectSite={handleSelectSite}
+            onNavigateToAvailability={handleNavigateToAvailability}
             initialSearch={dbSearch}
             initialStatus={dbStatus}
             initialPriority={dbPriority}
@@ -201,27 +238,53 @@ export default function App() {
             currentUser={currentUser}
             onBack={() => setActiveTab('database')}
             onOpenAIWithPrompt={() => setActiveTab('ai')}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+            onNavigateToAvailability={handleNavigateToAvailability}
           />
         )}
 
         {activeTab === 'ihs_matrix' && (
-          <IHSMatrixDirectory currentUser={currentUser} onSelectSite={handleSelectSite} />
+          <IHSMatrixDirectory currentUser={currentUser} onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} />
+        )}
+
+        {activeTab === 'daily_availability' && (
+          <DailyAvailabilityCenter currentUser={currentUser} onSelectSite={handleSelectSite} initialSearch={availabilitySearch} />
+        )}
+
+        {activeTab === 'hourly_availability' && (
+          <HourlyAvailabilityCenter currentUser={currentUser} onNavigateToSite={handleSelectSite} />
+        )}
+
+        {activeTab === 'wo_tracker' && (
+          <WOTrackerView currentUser={currentUser} onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} />
         )}
 
         {activeTab === 'tnl_links' && (
-          <TNLLinksDirectory currentUser={currentUser} onSelectSite={handleSelectSite} />
+          <TNLLinksDirectory currentUser={currentUser} onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} />
+        )}
+
+        {activeTab === 'fiber_outages' && (
+          <FiberOutagesTracker currentUser={currentUser} onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} />
+        )}
+
+        {activeTab === 'hub_finder' && (
+          <HubSiteAnalyzerView currentUser={currentUser} onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} />
+        )}
+
+        {activeTab === 'site_fse_lookup' && (
+          <SiteFSELookupView currentUser={currentUser} onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} />
         )}
 
         {activeTab === 'fse_inspector' && (
-          <SiteFseInspector currentUser={currentUser} onSelectSite={handleSelectSite} />
+          <SiteFseInspector currentUser={currentUser} onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} />
         )}
 
         {activeTab === 'notes' && (
-          <NotesCenter onSelectSite={handleSelectSite} currentUser={currentUser} />
+          <NotesCenter onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} currentUser={currentUser} />
         )}
 
         {activeTab === 'whatsapp' && (
-          <WhatsAppCenter onSelectSite={handleSelectSite} currentUser={currentUser} />
+          <WhatsAppCenter onSelectSite={handleSelectSite} onNavigateToAvailability={handleNavigateToAvailability} currentUser={currentUser} />
         )}
 
         {activeTab === 'ai' && (

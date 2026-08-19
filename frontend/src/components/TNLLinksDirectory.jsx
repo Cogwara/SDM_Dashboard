@@ -2,13 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { 
   Network, Search, FileSpreadsheet, MapPin, RefreshCw, X, 
   ExternalLink, Layers, CheckCircle2, ChevronLeft, ChevronRight, Zap, Filter,
-  AlertTriangle, Phone, ShieldAlert, Radio, UserCheck, ArrowRight, Activity
+  AlertTriangle, Phone, ShieldAlert, Radio, UserCheck, ArrowRight, Activity, Cpu
 } from 'lucide-react';
-import { fetchTNLLinks, fetchTNLLinkStats, fetchTNLLinkImpact } from '../api';
+import { 
+  fetchTNLLinks, fetchTNLLinkStats, fetchTNLLinkImpact, 
+  fetchIHSFiberLinks, fetchIHSFiberLinkStats,
+  fetchHuaweiFiberLinks, fetchHuaweiFiberLinkStats 
+} from '../api';
 
 export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
   const isSuperuser = currentUser?.is_superuser;
   const sdmName = currentUser?.full_name || currentUser?.username || '';
+
+  // Network mode: 'ihs' (IHS FCT Fiber Ring), 'huawei' (Huawei Fiber Links), or 'tnl' (TNL Transmission Network)
+  const [activeNetworkTab, setActiveNetworkTab] = useState('ihs');
 
   const [links, setLinks] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -25,36 +32,64 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
   // Filters
   const [search, setSearch] = useState('');
   const [selectedState, setSelectedState] = useState('All');
+  const [selectedCluster, setSelectedCluster] = useState('All');
   const [selectedNetType, setSelectedNetType] = useState('All');
   const [toastMsg, setToastMsg] = useState('');
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const scopeParams = {
-        sdm: !isSuperuser ? sdmName : undefined,
-        is_superuser: isSuperuser ? 'true' : 'false'
-      };
-
-      const params = {
-        page,
-        page_size: pageSize,
-        search: search.trim() || undefined,
-        state: selectedState !== 'All' ? selectedState : undefined,
-        network_type: selectedNetType !== 'All' ? selectedNetType : undefined,
-        ...scopeParams
-      };
-
-      const [listData, statsData] = await Promise.all([
-        fetchTNLLinks(params),
-        fetchTNLLinkStats(scopeParams)
-      ]);
-
-      setLinks(Array.isArray(listData) ? listData : listData.results || []);
-      setTotalCount(listData.count || (Array.isArray(listData) ? listData.length : 0));
-      setStats(statsData);
+      if (activeNetworkTab === 'ihs') {
+        const params = {
+          page,
+          page_size: pageSize,
+          search: search.trim() || undefined,
+          cluster: selectedCluster !== 'All' ? selectedCluster : undefined,
+        };
+        const [listData, statsData] = await Promise.all([
+          fetchIHSFiberLinks(params),
+          fetchIHSFiberLinkStats()
+        ]);
+        setLinks(Array.isArray(listData) ? listData : listData.results || []);
+        setTotalCount(listData.count || (Array.isArray(listData) ? listData.length : 0));
+        setStats(statsData);
+      } else if (activeNetworkTab === 'huawei') {
+        const params = {
+          page,
+          page_size: pageSize,
+          search: search.trim() || undefined,
+          state: selectedState !== 'All' ? selectedState : undefined,
+        };
+        const [listData, statsData] = await Promise.all([
+          fetchHuaweiFiberLinks(params),
+          fetchHuaweiFiberLinkStats()
+        ]);
+        setLinks(Array.isArray(listData) ? listData : listData.results || []);
+        setTotalCount(listData.count || (Array.isArray(listData) ? listData.length : 0));
+        setStats(statsData);
+      } else {
+        const scopeParams = {
+          sdm: !isSuperuser ? sdmName : undefined,
+          is_superuser: isSuperuser ? 'true' : 'false'
+        };
+        const params = {
+          page,
+          page_size: pageSize,
+          search: search.trim() || undefined,
+          state: selectedState !== 'All' ? selectedState : undefined,
+          network_type: selectedNetType !== 'All' ? selectedNetType : undefined,
+          ...scopeParams
+        };
+        const [listData, statsData] = await Promise.all([
+          fetchTNLLinks(params),
+          fetchTNLLinkStats(scopeParams)
+        ]);
+        setLinks(Array.isArray(listData) ? listData : listData.results || []);
+        setTotalCount(listData.count || (Array.isArray(listData) ? listData.length : 0));
+        setStats(statsData);
+      }
     } catch (err) {
-      console.error('Failed to load TNL Links:', err);
+      console.error('Failed to load Fiber/TNL Links:', err);
     } finally {
       setLoading(false);
     }
@@ -62,7 +97,7 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
 
   useEffect(() => {
     loadData();
-  }, [page, pageSize, selectedState, selectedNetType]);
+  }, [activeNetworkTab, page, pageSize, selectedState, selectedCluster, selectedNetType]);
 
   const handleSearchSubmit = (e) => {
     if (e) e.preventDefault();
@@ -91,14 +126,15 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
     }
   };
 
-  // Export TNL Links to Excel (.xls)
+  // Export Links to Excel (.xls)
   const handleExportToExcel = () => {
     if (!links || links.length === 0) {
-      showToast('No TNL transmission links available to export.');
+      showToast('No links available to export.');
       return;
     }
 
-    const exportFileName = `FCT_TNL_Transmission_Links_Report_${new Date().toISOString().split('T')[0]}.xls`;
+    const tabName = activeNetworkTab === 'ihs' ? 'IHS_Fiber' : activeNetworkTab === 'huawei' ? 'Huawei_Fiber' : 'TNL_Transmission';
+    const exportFileName = `${tabName}_Links_Export_${new Date().toISOString().split('T')[0]}.xls`;
 
     let html = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -109,7 +145,7 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
           <x:ExcelWorkbook>
             <x:ExcelWorksheets>
               <x:ExcelWorksheet>
-                <x:Name>TNL Transmission Links</x:Name>
+                <x:Name>${tabName}</x:Name>
                 <x:WorksheetOptions>
                   <x:DisplayGridlines/>
                 </x:WorksheetOptions>
@@ -119,65 +155,84 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
         </xml>
         <![endif]-->
         <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 15px; background-color: #ffffff; }
-          .excel-table { border-collapse: collapse; width: 100%; font-size: 10pt; font-family: 'Segoe UI', Arial, sans-serif; }
-          .excel-table th { background-color: #0284c7; color: #ffffff; font-weight: bold; text-align: left; padding: 10px 12px; border: 1px solid #0369a1; font-size: 10pt; }
-          .excel-table td { padding: 9px 12px; border: 1px solid #cbd5e1; vertical-align: top; }
-          .row-even { background-color: #f8fafc; }
-          .row-odd { background-color: #ffffff; }
-          .site-id { font-family: 'Courier New', Courier, monospace; font-weight: bold; color: #0284c7; font-size: 10.5pt; }
-          .dist-badge { font-weight: bold; color: #0284c7; background-color: #e0f2fe; padding: 2px 6px; border-radius: 4px; }
-          .net-badge { font-weight: bold; color: #065f46; background-color: #d1fae5; padding: 2px 6px; border-radius: 4px; }
-          .fmp-badge { font-weight: bold; color: #b45309; background-color: #fef3c7; padding: 2px 6px; border-radius: 4px; }
-          .summary-row td { background-color: #0f172a; color: #ffffff; font-weight: bold; padding: 10px; border-top: 2px solid #0284c7; }
+          table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 11pt; }
+          th { background-color: #0f172a; color: #ffffff; font-weight: bold; text-align: left; padding: 10px; border: 1px solid #334155; }
+          td { padding: 8px; border: 1px solid #e2e8f0; vertical-align: middle; }
+          tr:nth-child(even) { background-color: #f8fafc; }
+          .highlight { font-weight: bold; color: #0284c7; }
         </style>
       </head>
       <body>
-        <table class="excel-table">
+        <h2>${activeNetworkTab === 'ihs' ? 'IHS FCT Optical Fiber Ring Dataset' : activeNetworkTab === 'huawei' ? 'Huawei National Fiber Infrastructure' : 'FCT & Nationwide TNL Transmission Links'}</h2>
+        <p>Export Date: ${new Date().toLocaleString()} | Total Exported: ${links.length}</p>
+        <table>
           <thead>
-            <tr>
-              <th style="width: 45px;">#</th>
-              <th>State</th>
-              <th>Region</th>
-              <th>Segment Name</th>
-              <th>Site A</th>
-              <th>Site B</th>
-              <th>Link Distance (km)</th>
-              <th>Network Type</th>
-              <th>Maintenance FMP</th>
-              <th>Old FMP</th>
-            </tr>
+            ${activeNetworkTab === 'ihs' ? `
+              <tr>
+                <th>#</th>
+                <th>Cluster Ref</th>
+                <th>Segment ID (A-B)</th>
+                <th>Site A</th>
+                <th>Site B</th>
+                <th>Fibre Length (m)</th>
+                <th>Distance (km)</th>
+                <th>State</th>
+              </tr>
+            ` : activeNetworkTab === 'huawei' ? `
+              <tr>
+                <th>#</th>
+                <th>State</th>
+                <th>Region</th>
+                <th>Segment Name</th>
+                <th>Site A</th>
+                <th>Site B</th>
+                <th>Distance (km)</th>
+                <th>Network Type</th>
+                <th>Maintenance FMP</th>
+                <th>Huawei FSDM</th>
+              </tr>
+            ` : `
+              <tr>
+                <th>#</th>
+                <th>State</th>
+                <th>Region</th>
+                <th>Segment Name</th>
+                <th>Site A</th>
+                <th>Site B</th>
+                <th>Distance (km)</th>
+                <th>Network Type</th>
+                <th>Maintenance FMP</th>
+                <th>Old FMP</th>
+              </tr>
+            `}
           </thead>
           <tbody>
-    `;
-
-    links.forEach((l, idx) => {
-      const rowClass = idx % 2 === 0 ? 'row-even' : 'row-odd';
-      html += `
-        <tr class="${rowClass}">
-          <td style="text-align: center; font-weight: bold; color: #64748b;">${(page - 1) * pageSize + idx + 1}</td>
-          <td><b>${l.state}</b></td>
-          <td>${l.region || 'N/A'}</td>
-          <td><b>${l.segment_name}</b></td>
-          <td class="site-id">${l.site_a || 'N/A'}</td>
-          <td class="site-id">${l.site_b || 'N/A'}</td>
-          <td style="text-align: center;"><span class="dist-badge">${l.distance_km ? `${l.distance_km} km` : '0 km'}</span></td>
-          <td style="text-align: center;"><span class="net-badge">${l.network_type || 'NFE'}</span></td>
-          <td style="text-align: center;"><span class="fmp-badge">${l.maintenance_fmp || 'TNL'}</span></td>
-          <td>${l.old_fmp || 'N/A'}</td>
-        </tr>
-      `;
-    });
-
-    html += `
+            ${links.map((l, idx) => activeNetworkTab === 'ihs' ? `
+              <tr>
+                <td>${idx + 1}</td>
+                <td>${l.cluster_ref || 'FCT'}</td>
+                <td class="highlight">${l.segment_id}</td>
+                <td>${l.site_a || ''}</td>
+                <td>${l.site_b || ''}</td>
+                <td>${l.fibre_length_m || 0}</td>
+                <td>${l.distance_km || 0}</td>
+                <td>${l.state || 'FCT'}</td>
+              </tr>
+            ` : `
+              <tr>
+                <td>${idx + 1}</td>
+                <td>${l.state || ''}</td>
+                <td>${l.region || ''}</td>
+                <td class="highlight">${l.segment_name || ''}</td>
+                <td>${l.site_a || ''}</td>
+                <td>${l.site_b || ''}</td>
+                <td>${l.distance_km || 0}</td>
+                <td>${l.network_type || ''}</td>
+                <td>${l.maintenance_fmp || ''}</td>
+                <td>${activeNetworkTab === 'huawei' ? (l.huawei_fsdm || '') : (l.old_fmp || '')}</td>
+              </tr>
+            `).join('')}
           </tbody>
-          <tfoot>
-            <tr class="summary-row">
-              <td colspan="6">TOTAL TNL LINKS REPORTED: ${links.length} LINKS</td>
-              <td style="text-align: center;">${links.reduce((acc, curr) => acc + (curr.distance_km || 0), 0).toFixed(2)} km</td>
-              <td colspan="3">FCT State Delivery Management Official Directory</td>
-            </tr>
-          </tfoot>
         </table>
       </body>
       </html>
@@ -192,7 +247,7 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
     link.click();
     document.body.removeChild(link);
 
-    showToast(`Exported ${links.length} TNL transmission link(s) to Excel!`);
+    showToast(`Exported ${links.length} link(s) to Excel!`);
   };
 
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
@@ -211,18 +266,22 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
       <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-gradient-to-tr from-cyan-500/20 to-indigo-500/20 border border-cyan-500/30 rounded-2xl text-cyan-300">
+            <div className="p-2.5 bg-gradient-to-tr from-cyan-500/20 via-purple-500/20 to-teal-500/20 border border-cyan-500/30 rounded-2xl text-cyan-300">
               <Network className="w-6 h-6" />
             </div>
             <div>
               <h1 className="text-xl font-extrabold text-white tracking-wide flex items-center gap-2">
-                TNL Transmission Network Links Directory
+                {activeNetworkTab === 'ihs' ? 'IHS FCT Optical Fiber Ring Directory' : activeNetworkTab === 'huawei' ? 'Huawei National Fiber Directory' : 'TNL Transmission Network Directory'}
                 <span className="px-2.5 py-0.5 text-xs bg-cyan-500/20 text-cyan-300 rounded-full border border-cyan-500/30 font-mono">
-                  1,169 Transmission Links
+                  {activeNetworkTab === 'ihs' ? '340 Fiber Links' : activeNetworkTab === 'huawei' ? '1,416 Fiber Links' : '926 Transmission Links'}
                 </span>
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Click any <b>TNL Segment Name</b> below to inspect the Fiber Failure Impact & Risk Blast Radius.
+                {activeNetworkTab === 'ihs' 
+                  ? 'Master index of IHS FCT fiber rings, cluster segments, and distance specifications.'
+                  : activeNetworkTab === 'huawei'
+                  ? 'Comprehensive Huawei Maintenance Fiber link catalog (2025 NOC Copy distribution).'
+                  : 'Click any TNL Segment Name below to inspect the Fiber Failure Impact & Risk Blast Radius.'}
               </p>
             </div>
           </div>
@@ -232,19 +291,58 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
         {stats && (
           <div className="flex flex-wrap items-center gap-3">
             <div className="bg-slate-900/90 px-3.5 py-2 rounded-xl border border-slate-800 text-xs flex items-center space-x-2">
-              <span className="text-slate-400 font-medium">Total Links:</span>
-              <b className="text-cyan-300 font-mono text-sm">{stats.total_links.toLocaleString()}</b>
+              <span className="text-slate-400 font-medium">Total Cataloged:</span>
+              <b className="text-cyan-300 font-mono text-sm">{(stats.total_links || totalCount).toLocaleString()}</b>
             </div>
             <div className="bg-cyan-500/10 px-3.5 py-2 rounded-xl border border-cyan-500/30 text-xs text-cyan-300 font-semibold flex items-center gap-1.5">
               <MapPin className="w-3.5 h-3.5" />
-              <span>FCT Links: {stats.fct_links}</span>
+              <span>{activeNetworkTab === 'ihs' ? 'Clusters: ' + (stats.clusters?.length || 48) : 'States: ' + (stats.states?.length || 10)}</span>
             </div>
-            <div className="bg-indigo-500/10 px-3.5 py-2 rounded-xl border border-indigo-500/30 text-xs text-indigo-300 font-semibold flex items-center gap-1.5">
+            <div className="bg-emerald-500/10 px-3.5 py-2 rounded-xl border border-emerald-500/30 text-xs text-emerald-300 font-semibold flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5" />
-              <span>Total Distance: {stats.total_distance_km.toLocaleString()} km</span>
+              <span>Total Distance: {stats.total_distance_km ? stats.total_distance_km.toLocaleString() : '10,903'} km</span>
             </div>
           </div>
         )}
+      </div>
+
+      {/* Network Directory 3-Way Sub-Tab Switcher */}
+      <div className="flex flex-wrap items-center gap-2 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800 w-fit">
+        <button
+          onClick={() => { setActiveNetworkTab('ihs'); setPage(1); setSearch(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-extrabold flex items-center space-x-2 transition-all ${
+            activeNetworkTab === 'ihs'
+              ? 'bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-lg border border-cyan-400/40'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Network className="w-4 h-4" />
+          <span>🔌 IHS FCT Fiber Ring (340)</span>
+        </button>
+
+        <button
+          onClick={() => { setActiveNetworkTab('huawei'); setPage(1); setSearch(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-extrabold flex items-center space-x-2 transition-all ${
+            activeNetworkTab === 'huawei'
+              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg border border-purple-400/40'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Cpu className="w-4 h-4" />
+          <span>📡 Huawei Fiber (1,416)</span>
+        </button>
+
+        <button
+          onClick={() => { setActiveNetworkTab('tnl'); setPage(1); setSearch(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-extrabold flex items-center space-x-2 transition-all ${
+            activeNetworkTab === 'tnl'
+              ? 'bg-gradient-to-r from-blue-600 to-sky-600 text-white shadow-lg border border-blue-400/40'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>🌐 TNL Transmission (926)</span>
+        </button>
       </div>
 
       {/* Main Table Card */}
@@ -253,61 +351,65 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
         {/* Controls Bar: Filters, Search, Export */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
           
-          {/* State Filter Pills */}
-          <div className="flex items-center space-x-1.5 text-xs overflow-x-auto no-scrollbar">
-            {isSuperuser && (
-              <button
-                onClick={() => { setSelectedState('All'); setPage(1); }}
-                className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap ${
-                  selectedState === 'All'
-                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
-                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
-                }`}
-              >
-                All States ({stats?.total_links || 1169})
-              </button>
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {activeNetworkTab === 'ihs' ? (
+              <div className="flex items-center space-x-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
+                <Filter className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-slate-400 font-semibold">Cluster:</span>
+                <select
+                  value={selectedCluster}
+                  onChange={(e) => { setSelectedCluster(e.target.value); setPage(1); }}
+                  className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="All" className="bg-slate-900 text-white">All FCT Clusters</option>
+                  {stats?.clusters && stats.clusters.map((c) => (
+                    <option key={c.cluster_ref} value={c.cluster_ref} className="bg-slate-900 text-white">
+                      {c.cluster_ref} ({c.count} links)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700">
+                <Filter className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-slate-400 font-semibold">State:</span>
+                <select
+                  value={selectedState}
+                  onChange={(e) => { setSelectedState(e.target.value); setPage(1); }}
+                  className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer"
+                >
+                  <option value="All" className="bg-slate-900 text-white">All States</option>
+                  {stats?.states && stats.states.map((st) => (
+                    <option key={st.state} value={st.state} className="bg-slate-900 text-white">
+                      {st.state} ({st.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
 
-            {(isSuperuser 
-              ? ['FCT', 'LAGOS', 'IMO', 'ANAMBRA', 'KANO', 'OYO', 'OGUN', 'BENUE', 'ENUGU']
-              : (stats?.sdm_assigned_states && stats.sdm_assigned_states.length > 0 ? stats.sdm_assigned_states : ['FCT'])
-            ).map((st) => {
-              const stateObj = stats?.states?.find(s => s.state === st);
-              const cnt = stateObj ? stateObj.count : 0;
-              const isActive = selectedState === st;
-              return (
-                <button
-                  key={st}
-                  onClick={() => { setSelectedState(st); setPage(1); }}
-                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap ${
-                    isActive
-                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
-                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
-                  }`}
-                >
-                  {st} {cnt > 0 ? `(${cnt})` : ''}
-                </button>
-              );
-            })}
+            <button
+              onClick={() => { setSelectedState('All'); setSelectedCluster('All'); setSelectedNetType('All'); setSearch(''); setPage(1); }}
+              className="px-2.5 py-1 text-slate-400 hover:text-cyan-300 text-[11px] underline"
+            >
+              Reset Filters
+            </button>
           </div>
 
-          {/* Search Input & Export Button */}
+          {/* Search & Export Excel Buttons */}
           <div className="flex items-center space-x-3">
-            <form onSubmit={handleSearchSubmit} className="relative max-w-xs w-full">
-              <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
+            <form onSubmit={handleSearchSubmit} className="flex items-center bg-slate-900/90 border border-slate-700 rounded-xl px-3 py-1.5 text-xs flex-1 sm:flex-initial">
+              <Search className="w-4 h-4 text-slate-400 mr-2" />
               <input
                 type="text"
-                placeholder="Search segment, Site A, Site B..."
+                placeholder={activeNetworkTab === 'ihs' ? "Search Segment ID or Site..." : "Search Segment or Site ID..."}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-slate-900 text-xs text-white placeholder-slate-500 pl-8 pr-8 py-1.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500 font-medium"
+                className="bg-transparent text-white placeholder-slate-400 focus:outline-none w-48"
               />
               {search && (
-                <button
-                  type="button"
-                  onClick={() => { setSearch(''); setPage(1); loadData(); }}
-                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
-                >
+                <button type="button" onClick={() => { setSearch(''); setPage(1); }} className="text-slate-400 hover:text-white">
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -315,7 +417,7 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
 
             <button
               onClick={handleExportToExcel}
-              className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow flex items-center gap-1.5 transition-all whitespace-nowrap"
+              className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center space-x-1.5 transition-all shrink-0"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
               <span>Export Excel</span>
@@ -327,32 +429,164 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
         <div className="overflow-x-auto border border-slate-800 rounded-xl">
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-slate-900/90 text-slate-300 font-bold border-b border-slate-800 uppercase tracking-wider text-[11px]">
-              <tr>
-                <th className="p-3 w-10 text-center text-slate-500">#</th>
-                <th className="p-3">State / Region</th>
-                <th className="p-3">TNL Segment Name (Click for Failure Impact)</th>
-                <th className="p-3">Site A</th>
-                <th className="p-3">Site B</th>
-                <th className="p-3 text-center">Distance (km)</th>
-                <th className="p-3 text-center">Network Type</th>
-                <th className="p-3 text-center">Maintenance FMP</th>
-                <th className="p-3 text-center">Old FMP</th>
-              </tr>
+              {activeNetworkTab === 'ihs' ? (
+                <tr>
+                  <th className="p-3 w-10 text-center text-slate-500">#</th>
+                  <th className="p-3">Cluster</th>
+                  <th className="p-3">Segment ID (A-B)</th>
+                  <th className="p-3">Endpoint Site A</th>
+                  <th className="p-3">Endpoint Site B</th>
+                  <th className="p-3 text-center">Fibre Length</th>
+                  <th className="p-3 text-center">Distance</th>
+                  <th className="p-3 text-center">State</th>
+                </tr>
+              ) : activeNetworkTab === 'huawei' ? (
+                <tr>
+                  <th className="p-3 w-10 text-center text-slate-500">#</th>
+                  <th className="p-3">State / Region</th>
+                  <th className="p-3">Huawei Segment Name</th>
+                  <th className="p-3">Site A</th>
+                  <th className="p-3">Site B</th>
+                  <th className="p-3 text-center">Distance (km)</th>
+                  <th className="p-3 text-center">FMP Provider</th>
+                  <th className="p-3">Huawei FSDM Contact</th>
+                </tr>
+              ) : (
+                <tr>
+                  <th className="p-3 w-10 text-center text-slate-500">#</th>
+                  <th className="p-3">State / Region</th>
+                  <th className="p-3">TNL Segment Name (Click for Failure Impact)</th>
+                  <th className="p-3">Site A</th>
+                  <th className="p-3">Site B</th>
+                  <th className="p-3 text-center">Distance (km)</th>
+                  <th className="p-3 text-center">Network Type</th>
+                  <th className="p-3 text-center">Maintenance FMP</th>
+                  <th className="p-3 text-center">Old FMP</th>
+                </tr>
+              )}
             </thead>
             <tbody className="divide-y divide-slate-800/80">
               {loading ? (
                 <tr>
                   <td colSpan={9} className="p-8 text-center text-slate-400 font-medium">
                     <RefreshCw className="w-5 h-5 text-cyan-400 animate-spin mx-auto mb-2" />
-                    Fetching TNL Transmission Links...
+                    Fetching transmission records...
                   </td>
                 </tr>
               ) : links.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="p-8 text-center text-slate-400 font-medium">
-                    No TNL transmission links found matching query parameters.
+                    No transmission links found matching query parameters.
                   </td>
                 </tr>
+              ) : activeNetworkTab === 'ihs' ? (
+                links.map((l, idx) => (
+                  <tr key={l.id} className="hover:bg-slate-800/50 transition-all">
+                    <td className="p-3 text-center font-mono text-slate-500">
+                      {(page - 1) * pageSize + idx + 1}
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2.5 py-1 bg-cyan-500/10 text-cyan-300 rounded font-bold text-[11px] border border-cyan-500/20">
+                        {l.cluster_ref || 'FCT'}
+                      </span>
+                    </td>
+                    <td className="p-3 font-mono font-bold text-white">
+                      {l.segment_id}
+                    </td>
+                    <td className="p-3">
+                      {l.site_a ? (
+                        <button
+                          onClick={() => onSelectSite && onSelectSite(l.site_a)}
+                          className="font-mono text-xs font-bold text-cyan-300 hover:underline flex items-center gap-1"
+                        >
+                          <span>{l.site_a}</span>
+                          <ExternalLink className="w-3 h-3 text-slate-500" />
+                        </button>
+                      ) : (
+                        <span className="text-slate-500 font-mono">-</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {l.site_b ? (
+                        <button
+                          onClick={() => onSelectSite && onSelectSite(l.site_b)}
+                          className="font-mono text-xs font-bold text-cyan-300 hover:underline flex items-center gap-1"
+                        >
+                          <span>{l.site_b}</span>
+                          <ExternalLink className="w-3 h-3 text-slate-500" />
+                        </button>
+                      ) : (
+                        <span className="text-slate-500 font-mono">-</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-center font-mono text-slate-300">
+                      {l.fibre_length_m ? `${l.fibre_length_m.toLocaleString()} m` : '0 m'}
+                    </td>
+                    <td className="p-3 text-center">
+                      <span className="px-2.5 py-0.5 bg-amber-500/20 text-amber-300 rounded-full font-mono font-bold text-[11px] border border-amber-500/30">
+                        {l.distance_km ? `${l.distance_km.toFixed(3)} km` : '0 km'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center text-slate-400 font-medium">
+                      {l.state || 'FCT'}
+                    </td>
+                  </tr>
+                ))
+              ) : activeNetworkTab === 'huawei' ? (
+                links.map((l, idx) => (
+                  <tr key={l.id} className="hover:bg-slate-800/50 transition-all">
+                    <td className="p-3 text-center font-mono text-slate-500">
+                      {(page - 1) * pageSize + idx + 1}
+                    </td>
+                    <td className="p-3">
+                      <div className="font-extrabold text-purple-300">{l.state}</div>
+                      <div className="text-[10px] text-slate-400">{l.region || 'Region N/A'}</div>
+                    </td>
+                    <td className="p-3 font-bold text-white font-mono">
+                      {l.segment_name}
+                    </td>
+                    <td className="p-3">
+                      {l.site_a ? (
+                        <button
+                          onClick={() => onSelectSite && onSelectSite(l.site_a)}
+                          className="font-mono text-xs font-bold text-purple-300 hover:underline flex items-center gap-1"
+                        >
+                          <span>{l.site_a}</span>
+                          <ExternalLink className="w-3 h-3 text-slate-500" />
+                        </button>
+                      ) : (
+                        <span className="text-slate-500 font-mono">-</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {l.site_b ? (
+                        <button
+                          onClick={() => onSelectSite && onSelectSite(l.site_b)}
+                          className="font-mono text-xs font-bold text-purple-300 hover:underline flex items-center gap-1"
+                        >
+                          <span>{l.site_b}</span>
+                          <ExternalLink className="w-3 h-3 text-slate-500" />
+                        </button>
+                      ) : (
+                        <span className="text-slate-500 font-mono">-</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      <span className="px-2.5 py-0.5 bg-amber-500/20 text-amber-300 rounded-full font-mono font-bold text-[11px] border border-amber-500/30">
+                        {l.distance_km ? `${l.distance_km.toFixed(2)} km` : '0 km'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <span className="px-2.5 py-0.5 bg-purple-500/20 text-purple-300 rounded-full font-bold text-[11px] border border-purple-500/30">
+                        {l.maintenance_fmp || 'Huawei'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-slate-300 font-medium text-[11px]">
+                      <div>{l.huawei_fsdm || 'Huawei FSDM'}</div>
+                      {l.huawei_fsdm_number && <div className="text-[10px] text-slate-500 font-mono">{l.huawei_fsdm_number}</div>}
+                    </td>
+                  </tr>
+                ))
               ) : (
                 links.map((l, idx) => (
                   <tr key={l.id} className="hover:bg-slate-800/50 transition-all">
@@ -446,246 +680,159 @@ export default function TNLLinksDirectory({ currentUser, onSelectSite }) {
         {/* Pagination Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-slate-400 gap-3 pt-2">
           <div>
-            Showing <b className="text-cyan-300">{links.length > 0 ? (page - 1) * pageSize + 1 : 0}</b> to <b className="text-cyan-300">{Math.min(page * pageSize, totalCount)}</b> of <b className="text-slate-200">{totalCount.toLocaleString()}</b> TNL Transmission Links.
+            Showing <b className="text-cyan-300">{links.length > 0 ? (page - 1) * pageSize + 1 : 0}</b> to <b className="text-cyan-300">{Math.min(page * pageSize, totalCount)}</b> of <b className="text-slate-200">{totalCount.toLocaleString()}</b> links.
           </div>
 
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1 || loading}
-              className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-700 disabled:opacity-50 transition-all"
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-700 disabled:opacity-40 text-slate-300 hover:text-white"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="px-3 py-1 bg-slate-900 border border-slate-800 rounded-xl font-mono text-cyan-300 font-bold">
+
+            <span className="font-semibold text-slate-300">
               Page {page} of {totalPages}
             </span>
+
             <button
-              onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-              disabled={page >= totalPages || loading}
-              className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-700 disabled:opacity-50 transition-all"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages || loading}
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-700 disabled:opacity-40 text-slate-300 hover:text-white"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </div>
+
       </div>
 
       {/* 🚨 FIBER OUTAGE IMPACT & RISK BLAST RADIUS MODAL */}
       {selectedLink && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-3xl w-full max-h-[90vh] overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-500/40 rounded-3xl max-w-2xl w-full p-6 space-y-5 shadow-2xl relative animate-in fade-in zoom-in duration-200">
             
-            {/* Modal Header */}
-            <div className="p-6 bg-gradient-to-r from-red-950/60 via-slate-900 to-slate-900 border-b border-slate-800 flex items-start justify-between">
-              <div className="flex items-start space-x-3">
-                <div className="p-3 bg-red-500/20 border border-red-500/40 rounded-2xl text-red-400 shrink-0">
-                  <ShieldAlert className="w-6 h-6 animate-pulse" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-0.5 bg-red-500/20 text-red-300 font-extrabold text-[10px] uppercase rounded-full border border-red-500/30">
-                      Fiber Outage Risk Analysis
-                    </span>
-                    <span className="text-xs text-slate-400 font-mono">ID #{selectedLink.id}</span>
-                  </div>
-                  <h2 className="text-lg font-extrabold text-white mt-1">
-                    {selectedLink.segment_name}
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    State: <b className="text-cyan-300">{selectedLink.state}</b> &bull; Region: {selectedLink.region || 'N/A'} &bull; Fiber Link Distance: <b className="text-amber-300">{selectedLink.distance_km} km</b>
-                  </p>
-                </div>
-              </div>
+            {/* Modal Close Button */}
+            <button 
+              onClick={() => setSelectedLink(null)} 
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800 border border-slate-700"
+            >
+              <X className="w-5 h-5" />
+            </button>
 
-              <button
-                onClick={() => { setSelectedLink(null); setImpactData(null); }}
-                className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-800 transition-all"
-              >
-                <X className="w-5 h-5" />
-              </button>
+            {/* Modal Header */}
+            <div className="flex items-center space-x-3 border-b border-slate-800 pb-4">
+              <div className="p-3 bg-red-500/20 border border-red-500/40 text-red-400 rounded-2xl">
+                <ShieldAlert className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  Fiber Outage Risk Analysis
+                  <span className="text-xs bg-red-500/20 text-red-400 font-mono px-2 py-0.5 rounded border border-red-500/30">
+                    BLAST RADIUS
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  State: <b className="text-cyan-300">{selectedLink.state}</b> &bull; Region: {selectedLink.region || 'N/A'} &bull; Fiber Link Distance: <b className="text-amber-300">{selectedLink.distance_km} km</b>
+                </p>
+              </div>
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-6 flex-1">
-              
-              {impactLoading ? (
-                <div className="py-12 text-center text-slate-400">
-                  <RefreshCw className="w-6 h-6 text-red-400 animate-spin mx-auto mb-3" />
-                  <p className="font-semibold text-xs text-slate-300">Calculating fiber cut blast radius & downstream dependent sites...</p>
+            {impactLoading ? (
+              <div className="py-12 text-center space-y-3">
+                <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
+                <p className="font-semibold text-xs text-slate-300">Calculating fiber cut blast radius & downstream dependent sites...</p>
+              </div>
+            ) : impactData ? (
+              <div className="space-y-4">
+                
+                {/* Executive Impact Alert Banner */}
+                <div className="p-4 bg-gradient-to-r from-red-950/80 to-rose-950/80 border border-red-500/40 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-2 text-red-300 text-sm font-extrabold">
+                    <AlertTriangle className="w-5 h-5 text-red-400 animate-bounce" />
+                    <span>
+                      Fiber Cut Risk: {impactData.total_sites_at_risk} Telecom Site(s) At High Risk
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    If a physical fiber break occurs on segment <b className="text-white">{impactData.segment_name}</b> ({impactData.distance_km} km), the direct transmission endpoints, downstream backhaul links, and <b>{impactData.proximate_sites_count || 0} nearby corridor site(s) (within 1.5km)</b> will experience backhaul failure or severe interference.
+                  </p>
                 </div>
-              ) : impactData ? (
-                <>
-                  {/* Alert Banner */}
-                  <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-start space-x-3 text-xs">
-                    <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="font-bold text-red-200 text-sm">
-                        Fiber Cut Risk: {impactData.total_sites_at_risk} Telecom Site(s) At High Risk
-                      </h4>
-                      <p className="text-slate-300 mt-1 leading-relaxed">
-                        If a physical fiber break occurs on segment <b className="text-white">{impactData.segment_name}</b> ({impactData.distance_km} km), the direct transmission endpoints, downstream backhaul links, and <b>{impactData.proximate_sites_count || 0} nearby corridor site(s) (within 1.5km)</b> will experience backhaul failure or severe interference.
-                      </p>
-                      
-                      <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-red-500/20 text-[11px]">
-                        <span className="px-2.5 py-0.5 bg-cyan-500/20 text-cyan-300 rounded-full font-bold border border-cyan-500/30">
-                          Direct Nodes: {impactData.direct_sites_count || 2}
-                        </span>
-                        {impactData.cascading_sites_count > 0 && (
-                          <span className="px-2.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-full font-bold border border-indigo-500/30">
-                            Cascading Backhaul: {impactData.cascading_sites_count}
-                          </span>
-                        )}
-                        {impactData.proximate_sites_count > 0 && (
-                          <span className="px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-full font-bold border border-emerald-500/30">
-                            📍 Geographically Proximate (&le;1.5km): {impactData.proximate_sites_count}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+
+                {/* Impact Summary Statistics Grid */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Direct Endpoints</div>
+                    <div className="text-xl font-black text-cyan-400 font-mono mt-1">{impactData.direct_sites_count} Sites</div>
                   </div>
+                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Cascading Microwave</div>
+                    <div className="text-xl font-black text-amber-400 font-mono mt-1">{impactData.cascading_sites_count} Sites</div>
+                  </div>
+                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Corridor Proximity</div>
+                    <div className="text-xl font-black text-rose-400 font-mono mt-1">{impactData.proximate_sites_count} Sites</div>
+                  </div>
+                </div>
 
-                  {/* Impacted Sites List */}
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
-                      <span>Affected Telecom Sites ({impactData.total_sites_at_risk})</span>
-                      <span className="text-[10px] text-cyan-400">GPS Proximity & Backhaul Topology</span>
-                    </h3>
-
-                    <div className="space-y-3">
-                      {impactData.impacted_sites.map((site, sIdx) => {
-                        const isDown = site.is_down || !site.found;
-                        const isProximate = site.role.includes('Geographical Proximity');
-                        return (
-                          <div 
-                            key={sIdx}
-                            className={`p-4 rounded-2xl border transition-all ${
-                              isDown 
-                                ? 'bg-red-950/20 border-red-500/30' 
-                                : isProximate
-                                ? 'bg-slate-900/90 border-emerald-500/30 hover:border-emerald-500/50'
-                                : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
-                            }`}
+                {/* List of Affected Sites */}
+                <div>
+                  <h4 className="text-xs font-bold text-slate-300 mb-2 flex items-center justify-between">
+                    <span>Impacted Site Directory ({impactData.impacted_sites.length})</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Click site ID to view profile</span>
+                  </h4>
+                  
+                  <div className="max-h-56 overflow-y-auto space-y-2 pr-1 border border-slate-800 rounded-xl p-2 bg-slate-950/60">
+                    {impactData.impacted_sites.map((st, idx) => (
+                      <div key={idx} className="p-2.5 bg-slate-900 rounded-lg border border-slate-800/80 flex items-center justify-between text-xs hover:border-cyan-500/40 transition-all">
+                        <div className="flex items-center space-x-3">
+                          <button
+                            onClick={() => { setSelectedLink(null); onSelectSite && onSelectSite(st.ihs_site_id); }}
+                            className="font-mono font-black text-cyan-300 hover:underline flex items-center gap-1"
                           >
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                              
-                              {/* Site Identifiers & Role */}
-                              <div className="flex items-center space-x-3">
-                                <div className={`p-2.5 rounded-xl border font-mono font-bold text-xs ${
-                                  site.role.includes('Site A')
-                                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
-                                    : site.role.includes('Site B')
-                                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
-                                    : isProximate
-                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                                }`}>
-                                  {site.ihs_site_id}
-                                </div>
+                            <span>{st.ihs_site_id}</span>
+                            <ExternalLink className="w-3 h-3 text-slate-500" />
+                          </button>
+                          
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            st.role === 'DIRECT_ENDPOINT' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
+                            st.role === 'CASCADING_HOPS' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                            'bg-slate-800 text-slate-300'
+                          }`}>
+                            {st.role.replace('_', ' ')}
+                          </span>
+                        </div>
 
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-extrabold text-white text-sm">
-                                      {site.ihs_site_id}
-                                    </span>
-                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                      site.role.includes('Site A')
-                                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
-                                        : site.role.includes('Site B')
-                                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                                        : isProximate
-                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono'
-                                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                    }`}>
-                                      {isProximate ? `📍 ${site.role}` : site.role}
-                                    </span>
-                                    <span className="px-2 py-0.5 bg-slate-800 text-slate-300 text-[10px] font-bold rounded-full border border-slate-700">
-                                      {site.priority}
-                                    </span>
-                                  </div>
-
-                                  <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-3">
-                                    <span>MTN ID: <b className="text-slate-200">{site.mtn_id}</b></span>
-                                    <span>Cascade: <b className="text-slate-200">{site.cascade}</b></span>
-                                    <span>Cluster: <b className="text-slate-200">{site.cluster_name}</b></span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Action Button */}
-                              {site.found && (
-                                <button
-                                  onClick={() => {
-                                    setSelectedLink(null);
-                                    if (onSelectSite) onSelectSite(site.ihs_site_id);
-                                  }}
-                                  className="px-3.5 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all shrink-0"
-                                >
-                                  <span>View Profile</span>
-                                  <ArrowRight className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Personnel Directory & Contact Bar */}
-                            <div className="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                              <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 flex items-center justify-between">
-                                <div>
-                                  <span className="text-[10px] text-slate-500 uppercase font-bold block">Assigned Field Engineer (FSE)</span>
-                                  <b className="text-white text-xs">{site.fse_name}</b>
-                                </div>
-                                {site.fse_phone && site.fse_phone !== 'N/A' && (
-                                  <a
-                                    href={`tel:${site.fse_phone}`}
-                                    className="p-1.5 bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 rounded-lg border border-emerald-500/30 flex items-center gap-1 text-[11px] font-bold transition-all"
-                                  >
-                                    <Phone className="w-3 h-3 text-emerald-400" />
-                                    <span>{site.fse_phone}</span>
-                                  </a>
-                                )}
-                              </div>
-
-                              <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80 flex items-center justify-between">
-                                <div>
-                                  <span className="text-[10px] text-slate-500 uppercase font-bold block">State Delivery Manager (SDM)</span>
-                                  <b className="text-amber-400 text-xs">{site.sdm_name}</b>
-                                </div>
-                                {site.sdm_phone && site.sdm_phone !== 'N/A' && (
-                                  <a
-                                    href={`tel:${site.sdm_phone}`}
-                                    className="p-1.5 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 rounded-lg border border-amber-500/30 flex items-center gap-1 text-[11px] font-bold transition-all"
-                                  >
-                                    <Phone className="w-3 h-3 text-amber-400" />
-                                    <span>{site.sdm_phone}</span>
-                                  </a>
-                                )}
-                              </div>
-                            </div>
-
-                          </div>
-                        );
-                      })}
-                    </div>
+                        <div className="flex items-center space-x-4 text-[11px] text-slate-400">
+                          {st.smc && <span>SMC: <b className="text-slate-200">{st.smc}</b></span>}
+                          {st.priority && <span className="font-bold text-red-400">{st.priority}</span>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </>
-              ) : null}
+                </div>
 
-            </div>
+              </div>
+            ) : (
+              <div className="py-8 text-center text-slate-500">Failed to analyze blast radius impact for this segment.</div>
+            )}
 
             {/* Modal Footer */}
-            <div className="p-4 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
-              <span>Official FCT State Delivery Management Transmission Topology</span>
+            <div className="pt-2 flex justify-end border-t border-slate-800">
               <button
-                onClick={() => { setSelectedLink(null); setImpactData(null); }}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all"
+                onClick={() => setSelectedLink(null)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition-all"
               >
-                Close Analysis
+                Close Risk Modal
               </button>
             </div>
 
           </div>
         </div>
       )}
+
     </div>
   );
 }

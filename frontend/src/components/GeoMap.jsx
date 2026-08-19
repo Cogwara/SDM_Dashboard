@@ -51,9 +51,12 @@ function MapController({ targetCoords, zoomLevel }) {
   return null;
 }
 
+import { getSDMStateInfo } from '../utils/userUtils';
+
 export default function GeoMap({ onSelectSite, currentUser }) {
   const isSuperuser = currentUser?.is_superuser;
-  const userSdmName = currentUser?.full_name || '';
+  const stateInfo = getSDMStateInfo(currentUser);
+  const userSdmName = currentUser?.full_name || currentUser?.username || '';
 
   const [sites, setSites] = useState([]);
   const [openNotesBySite, setOpenNotesBySite] = useState({});
@@ -76,10 +79,20 @@ export default function GeoMap({ onSelectSite, currentUser }) {
   const loadMapData = async () => {
     setLoading(true);
     try {
-      const sdmParam = !isSuperuser ? userSdmName : undefined;
+      const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
+      const isSdm = !isSuperuser && !isFse;
+
+      const sdmParam = isSdm ? (currentUser?.full_name || currentUser?.username) : undefined;
+      const fseParam = isFse ? (currentUser?.full_name || currentUser?.username) : undefined;
       
       const [sitesData, notesData] = await Promise.all([
-        fetchSites({ sdm: sdmParam, page_size: 25000 }),
+        fetchSites({
+          sdm: sdmParam,
+          fse: fseParam,
+          is_superuser: isSuperuser ? 'true' : 'false',
+          user_state: stateInfo?.code,
+          page_size: 25000
+        }),
         fetchNotes({ page_size: 10000 })
       ]);
 
@@ -88,11 +101,20 @@ export default function GeoMap({ onSelectSite, currentUser }) {
 
       setSites(sitesList);
 
+      // Auto-center map on first valid site if available
+      const firstValidSite = sitesList.find(s => {
+        const c = getSiteCoordinates(s);
+        return c && c.lat && c.lng;
+      });
+      if (firstValidSite) {
+        const c = getSiteCoordinates(firstValidSite);
+        setMapTargetCoords([c.lat, c.lng]);
+      }
+
       // Index open/active notes by site ihs_site_id and numeric site ID
       const notesMap = {};
       notesList.forEach((note) => {
         const noteStatus = (note.status || '').toLowerCase();
-        // Check if note status is Open, In Progress, or Escalated (i.e. NOT Resolved)
         if (noteStatus === 'open' || noteStatus === 'in progress' || noteStatus === 'escalated') {
           const keyIhs = note.site_ihs_id;
           const keyNumeric = note.site;
@@ -117,7 +139,7 @@ export default function GeoMap({ onSelectSite, currentUser }) {
 
   useEffect(() => {
     loadMapData();
-  }, [userSdmName, isSuperuser]);
+  }, [currentUser]);
 
   // Helper to resolve open notes for a specific site
   const getSiteOpenNotes = (site) => {
@@ -139,20 +161,20 @@ export default function GeoMap({ onSelectSite, currentUser }) {
     const raw = site.raw_data || {};
     const lgaVal = raw['LGA'] || raw['lga'] || raw['Lga'] || raw['Local Government Area'] || raw['LOCAL GOVERNMENT AREA'];
     if (lgaVal && String(lgaVal).trim()) return String(lgaVal).trim();
-    return 'Abuja Municipal';
+    return site.state ? site.state.trim() : null;
   };
 
-  // Deterministic coordinate generator for FCT sites missing lat/long
+  // Deterministic coordinate generator for sites missing lat/long
   const getSiteCoordinates = (site) => {
     const raw = site.raw_data || {};
     let lat = site.latitude || parseFloat(raw['Lat']) || parseFloat(raw['LATITUDE']);
     let lng = site.longitude || parseFloat(raw['Long']) || parseFloat(raw['LONGITUDE']);
 
-    if (lat && lng && !isNaN(lat) && !isNaN(lng) && lat >= 7.5 && lat <= 10.5 && lng >= 6.5 && lng <= 8.5) {
+    if (lat && lng && !isNaN(lat) && !isNaN(lng) && lat >= 3.5 && lat <= 14.5 && lng >= 2.0 && lng <= 15.0) {
       return { lat, lng };
     }
 
-    // Fallback hashing around Abuja FCT LGA centers
+    // Fallback hashing around regional center
     let hash = 0;
     const str = site.ihs_site_id || 'FC0001';
     for (let i = 0; i < str.length; i++) {
@@ -167,12 +189,10 @@ export default function GeoMap({ onSelectSite, currentUser }) {
     };
   };
 
-  // Extract unique LGAs dynamically from fetched dataset + standard FCT LGAs
+  // Extract unique LGAs dynamically ONLY from the user's assigned/scoped dataset
   const lgaOptions = useMemo(() => {
-    const standardFctLgas = ['Abuja Municipal', 'Abaji', 'Bwari', 'Gwagwalada', 'Kuje', 'Kwali'];
     const extracted = sites.map(s => getSiteLga(s)).filter(Boolean);
-    const combined = Array.from(new Set([...standardFctLgas, ...extracted])).sort();
-    return combined;
+    return Array.from(new Set(extracted)).sort();
   }, [sites]);
 
   // Filtered sites array based on Search term, LGA, and Status
@@ -254,16 +274,12 @@ export default function GeoMap({ onSelectSite, currentUser }) {
           <div>
             <h2 className="text-xl font-extrabold text-white tracking-wide flex items-center gap-2">
               <MapPin className="w-5 h-5 text-cyan-400" />
-              Live Geographic Map of FCT Telecom Sites
+              {stateInfo.mapTitle || 'Live Geographic Map of Telecom Sites'}
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              {!isSuperuser ? (
-                <span className="text-cyan-300 font-semibold flex items-center gap-1 mt-0.5">
-                  <Lock className="w-3.5 h-3.5 text-cyan-400" /> Portfolio Scoped: <b>{userSdmName}</b> ({filteredSites.length} of {sites.length} Towers Shown)
-                </span>
-              ) : (
-                `Super Administrator Geospatial Intelligence \u2022 Plotted ${filteredSites.length} of ${sites.length} FCT Towers`
-              )}
+              <span className="text-cyan-300 font-semibold flex items-center gap-1 mt-0.5">
+                <Lock className="w-3.5 h-3.5 text-cyan-400" /> Portfolio Scope: <b>{stateInfo.regionText}</b> ({filteredSites.length} of {sites.length} Towers Shown)
+              </span>
             </p>
           </div>
 

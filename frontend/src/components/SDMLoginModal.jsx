@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Radio, Lock, User, Key, ArrowRight, ShieldCheck, CheckCircle, Server } from 'lucide-react';
+import { Radio, Lock, User, Key, ArrowRight, ShieldCheck, CheckCircle, Server, Eye, EyeOff, Smartphone, Download, RefreshCw, Zap, Wifi } from 'lucide-react';
 import { loginSDM, setCustomServerIp, checkServerHealth } from '../api';
 
 export default function SDMLoginModal({ onLoginSuccess }) {
@@ -10,12 +10,11 @@ export default function SDMLoginModal({ onLoginSuccess }) {
     window.location.protocol === 'file:'
   );
 
-  const defaultIp = isMobileNative 
-    ? '192.168.1.120' 
-    : (typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost');
+  const defaultIp = 'https://during-duke-susan-binary.trycloudflare.com';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [serverIp, setServerIp] = useState(() => localStorage.getItem('fct_sdm_server_ip') || defaultIp);
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [error, setError] = useState('');
@@ -24,16 +23,25 @@ export default function SDMLoginModal({ onLoginSuccess }) {
   const [testingServer, setTestingServer] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
+  const handleApplyPreset = (url) => {
+    setServerIp(url);
+    setCustomServerIp(url);
+    setTestResult(null);
+  };
+
   const handleTestConnection = async () => {
     setTestingServer(true);
     setTestResult(null);
+    const startTime = performance.now();
     const activeUrl = setCustomServerIp(serverIp.trim());
     try {
       const res = await checkServerHealth();
+      const endTime = performance.now();
+      const latency = Math.round(endTime - startTime);
       if (res) {
-        setTestResult({ success: true, message: `🟢 Connected successfully to ${activeUrl}` });
+        setTestResult({ success: true, message: `🟢 Connected successfully (${latency}ms) to ${activeUrl}` });
       } else {
-        setTestResult({ success: false, message: `🔴 Server network unreachable at ${activeUrl}. Ensure PC & phone are on the same Wi-Fi network.` });
+        setTestResult({ success: false, message: `🔴 Unreachable at ${activeUrl}. Check network connectivity.` });
       }
     } catch (err) {
       setTestResult({ success: false, message: `🔴 Connection error: ${err.message || 'Network unreachable'}` });
@@ -52,7 +60,6 @@ export default function SDMLoginModal({ onLoginSuccess }) {
     setLoading(true);
     setError('');
 
-    // Ensure server IP is configured and returns clean formatted URL
     const activeUrl = setCustomServerIp(serverIp.trim());
 
     try {
@@ -63,142 +70,230 @@ export default function SDMLoginModal({ onLoginSuccess }) {
       if (err.response) {
         setError(err.response.data?.error || err.response.data?.detail || 'Invalid username or password. Please check your credentials.');
       } else {
-        setError(`Authentication failed. Unable to reach server at ${activeUrl}. Please verify your PC IP address and ensure Django backend is running.`);
+        setError(`Authentication failed. Unable to reach server at ${activeUrl}. Please verify your network connection.`);
       }
     } finally {
       setLoading(false);
     }
   };
 
-
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-slate-900 via-slate-950 to-blue-950 p-4 flex items-center justify-center overflow-y-auto">
+    <div className="min-h-screen w-full bg-slate-950 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(14,165,233,0.15),rgba(255,255,255,0))] p-4 sm:p-6 flex items-center justify-center overflow-y-auto">
       
-      <div className="bg-slate-900/95 max-w-4xl w-full rounded-3xl border border-cyan-500/30 shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-12 my-8">
+      <div className="bg-slate-900/90 backdrop-blur-2xl max-w-5xl w-full rounded-3xl border border-cyan-500/30 shadow-[0_0_50px_rgba(6,182,212,0.12)] overflow-hidden grid grid-cols-1 md:grid-cols-12 my-6 transition-all duration-300">
 
-        
         {/* Left Column: Brand & Security Overview */}
-        <div className="md:col-span-5 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950 p-8 flex flex-col justify-between border-b md:border-b-0 md:border-r border-slate-800">
-          <div className="space-y-6">
+        <div className="md:col-span-5 bg-gradient-to-b from-slate-900 via-slate-950 to-cyan-950/80 p-6 sm:p-8 flex flex-col justify-between border-b md:border-b-0 md:border-r border-slate-800/80 relative overflow-hidden">
+          
+          {/* Subtle Ambient Glow Effect */}
+          <div className="absolute -top-24 -left-24 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+          <div className="space-y-6 relative z-10">
+            {/* Header Brand */}
             <div className="flex items-center space-x-3">
-              <div className="p-3 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-2xl shadow-lg shadow-cyan-500/20">
-                <Radio className="w-8 h-8 text-white animate-pulse" />
+              <div className="p-3 bg-gradient-to-tr from-cyan-600 via-teal-500 to-blue-600 rounded-2xl shadow-lg shadow-cyan-500/30 ring-1 ring-cyan-400/40">
+                <Radio className="w-7 h-7 text-white animate-pulse" />
               </div>
               <div>
-                <h1 className="font-extrabold text-xl tracking-wider text-white">SDM PORTAL</h1>
-                <p className="text-xs text-cyan-400 font-semibold">FCT Telecom Operations Control</p>
+                <h1 className="font-black text-xl tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-teal-200 to-white">
+                  SDM PORTAL
+                </h1>
+                <p className="text-[11px] text-cyan-400 font-bold uppercase tracking-wider">FCT Telecom Control Center</p>
               </div>
             </div>
 
-            <div className="space-y-3 pt-4">
-              <h2 className="text-lg font-bold text-white leading-snug">State Delivery Manager & Admin Authentication</h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Log in with your assigned SDM manager profile or System Admin credentials to access real-time FCT telecom site telemetry, AI RCA engine, incident logs, and user management.
-              </p>
+            {/* Cloudflare Active Status Pill */}
+            <div className="p-3 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+                <span className="text-slate-200 font-semibold text-[11px]">Cloudflare Tunnel Ready</span>
+              </div>
+              <span className="text-[10px] font-mono bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-400/30">v3.0 Live</span>
             </div>
 
             <div className="space-y-2.5 pt-2">
+              <h2 className="text-base font-bold text-white leading-snug">
+                State Delivery Manager & Admin Workspace
+              </h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Log in to monitor live FCT site telemetry, run AI-powered RCA diagnostics, track fiber outage tickets, and sync field notes across desktop & mobile.
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-2">
               {[
-                'Full 20,174 FCT Telecom Site Inventory Access',
+                'Full 20,174 FCT Telecom Site Inventory Telemetry',
                 'Super User SDM Profile Creation & Management',
-                'AI-Powered Root Cause Analysis & Operations',
-                'Cascading Multi-State & Parameter Filters',
+                'AI Root Cause Diagnostics Engine',
+                'Seamless Mobile App & Desktop Synchronization',
               ].map((feat, i) => (
-                <div key={i} className="flex items-center space-x-2 text-xs text-slate-300">
+                <div key={i} className="flex items-center space-x-2.5 text-xs text-slate-300">
                   <CheckCircle className="w-4 h-4 text-cyan-400 flex-shrink-0" />
                   <span>{feat}</span>
                 </div>
               ))}
             </div>
+
+            {/* Android APK Download Card */}
+            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
+                <span className="flex items-center gap-1.5">
+                  <Smartphone className="w-4 h-4 text-cyan-400" /> Android APK App
+                </span>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Mobile Build</span>
+              </div>
+              <a
+                href="https://during-duke-susan-binary.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
+                download="FCT_SDM_Mobile_v3.apk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center space-x-2 transition-all hover:scale-[1.02] active:scale-95"
+              >
+                <Download className="w-3.5 h-3.5 text-cyan-200" />
+                <span>Download Mobile App (.APK)</span>
+              </a>
+            </div>
           </div>
 
-          <div className="pt-8 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between">
-            <span>State Delivery Manager Portal</span>
-            <span className="text-cyan-400 font-mono flex items-center gap-1"><ShieldCheck className="w-3.5 h-3.5" /> Encrypted Session</span>
+          <div className="pt-6 mt-6 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between relative z-10">
+            <span>SDM Operations Platform</span>
+            <span className="text-cyan-400 font-mono flex items-center gap-1"><ShieldCheck className="w-3.5 h-3.5" /> 256-bit Encrypted</span>
           </div>
         </div>
 
-        {/* Right Column: Credentials Form */}
-        <div className="md:col-span-7 p-8 space-y-6 bg-slate-900/60 flex flex-col justify-center">
+        {/* Right Column: Credentials & Server Form */}
+        <div className="md:col-span-7 p-6 sm:p-8 space-y-6 bg-slate-900/40 flex flex-col justify-center">
           
           <div>
-            <h3 className="text-xl font-extrabold text-white flex items-center gap-2">
-              <Lock className="w-5 h-5 text-cyan-400" /> Sign In to Your Profile
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">Enter your registered username and password to start using the app.</p>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-extrabold text-white flex items-center gap-2">
+                <Lock className="w-5 h-5 text-cyan-400" /> Sign In
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowServerConfig(!showServerConfig)}
+                className="text-xs text-cyan-400 hover:text-cyan-300 bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/30 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-mono transition-all"
+              >
+                <Server className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{showServerConfig ? 'Close Server Config' : 'Server IP Config'}</span>
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Enter your registered username and password to authenticate.</p>
           </div>
 
           {error && (
-            <div className="p-3.5 bg-red-500/10 border border-red-500/40 text-red-400 text-xs rounded-xl font-medium">
-              {error}
+            <div className="p-3.5 bg-red-500/10 border border-red-500/40 text-red-400 text-xs rounded-xl font-medium flex items-start gap-2">
+              <span className="flex-1">{error}</span>
             </div>
           )}
 
           {/* Form */}
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center gap-1.5">
+              <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-cyan-400" /> Username
               </label>
               <input
                 type="text"
                 required
-                placeholder="Enter SDM username or Admin username"
+                placeholder="SDM Manager username or Admin username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-slate-950 text-xs text-white placeholder-slate-500 p-3.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500 transition-all font-mono"
+                className="w-full bg-slate-950 text-xs text-white placeholder-slate-500 p-3.5 rounded-xl border border-slate-700/80 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all font-mono"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+              <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
                 <span className="flex items-center gap-1.5"><Key className="w-3.5 h-3.5 text-cyan-400" /> Password</span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  placeholder="Enter password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full bg-slate-950 text-xs text-white p-3.5 pr-10 rounded-xl border border-slate-700/80 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all font-mono"
+                />
                 <button
                   type="button"
-                  onClick={() => setShowServerConfig(!showServerConfig)}
-                  className="text-[10px] text-cyan-400 hover:underline flex items-center gap-1 font-mono"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-300 p-1"
                 >
-                  <Server className="w-3 h-3" /> {showServerConfig ? 'Hide Server IP' : 'Server IP Config'}
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
-              </label>
-              <input
-                type="password"
-                required
-                placeholder="Enter password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-slate-950 text-xs text-white p-3.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500 transition-all font-mono"
-              />
+              </div>
             </div>
 
+            {/* Server Config Collapsible Section */}
             {showServerConfig && (
-              <div className="p-3 bg-slate-950 rounded-xl border border-cyan-500/30 space-y-1.5">
-                <label className="block text-[11px] font-bold text-cyan-300 flex items-center gap-1 font-mono">
-                  <Server className="w-3 h-3 text-cyan-400" /> BACKEND SERVER HOST / IP ADDRESS
-                </label>
-                <div className="flex items-center space-x-2 pt-1">
+              <div className="p-4 bg-slate-950/90 rounded-2xl border border-cyan-500/40 space-y-3 shadow-inner">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-cyan-300 flex items-center gap-1 font-mono">
+                    <Server className="w-3.5 h-3.5 text-cyan-400" /> BACKEND SERVER ENDPOINT
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-mono">Cloudflare / Direct IP</span>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset(defaultIp)}
+                    className={`px-2.5 py-1 text-[10px] font-mono rounded-lg border flex items-center gap-1 transition-all ${
+                      serverIp.includes('trycloudflare.com')
+                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50 font-bold'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    <Wifi className="w-3 h-3 text-cyan-400" /> Cloudflare Tunnel (Global)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset('http://localhost:8001')}
+                    className={`px-2.5 py-1 text-[10px] font-mono rounded-lg border flex items-center gap-1 transition-all ${
+                      serverIp.includes('localhost')
+                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50 font-bold'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    <Zap className="w-3 h-3 text-amber-400" /> Local Port 8001
+                  </button>
+                </div>
+
+                <div className="flex items-center space-x-2">
                   <input
                     type="text"
-                    placeholder="e.g. 192.168.1.120 or 10.0.2.2"
+                    placeholder="https://during-duke-susan-binary.trycloudflare.com"
                     value={serverIp}
                     onChange={(e) => {
                       setServerIp(e.target.value);
                       setCustomServerIp(e.target.value);
                     }}
-                    className="flex-1 bg-slate-900 text-xs text-white p-2.5 rounded-lg border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
+                    className="flex-1 bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
                   />
                   <button
                     type="button"
                     onClick={handleTestConnection}
                     disabled={testingServer}
-                    className="px-3 py-2.5 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 text-xs font-bold rounded-lg transition-all whitespace-nowrap"
+                    className="px-3.5 py-2.5 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5"
                   >
-                    {testingServer ? 'Pinging...' : 'Test Connection'}
+                    {testingServer ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-300" /> Pinging...
+                      </>
+                    ) : (
+                      'Test Connection'
+                    )}
                   </button>
                 </div>
 
                 {testResult && (
-                  <div className={`p-2 rounded-lg text-[11px] font-mono border ${
+                  <div className={`p-2.5 rounded-xl text-[11px] font-mono border ${
                     testResult.success ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30' : 'bg-red-950/40 text-red-300 border-red-500/30'
                   }`}>
                     {testResult.message}
@@ -210,52 +305,14 @@ export default function SDMLoginModal({ onLoginSuccess }) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-cyan-500/20 flex items-center justify-center space-x-2 transition-all mt-2"
+              className="w-full py-3.5 bg-gradient-to-r from-cyan-600 via-teal-600 to-blue-600 hover:from-cyan-500 hover:via-teal-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-cyan-500/25 flex items-center justify-center space-x-2 transition-all hover:scale-[1.01] active:scale-95 mt-4"
             >
-              <span>{loading ? 'Authenticating...' : 'Sign In to SDM Workspace'}</span>
+              <span>{loading ? 'Authenticating Profile...' : 'Sign In to Workspace'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-
           </form>
 
-          {/* Quick Demo Login Credentials Helper */}
-          <div className="pt-3 border-t border-slate-800 space-y-2">
-            <span className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider">Quick Select Credentials:</span>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setUsername('admin');
-                  setPassword('admin123');
-                }}
-                className="p-2.5 bg-slate-950 hover:bg-slate-800 rounded-xl border border-cyan-500/30 text-left space-y-0.5 transition-all group"
-              >
-                <div className="font-extrabold text-cyan-300 text-[11px] flex items-center justify-between">
-                  <span>👑 System Admin</span>
-                  <span className="text-[9px] text-slate-400 group-hover:text-white font-mono">Fill &rarr;</span>
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono">User: <b>admin</b> &bull; Pass: <b>admin123</b></div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setUsername('mrchrys');
-                  setPassword('sdm123456');
-                }}
-                className="p-2.5 bg-slate-950 hover:bg-slate-800 rounded-xl border border-slate-700 text-left space-y-0.5 transition-all group"
-              >
-                <div className="font-extrabold text-slate-200 text-[11px] flex items-center justify-between">
-                  <span>💼 SDM Manager</span>
-                  <span className="text-[9px] text-slate-400 group-hover:text-white font-mono">Fill &rarr;</span>
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono">User: <b>mrchrys</b> &bull; Pass: <b>sdm123456</b></div>
-              </button>
-            </div>
-          </div>
-
         </div>
-
 
       </div>
 

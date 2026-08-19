@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Smartphone, Wifi, WifiOff, RefreshCw, FileText, MessageSquare, 
-  CheckCircle2, AlertTriangle, Layers, Clock, UploadCloud, Trash2, Camera, ShieldCheck,
-  Server, User, LogOut, Lock, Settings, Bot, Search, Send, Sparkles, Filter, ChevronRight, Zap, Shield, MapPin, Radio, Phone, UserCheck, X, Maximize2, BarChart3, Edit3, Palette, Sun, Moon, TrendingUp, Building2, Network, ArrowLeft, Activity, Plus
+  CheckCircle2, AlertTriangle, Layers, Clock, UploadCloud, Trash2, Camera, ShieldCheck, ShieldAlert,
+  Server, User, LogOut, Lock, Settings, Bot, Search, Send, Sparkles, Filter, ChevronRight, Zap, Shield, MapPin, Radio, Phone, UserCheck, X, Menu, Maximize2, BarChart3, Edit3, Palette, Sun, Moon, TrendingUp, Building2, Network, ArrowLeft, Activity, Plus, Database
 } from 'lucide-react';
 import { 
   getPendingNotes, getPendingWhatsApp, getPendingFseAudits, saveOfflineNote, saveOfflineWhatsApp, saveOfflineFseAudit,
@@ -22,6 +22,9 @@ import ReportsAnalytics from './ReportsAnalytics';
 import SiteProfile from './SiteProfile';
 import SDMUserManagement from './SDMUserManagement';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
+import DailyAvailabilityCenter from './DailyAvailabilityCenter';
+import HourlyAvailabilityCenter from './HourlyAvailabilityCenter';
+import { Calendar } from 'lucide-react';
 
 const fileToBase64 = (file) => {
   return new Promise((resolve) => {
@@ -193,6 +196,7 @@ const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
 export default function MobileAppView({ currentUser, onLogout, onSelectSite, currentTheme = 'sky', onThemeChange }) {
   const [activeSubTab, setActiveSubTab] = useState('overview'); // 'overview', 'sites', 'map', 'fse', 'tnl', 'note', 'whatsapp', 'ai', 'reports', 'queue', 'admin', 'profile'
   const [selectedSiteId, setSelectedSiteId] = useState(null);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingNotes, setPendingNotes] = useState(getPendingNotes());
@@ -254,9 +258,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
     window.location.protocol === 'capacitor:' || 
     window.location.protocol === 'file:'
   );
-  const defaultIp = isMobileNative 
-    ? '192.168.1.120' 
-    : (typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost');
+  const defaultIp = 'https://during-duke-susan-binary.trycloudflare.com';
 
   // Server IP Config state
   const [serverIp, setServerIp] = useState(() => localStorage.getItem('fct_sdm_server_ip') || defaultIp);
@@ -773,28 +775,46 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
   return (
     <div className="max-w-4xl mx-auto space-y-5 pb-16 px-2 sm:px-4">
       {/* Mobile Top Header Banner */}
-      <div className="glass-card p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+      <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-3">
-          <div className="p-3 bg-cyan-500/20 text-cyan-400 rounded-xl border border-cyan-500/30">
-            <Smartphone className="w-6 h-6 animate-pulse" />
+          {/* Hamburger Menu Toggle Button */}
+          <button
+            onClick={() => setIsMobileDrawerOpen(!isMobileDrawerOpen)}
+            className="p-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-400 rounded-xl border border-cyan-500/40 transition-all shadow-md flex items-center justify-center"
+            title="Toggle Mobile Navigation Drawer"
+          >
+            {isMobileDrawerOpen ? <X className="w-5 h-5 text-cyan-400" /> : <Menu className="w-5 h-5 text-cyan-400" />}
+          </button>
+
+          <div className="p-2.5 bg-cyan-500/20 text-cyan-400 rounded-xl border border-cyan-500/30 hidden sm:block">
+            <Smartphone className="w-5 h-5 animate-pulse" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-base font-extrabold text-white">
-                {currentUser?.is_superuser ? 'SDM Field Mobile App' : `${getSDMStateInfo(currentUser).code} SDM Field Mobile App`}
+              <h2 className="text-sm sm:text-base font-extrabold text-white">
+                {currentUser?.is_superuser ? 'SDM Mobile App' : `${getSDMStateInfo(currentUser).code} SDM Mobile`}
               </h2>
               <span className="text-[10px] font-extrabold px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded-full border border-cyan-500/30">
-                {isMobileNative ? 'ANDROID APK NATIVE' : 'MOBILE WEB MODE'}
+                {isMobileNative ? 'ANDROID APK' : 'MOBILE WEB'}
               </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Logged in: <strong className="text-white">{currentUser?.full_name || currentUser?.username || 'Field SDM'}</strong> ({currentUser?.role || 'SDM'})
+            <p className="text-[11px] text-slate-400">
+              User: <strong className="text-white">{currentUser?.full_name || currentUser?.username || 'Field SDM'}</strong>
             </p>
           </div>
         </div>
 
         {/* Status Indicator & Controls */}
         <div className="flex items-center space-x-2">
+          {/* Log Out Quick Button */}
+          <button
+            onClick={onLogout}
+            className="px-2.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
+            title="Log Out of Mobile App Account"
+          >
+            <LogOut className="w-3.5 h-3.5 text-rose-400" />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
           <button
             onClick={() => setShowThemeModal(true)}
             className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all"
@@ -831,6 +851,133 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
           </div>
         </div>
       </div>
+
+      {/* Native Mobile Hamburger Overlay Drawer */}
+      {isMobileDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-2xl border-b border-slate-800 animate-fadeIn p-4 overflow-y-auto space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 bg-gradient-to-tr from-cyan-600 to-indigo-600 rounded-xl shadow-lg">
+                <Smartphone className="w-6 h-6 text-white animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-white">SDM Field Mobile App</h3>
+                <p className="text-[11px] text-cyan-400 font-semibold">{getSDMStateInfo(currentUser).code} Territory</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsMobileDrawerOpen(false)}
+              className="p-2 text-slate-400 hover:text-white bg-slate-900 rounded-xl border border-slate-800"
+            >
+              <X className="w-6 h-6 text-cyan-400" />
+            </button>
+          </div>
+
+          {/* User Profile Info Card */}
+          <div className="glass-panel p-4 rounded-2xl border border-cyan-500/30 bg-slate-900/90 space-y-3">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white font-extrabold text-base shadow-md">
+                {currentUser?.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'S'}
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white leading-tight">{currentUser?.full_name || 'Field SDM'}</h4>
+                <span className="inline-block text-[11px] font-semibold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded-md border border-cyan-500/30 mt-0.5">
+                  {currentUser?.role || 'State Delivery Manager'}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-800/80">
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">Cached Sites</span>
+                <strong className="text-cyan-300 font-mono">{cachedSites.length} Sites</strong>
+              </div>
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-slate-400 block text-[10px]">Pending Uploads</span>
+                <strong className={pendingTotal > 0 ? 'text-amber-400 font-mono' : 'text-slate-400'}>
+                  {pendingTotal} Pending
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Mobile Navigation Views List */}
+          <div className="space-y-1">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 mb-2">Mobile Navigation Menu</div>
+            {[
+              { id: 'overview', label: 'Dashboard Overview', icon: BarChart3 },
+              { id: 'daily_avail', label: 'Daily Availability Command Center', icon: Calendar },
+              { id: 'hourly_avail', label: 'Hourly Availability Center', icon: Clock },
+              { id: 'sites', label: `Sites Directory (${cachedSites.length})`, icon: Layers },
+              { id: 'map', label: 'Live Geo Map', icon: MapPin },
+              { id: 'fse', label: 'FSE Field Inspector', icon: UserCheck },
+              { id: 'note', label: 'Record SDM Field Note', icon: Edit3 },
+              { id: 'whatsapp', label: 'WhatsApp Intel', icon: MessageSquare },
+              { id: 'ai', label: 'AI Operations Assistant', icon: Bot },
+              { id: 'reports', label: 'Executive Analytics', icon: TrendingUp },
+              { id: 'queue', label: `Offline Sync Queue (${pendingTotal})`, icon: UploadCloud },
+            ].map((sub) => {
+              const IconComp = sub.icon;
+              const isActive = activeSubTab === sub.id;
+              return (
+                <button
+                  key={sub.id}
+                  onClick={() => {
+                    setSelectedSiteId(null);
+                    setActiveSubTab(sub.id);
+                    setIsMobileDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold transition-all ${
+                    isActive
+                      ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-lg'
+                      : 'text-slate-300 hover:bg-slate-900 border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center space-x-3">
+                    <IconComp className={`w-5 h-5 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                    <span>{sub.label}</span>
+                  </div>
+                  {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Android APK Download Card in Drawer */}
+          <div className="p-3.5 rounded-xl border border-cyan-500/40 bg-cyan-950/40 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
+              <span className="flex items-center gap-1.5">
+                <Smartphone className="w-4 h-4 text-cyan-400" /> FCT SDM Mobile APK v3.0
+              </span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Native App</span>
+            </div>
+            <a
+              href="https://during-duke-susan-binary.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
+              download="FCT_SDM_Mobile_v3.apk"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center space-x-2 transition-all"
+            >
+              <UploadCloud className="w-4 h-4 text-cyan-200 rotate-180" />
+              <span>Download Android APK (6.2 MB)</span>
+            </a>
+          </div>
+
+          {/* Log Out Action Button */}
+          <div className="pt-4 border-t border-slate-800">
+            <button
+              onClick={() => {
+                setIsMobileDrawerOpen(false);
+                if (onLogout) onLogout();
+              }}
+              className="w-full py-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl border border-rose-500/40 shadow-lg flex items-center justify-center space-x-2 transition-all"
+            >
+              <LogOut className="w-4 h-4 text-rose-400" />
+              <span>Log Out of Mobile App</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Server IP Configuration Panel */}
       {showServerConfig && (
@@ -898,6 +1045,37 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
         </div>
       )}
 
+      {/* Native APK Direct Download Home Page Banner */}
+      <div className="glass-panel p-4 rounded-2xl border border-cyan-500/50 bg-gradient-to-r from-cyan-950/80 via-slate-900/90 to-indigo-950/80 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="flex items-center space-x-3">
+          <div className="p-3 bg-gradient-to-tr from-cyan-600 to-indigo-600 rounded-xl shadow-lg text-white">
+            <Smartphone className="w-6 h-6 animate-pulse" />
+          </div>
+          <div>
+            <h3 className="text-xs sm:text-sm font-extrabold text-white flex items-center gap-2">
+              <span>FCT SDM Mobile Native App (v3.0)</span>
+              <span className="px-2 py-0.5 text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full">
+                ANDROID APK
+              </span>
+            </h3>
+            <p className="text-[11px] text-slate-300">
+              Download and install the native Android APK directly on your phone.
+            </p>
+          </div>
+        </div>
+
+        <a
+          href="https://during-duke-susan-binary.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
+          download="FCT_SDM_Mobile_v3.apk"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-cyan-500/20 flex items-center justify-center space-x-2 transition-all hover:scale-105 active:scale-95"
+        >
+          <UploadCloud className="w-4 h-4 text-cyan-200 rotate-180" />
+          <span>Download Android APK (6.2 MB)</span>
+        </a>
+      </div>
+
       {/* Mobile Touch Navigation Sub-Tabs */}
       <div className="flex overflow-x-auto p-1.5 bg-slate-900/95 rounded-2xl border border-slate-800 text-xs font-bold gap-1.5 no-scrollbar shadow-lg sticky top-0 z-30 backdrop-blur-md">
         <button
@@ -908,6 +1086,26 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
         >
           <BarChart3 className="w-4 h-4 text-cyan-400" />
           <span>Overview</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('daily_avail'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'daily_avail' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Calendar className="w-4 h-4 text-cyan-400" />
+          <span>Daily Avail</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedSiteId(null); setActiveSubTab('hourly_avail'); }}
+          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+            activeSubTab === 'hourly_avail' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Clock className="w-4 h-4 text-amber-400" />
+          <span>Hourly Avail</span>
         </button>
 
         <button
@@ -1017,18 +1215,26 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
       {activeSubTab === 'overview' && (
         <div className="space-y-4">
           {/* Quick Action Bar */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-1.5">
+            <button
+              onClick={() => { setSelectedSiteId(null); setActiveSubTab('daily_avail'); }}
+              className="py-3 px-1 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-[11px] rounded-xl shadow-lg flex flex-col items-center justify-center gap-1 transition-all"
+            >
+              <Calendar className="w-4 h-4 text-cyan-200" />
+              <span>Daily Avail</span>
+            </button>
+
             <button
               onClick={() => { setSelectedSiteId(null); setActiveSubTab('note'); }}
-              className="py-3 px-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex flex-col items-center justify-center gap-1 transition-all"
+              className="py-3 px-1 bg-slate-900 hover:bg-slate-800 text-slate-200 font-bold text-[11px] rounded-xl border border-slate-700 flex flex-col items-center justify-center gap-1 transition-all"
             >
-              <FileText className="w-4 h-4 text-cyan-200" />
+              <FileText className="w-4 h-4 text-teal-400" />
               <span>Log Note</span>
             </button>
 
             <button
               onClick={() => { setSelectedSiteId(null); setActiveSubTab('fse'); }}
-              className="py-3 px-2 bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-xs rounded-xl border border-amber-500/30 flex flex-col items-center justify-center gap-1 transition-all"
+              className="py-3 px-1 bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-[11px] rounded-xl border border-amber-500/30 flex flex-col items-center justify-center gap-1 transition-all"
             >
               <ShieldCheck className="w-4 h-4 text-amber-400" />
               <span>FSE Audit</span>
@@ -1036,7 +1242,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
 
             <button
               onClick={() => { setSelectedSiteId(null); setActiveSubTab('whatsapp'); }}
-              className="py-3 px-2 bg-slate-900 hover:bg-slate-800 text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/30 flex flex-col items-center justify-center gap-1 transition-all"
+              className="py-3 px-1 bg-slate-900 hover:bg-slate-800 text-emerald-300 font-bold text-[11px] rounded-xl border border-emerald-500/30 flex flex-col items-center justify-center gap-1 transition-all"
             >
               <MessageSquare className="w-4 h-4 text-emerald-400" />
               <span>WhatsApp</span>
@@ -1725,6 +1931,20 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
               setActiveSubTab('ai');
             }}
           />
+        </div>
+      )}
+
+      {/* Sub-Tab 11: Daily Network Availability Command Center */}
+      {activeSubTab === 'daily_avail' && (
+        <div className="space-y-4">
+          <DailyAvailabilityCenter currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
+        </div>
+      )}
+
+      {/* Sub-Tab 12: Hourly Availability Command Center */}
+      {activeSubTab === 'hourly_avail' && (
+        <div className="space-y-4">
+          <HourlyAvailabilityCenter currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
         </div>
       )}
 

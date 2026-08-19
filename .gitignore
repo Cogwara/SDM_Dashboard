@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+backend/sdm_env/
+
+# Django
+*.log
+db.sqlite3
+media/
+backend/media/
+staticfiles/
+
+# Node
+node_modules/
+frontend/node_modules/
+desktop/node_modules/
+
+# Build output
+dist/
+frontend/dist/
+dist_desktop/
+
+# Environment variables
+.env
+.env.*
+
+# APK/build files
+*.apk
+
+# Local SQLite databases
+*.sqlite3
+*.sqlite3-journal
+
+# Android APK builds & binaries
+*.apk
+*.deb
+cloudflared.deb
+
+# Django uploaded media
+backend/media/
+media/
