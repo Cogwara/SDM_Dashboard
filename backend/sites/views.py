@@ -1445,14 +1445,17 @@ class DailyAvailabilityUploadView(APIView):
 
 class DailyAvailabilityArchivesView(APIView):
     def get(self, request):
-        logs = DailyAvailabilityUploadLog.objects.all().order_by('-uploaded_at')
+        logs = DailyAvailabilityUploadLog.objects.filter(records__isnull=False).distinct().order_by('-uploaded_at')
         archive_list = []
         for log in logs:
+            actual_count = log.records.count()
+            if actual_count == 0:
+                continue
             archive_list.append({
                 'id': log.id,
                 'filename': log.filename,
                 'uploaded_by': log.uploaded_by or 'System Administrator',
-                'records_count': log.records_count,
+                'records_count': actual_count,
                 'uploaded_at': log.uploaded_at.isoformat(),
                 'date_range': log.date_range or 'N/A',
                 'month_str': log.month_str or (log.date_range or f"Log #{log.id}"),
@@ -1468,15 +1471,23 @@ class DailyAvailabilityArchivesView(APIView):
 
         return Response({
             'active_month': active_month,
+            'active_filename': active_log.filename if active_log else None,
+            'active_archive_id': active_log.id if active_log else None,
             'archives': archive_list
         }, status=status.HTTP_200_OK)
 
 
 class DailyAvailabilityStatsView(APIView):
     def get(self, request):
-        active_log = DailyAvailabilityUploadLog.objects.filter(is_active=True).first()
-        if not active_log:
-            active_log = DailyAvailabilityUploadLog.objects.order_by('-uploaded_at').first()
+        upload_log_id = request.query_params.get('upload_log_id', None)
+        selected_log = None
+        if upload_log_id and upload_log_id not in ['All', 'active', '']:
+            try:
+                selected_log = DailyAvailabilityUploadLog.objects.filter(id=int(upload_log_id)).first()
+            except (ValueError, TypeError):
+                pass
+        if not selected_log:
+            selected_log = DailyAvailabilityUploadLog.objects.filter(is_active=True).first() or DailyAvailabilityUploadLog.objects.order_by('-uploaded_at').first()
 
         qs, is_superuser, (target_dates, date_label) = get_availability_queryset(request)
 
@@ -1498,8 +1509,8 @@ class DailyAvailabilityStatsView(APIView):
             available_fses = sorted(list(set([f.strip() for f in Site.objects.filter(state__in=unique_states).values_list('smc_fse_name', flat=True) if f and f.strip()])))
 
         sample_rec = None
-        if active_log:
-            sample_rec = DailyAvailabilityRecord.objects.filter(upload_log=active_log).exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
+        if selected_log:
+            sample_rec = DailyAvailabilityRecord.objects.filter(upload_log=selected_log).exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
         if not sample_rec:
             sample_rec = DailyAvailabilityRecord.objects.exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
         all_detected_dates = sorted(list(sample_rec.daily_scores.keys())) if (sample_rec and sample_rec.daily_scores) else []
@@ -1507,9 +1518,13 @@ class DailyAvailabilityStatsView(APIView):
         total_elements = qs.count()
         if total_elements == 0:
             return Response({
-                'active_filename': active_log.filename if active_log else '2026-08-18.xlsb',
-                'uploaded_by': active_log.uploaded_by if active_log else 'System Base Seeder',
-                'uploaded_at': active_log.uploaded_at.isoformat() if active_log else None,
+                'active_filename': selected_log.filename if selected_log else '2026-08-19.xlsb',
+                'uploaded_by': selected_log.uploaded_by if selected_log else 'System Base Seeder',
+                'uploaded_at': selected_log.uploaded_at.isoformat() if selected_log else None,
+                'archive_id': selected_log.id if selected_log else None,
+                'archive_filename': selected_log.filename if selected_log else None,
+                'archive_date_range': selected_log.date_range if selected_log else None,
+                'is_historical_archive': bool(selected_log and not selected_log.is_active),
                 'date_range': date_label,
                 'all_detected_dates': all_detected_dates,
                 'is_superuser': is_superuser,
@@ -1651,9 +1666,13 @@ class DailyAvailabilityStatsView(APIView):
             })
 
         return Response({
-            'active_filename': active_log.filename if active_log else '2026-08-18.xlsb',
-            'uploaded_by': active_log.uploaded_by if active_log else 'System Base Seeder',
-            'uploaded_at': active_log.uploaded_at.isoformat() if active_log else None,
+            'active_filename': selected_log.filename if selected_log else '2026-08-19.xlsb',
+            'uploaded_by': selected_log.uploaded_by if selected_log else 'System Base Seeder',
+            'uploaded_at': selected_log.uploaded_at.isoformat() if selected_log else None,
+            'archive_id': selected_log.id if selected_log else None,
+            'archive_filename': selected_log.filename if selected_log else None,
+            'archive_date_range': selected_log.date_range if selected_log else None,
+            'is_historical_archive': bool(selected_log and not selected_log.is_active),
             'date_range': date_label,
             'all_detected_dates': all_detected_dates,
             'is_superuser': is_superuser,

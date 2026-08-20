@@ -832,46 +832,59 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
             <Archive className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center space-x-2">
-              <h3 className="text-base font-black text-white">Daily Availability Monthly Archive Center</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-black text-white">Daily Availability Dataset & Archive Center</h3>
+              {stats?.active_filename && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/40 flex items-center space-x-1">
+                  <FileSpreadsheet className="w-3 h-3 text-cyan-400" />
+                  <span>File: {stats.active_filename}</span>
+                </span>
+              )}
               {selectedArchiveLogId !== 'active' ? (
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-500/40 flex items-center space-x-1 animate-pulse">
                   <Archive className="w-3 h-3" />
-                  <span>Viewing Historical Archive</span>
+                  <span>Viewing Archive File Data</span>
                 </span>
               ) : (
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40 flex items-center space-x-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  <span>Current Active Month</span>
+                  <span>Latest Active Upload</span>
                 </span>
               )}
             </div>
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Every uploaded daily Excel dataset is stored and organized by month boundaries. Select any historical month below to view past SLA scores and element records.
+              Every uploaded Excel dataset is preserved with its original file name and date range. Select any file from the dropdown to load and analyze its data.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-3 w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
           <select
             value={selectedArchiveLogId}
-            onChange={(e) => setSelectedArchiveLogId(e.target.value)}
-            className="bg-slate-950 border border-cyan-500/50 rounded-2xl px-4 py-2.5 text-xs font-bold text-cyan-300 focus:outline-none focus:border-cyan-400 shadow-inner w-full md:w-72 cursor-pointer"
+            onChange={(e) => {
+              setSelectedArchiveLogId(e.target.value);
+              setPage(1);
+            }}
+            className="bg-slate-950 border border-cyan-500/50 rounded-2xl px-4 py-2.5 text-xs font-bold text-cyan-300 focus:outline-none focus:border-cyan-400 shadow-inner w-full md:w-80 cursor-pointer font-mono"
           >
-            <option value="active">🗓️ Active Month (Current Dataset)</option>
+            <option value="active">🟢 Active Upload: {archives.find(a => a.is_active)?.filename || stats?.active_filename || 'Latest File'}</option>
             {archives.map(arch => (
               <option key={arch.id} value={arch.id}>
-                {arch.is_active ? '🟢 Current: ' : '📁 Archive: '} {arch.month_str || arch.filename} ({arch.records_count?.toLocaleString()} elements)
+                {arch.is_active ? '🟢 [Active] ' : '📁 [Archive] '} {arch.filename} ({arch.records_count?.toLocaleString()} elements — {arch.date_range})
               </option>
             ))}
           </select>
 
           {selectedArchiveLogId !== 'active' && (
             <button
-              onClick={() => setSelectedArchiveLogId('active')}
-              className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-2xl border border-slate-700 whitespace-nowrap transition-all"
+              onClick={() => {
+                setSelectedArchiveLogId('active');
+                setPage(1);
+              }}
+              className="px-3.5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 text-xs font-extrabold rounded-2xl border border-cyan-400 whitespace-nowrap transition-all shadow-md flex items-center justify-center gap-1.5"
             >
-              Reset to Current Month
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Back to Active File</span>
             </button>
           )}
         </div>

@@ -99,10 +99,7 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                     cursor.execute("PRAGMA journal_mode = DELETE;")
 
             with transaction.atomic():
-                existing_log = DailyAvailabilityUploadLog.objects.filter(
-                    Q(month_str=month_str) | Q(filename=clean_filename)
-                ).first()
-
+                existing_log = DailyAvailabilityUploadLog.objects.filter(filename=clean_filename).first()
                 DailyAvailabilityUploadLog.objects.all().update(is_active=False, is_archived=True)
 
                 if existing_log:
@@ -335,10 +332,7 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                     month_str = end_date[:7]
 
             with transaction.atomic():
-                existing_log = DailyAvailabilityUploadLog.objects.filter(
-                    Q(month_str=month_str) | Q(filename=clean_filename)
-                ).first()
-
+                existing_log = DailyAvailabilityUploadLog.objects.filter(filename=clean_filename).first()
                 DailyAvailabilityUploadLog.objects.all().update(is_active=False, is_archived=True)
 
                 if existing_log:
