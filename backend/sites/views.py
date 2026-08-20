@@ -1146,6 +1146,7 @@ from .hourly_availability_importer import process_hourly_availability_file, DEFA
 def resolve_target_dates(request):
     date_mode = request.query_params.get('date_mode', 'all')
     selected_date = request.query_params.get('selected_date', None)
+    selected_month = request.query_params.get('selected_month', None) or request.query_params.get('month', None)
     start_date = request.query_params.get('start_date', None)
     end_date = request.query_params.get('end_date', None)
     upload_log_id = request.query_params.get('upload_log_id', None)
@@ -1169,37 +1170,53 @@ def resolve_target_dates(request):
 
     all_dates = sorted(list(sample_rec.daily_scores.keys())) if (sample_rec and sample_rec.daily_scores) else []
 
-    if (date_mode in ['single_date', 'day']) and selected_date:
-        target_dates = [selected_date] if selected_date in all_dates else (all_dates[-1:] if all_dates else [])
-        date_label = f"Single Day ({selected_date})"
-    elif date_mode and (date_mode.startswith('week') or date_mode == 'week'):
-        if date_mode == 'week_1' and len(all_dates) >= 1:
-            target_dates = all_dates[:7]
-        elif date_mode == 'week_2' and len(all_dates) >= 8:
-            target_dates = all_dates[7:14]
-        elif date_mode == 'week_3' and len(all_dates) >= 15:
-            target_dates = all_dates[14:21]
-        elif date_mode == 'week_4' and len(all_dates) >= 22:
-            target_dates = all_dates[21:28]
-        elif date_mode == 'week_5' and len(all_dates) >= 29:
-            target_dates = all_dates[28:]
+    if date_mode in ['single_date', 'day']:
+        if selected_date and selected_date in all_dates:
+            target_dates = [selected_date]
+        elif selected_date and any(d == selected_date for d in all_dates):
+            target_dates = [selected_date]
+        elif all_dates:
+            target_dates = [all_dates[-1]]
+        else:
+            target_dates = []
+        date_label = f"Single Day ({target_dates[0]})" if target_dates else "Single Day"
+    elif date_mode and (date_mode.startswith('week') or date_mode == 'week' or date_mode == 'latest_week'):
+        import re
+        week_match = re.match(r'week_(\d+)', str(date_mode))
+        if week_match:
+            week_idx = int(week_match.group(1)) - 1
+            start_i = week_idx * 7
+            end_i = min(len(all_dates), start_i + 7)
+            if start_i < len(all_dates):
+                target_dates = all_dates[start_i:end_i]
+            else:
+                target_dates = all_dates[-7:] if len(all_dates) >= 7 else all_dates
+            date_label = f"Week {week_match.group(1)} ({target_dates[0]} to {target_dates[-1]})" if target_dates else f"Week {week_match.group(1)}"
         elif len(all_dates) >= 7:
             target_dates = all_dates[-7:]
+            date_label = f"Latest 7 Days ({target_dates[0]} to {target_dates[-1]})"
         else:
             target_dates = all_dates
-        date_label = f"Weekly 7 Days ({target_dates[0]} to {target_dates[-1]})" if target_dates else "Weekly (7 Days)"
-    elif date_mode == 'month':
-        if len(all_dates) >= 30:
-            target_dates = all_dates[-30:]
+            date_label = f"Weekly ({target_dates[0]} to {target_dates[-1]})" if target_dates else "Weekly (7 Days)"
+    elif date_mode in ['month', 'monthly']:
+        if selected_month and selected_month != 'All':
+            clean_m = selected_month.strip()
+            month_dates = [d for d in all_dates if d.startswith(clean_m)]
+            if month_dates:
+                target_dates = month_dates
+                date_label = f"Month {clean_m} ({target_dates[0]} to {target_dates[-1]})"
+            else:
+                target_dates = all_dates[-30:] if len(all_dates) >= 30 else all_dates
+                date_label = f"30 Days ({target_dates[0]} to {target_dates[-1]})" if target_dates else "Monthly (30 Days)"
         else:
-            target_dates = all_dates
-        date_label = f"30 Days ({target_dates[0]} to {target_dates[-1]})" if target_dates else "Monthly (30 Days)"
+            target_dates = all_dates[-30:] if len(all_dates) >= 30 else all_dates
+            date_label = f"30 Days ({target_dates[0]} to {target_dates[-1]})" if target_dates else "Monthly (30 Days)"
     elif date_mode == 'custom' and start_date and end_date:
         target_dates = [d for d in all_dates if start_date <= d <= end_date]
-        date_label = f"Custom Period ({start_date} to {end_date})"
+        date_label = f"Custom Period ({start_date} to {end_date})" if target_dates else f"Custom ({start_date} to {end_date})"
     else: # 'all' or default
         target_dates = all_dates
-        date_label = f"All {len(all_dates)} Days ({month_label})"
+        date_label = f"All {len(all_dates)} Days ({all_dates[0]} to {all_dates[-1]})" if all_dates else f"All Days ({month_label})"
 
     return target_dates, date_label
 
@@ -1480,13 +1497,17 @@ class DailyAvailabilityStatsView(APIView):
         else:
             available_fses = sorted(list(set([f.strip() for f in Site.objects.filter(state__in=unique_states).values_list('smc_fse_name', flat=True) if f and f.strip()])))
 
-        sample_rec = DailyAvailabilityRecord.objects.only('daily_scores').first()
+        sample_rec = None
+        if active_log:
+            sample_rec = DailyAvailabilityRecord.objects.filter(upload_log=active_log).exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
+        if not sample_rec:
+            sample_rec = DailyAvailabilityRecord.objects.exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
         all_detected_dates = sorted(list(sample_rec.daily_scores.keys())) if (sample_rec and sample_rec.daily_scores) else []
 
         total_elements = qs.count()
         if total_elements == 0:
             return Response({
-                'active_filename': active_log.filename if active_log else '2026-07-30.xlsb',
+                'active_filename': active_log.filename if active_log else '2026-08-18.xlsb',
                 'uploaded_by': active_log.uploaded_by if active_log else 'System Base Seeder',
                 'uploaded_at': active_log.uploaded_at.isoformat() if active_log else None,
                 'date_range': date_label,
@@ -1523,14 +1544,16 @@ class DailyAvailabilityStatsView(APIView):
             if target_dates and isinstance(scores_dict, dict):
                 scores = [float(scores_dict[d]) for d in target_dates if d in scores_dict and scores_dict[d] is not None]
                 period_val = round(sum(scores) / len(scores), 2) if scores else round(r['avg_availability'] or 100.0, 2)
+                latest_val = round(float(scores_dict[target_dates[-1]]), 2) if (target_dates and target_dates[-1] in scores_dict and scores_dict[target_dates[-1]] is not None) else round(r['latest_availability'] or 100.0, 2)
                 filtered_scores = {d: scores_dict[d] for d in target_dates if d in scores_dict}
             else:
                 period_val = round(r['avg_availability'] or 100.0, 2)
+                latest_val = round(r['latest_availability'] or 100.0, 2)
                 filtered_scores = scores_dict
 
             r['period_availability'] = period_val
             r['avg_availability'] = round(r['avg_availability'] or 100.0, 2)
-            r['latest_availability'] = round(r['latest_availability'] or 100.0, 2)
+            r['latest_availability'] = latest_val
             r['daily_scores'] = filtered_scores
             processed.append(r)
             all_period_vals.append(period_val)
@@ -1591,19 +1614,19 @@ class DailyAvailabilityStatsView(APIView):
         eligible_worst.sort(key=lambda x: x['period_availability'])
         worst_sites = eligible_worst[:15]
 
-        # Daily timeline
+        # Daily timeline based on target_dates
+        timeline_dates = target_dates if target_dates else (all_detected_dates[-30:] if len(all_detected_dates) >= 30 else all_detected_dates)
+        daily_values = {d: [] for d in timeline_dates}
         sample_records = list(qs.values_list('daily_scores', flat=True)[:1000])
-        daily_values = {}
         for scores in sample_records:
             if isinstance(scores, dict):
-                for d_str, v in scores.items():
-                    if target_dates and d_str not in target_dates:
-                        continue
+                for d_str in timeline_dates:
+                    v = scores.get(d_str)
                     if v is not None:
-                        val = float(v)
-                        if d_str not in daily_values:
-                            daily_values[d_str] = []
-                        daily_values[d_str].append(val)
+                        try:
+                            daily_values[d_str].append(float(v))
+                        except (ValueError, TypeError):
+                            pass
 
         timeline = []
         for d_str in sorted(daily_values.keys()):
@@ -1628,7 +1651,7 @@ class DailyAvailabilityStatsView(APIView):
             })
 
         return Response({
-            'active_filename': active_log.filename if active_log else '2026-07-30.xlsb',
+            'active_filename': active_log.filename if active_log else '2026-08-18.xlsb',
             'uploaded_by': active_log.uploaded_by if active_log else 'System Base Seeder',
             'uploaded_at': active_log.uploaded_at.isoformat() if active_log else None,
             'date_range': date_label,
@@ -1662,22 +1685,56 @@ class DailyAvailabilityListView(APIView):
             'tower_co', 'vendor', 'status', 'avg_availability', 'latest_availability', 'daily_scores'
         ))
 
+        sla_filter = request.query_params.get('sla_filter', None)
+        min_avail = request.query_params.get('min_avail', None)
+        max_avail = request.query_params.get('max_avail', None)
+
         processed = []
         for r in records:
             scores_dict = r.get('daily_scores') or {}
             if target_dates and isinstance(scores_dict, dict):
                 scores = [float(scores_dict[d]) for d in target_dates if d in scores_dict and scores_dict[d] is not None]
                 period_val = round(sum(scores) / len(scores), 2) if scores else round(r['avg_availability'] or 100.0, 2)
+                latest_val = round(float(scores_dict[target_dates[-1]]), 2) if (target_dates and target_dates[-1] in scores_dict and scores_dict[target_dates[-1]] is not None) else round(r['latest_availability'] or 100.0, 2)
                 filtered_scores = {d: scores_dict[d] for d in target_dates if d in scores_dict}
             else:
                 period_val = round(r['avg_availability'] or 100.0, 2)
+                latest_val = round(r['latest_availability'] or 100.0, 2)
                 filtered_scores = scores_dict
 
             r['period_availability'] = period_val
             r['period_label'] = date_label
             r['avg_availability'] = round(r['avg_availability'] or 100.0, 2)
-            r['latest_availability'] = round(r['latest_availability'] or 100.0, 2)
+            r['latest_availability'] = latest_val
             r['daily_scores'] = filtered_scores
+
+            # Filter by SLA
+            if sla_filter == 'critical_under_95' and period_val >= 95.0:
+                continue
+            elif sla_filter in ['degraded_under_98', 'degraded_under_98_5'] and period_val >= 98.5:
+                continue
+            elif sla_filter in ['warning_95_98', 'warning_95_98_5'] and not (95.0 <= period_val < 98.5):
+                continue
+            elif sla_filter in ['high_98_100', 'high_98_5_100'] and not (98.5 <= period_val < 100.0):
+                continue
+            elif sla_filter == 'perfect_100' and period_val < 100.0:
+                continue
+
+            # Filter by Min / Max
+            if min_avail not in [None, '']:
+                try:
+                    if period_val < float(min_avail):
+                        continue
+                except ValueError:
+                    pass
+
+            if max_avail not in [None, '']:
+                try:
+                    if period_val > float(max_avail):
+                        continue
+                except ValueError:
+                    pass
+
             processed.append(r)
 
         sort_by = request.query_params.get('sort_by', 'worst')

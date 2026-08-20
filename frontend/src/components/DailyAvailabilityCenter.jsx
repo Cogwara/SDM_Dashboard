@@ -220,12 +220,12 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
   }, [initialSearch]);
   
   // Date & Period Filter States - Enhanced
-  const [dateMode, setDateMode] = useState('month'); // 'day', 'week', 'month', 'custom'
-  const [selectedDateInput, setSelectedDateInput] = useState('2026-07-30');
-  const [selectedWeek, setSelectedWeek] = useState('week_4'); // 'week_1', 'week_2', 'week_3', 'week_4'
-  const [selectedMonth, setSelectedMonth] = useState('2026-07'); // '2026-07'
-  const [startDateInput, setStartDateInput] = useState('2026-07-01');
-  const [endDateInput, setEndDateInput] = useState('2026-07-30');
+  const [dateMode, setDateMode] = useState('month'); // 'day', 'week', 'month', 'all', 'custom'
+  const [selectedDateInput, setSelectedDateInput] = useState('');
+  const [selectedWeek, setSelectedWeek] = useState('week'); // 'week' (latest 7 days) or 'week_1', 'week_2', ...
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [startDateInput, setStartDateInput] = useState('');
+  const [endDateInput, setEndDateInput] = useState('');
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -240,7 +240,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     const dates = stats?.all_detected_dates || [];
     if (dates.length === 0) {
       return [
-        { id: 'week', label: 'Latest 7 Days', dates: '7 Days' },
+        { id: 'week', label: '⚡ Latest 7 Days', dates: 'Recent 7 Days' },
         { id: 'week_1', label: 'Week 1', dates: 'Days 1-7' },
         { id: 'week_2', label: 'Week 2', dates: 'Days 8-14' },
         { id: 'week_3', label: 'Week 3', dates: 'Days 15-21' },
@@ -248,11 +248,12 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
       ];
     }
 
+    const latest7 = dates.slice(-7);
     const weekList = [
       {
         id: 'week',
-        label: 'Latest 7 Days',
-        dates: `${dates[Math.max(0, dates.length - 7)]} to ${dates[dates.length - 1]}`
+        label: '⚡ Latest 7 Days',
+        dates: `${latest7[0]} to ${latest7[latest7.length - 1]}`
       }
     ];
 
@@ -269,11 +270,32 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     return weekList;
   }, [stats?.all_detected_dates]);
 
-  const months = [
-    { id: '2026-07', label: 'July 2026' },
-    { id: '2026-06', label: 'June 2026' },
-    { id: '2026-08', label: 'August 2026' }
-  ];
+  // Dynamically compute months present in the uploaded database
+  const months = React.useMemo(() => {
+    const dates = stats?.all_detected_dates || [];
+    if (dates.length === 0) {
+      return [
+        { id: '2026-08', label: 'August 2026' },
+        { id: '2026-07', label: 'July 2026' },
+        { id: '2026-06', label: 'June 2026' }
+      ];
+    }
+    const uniqueMonths = Array.from(new Set(dates.map(d => d.slice(0, 7)))).sort().reverse();
+    const monthNames = {
+      '01': 'January', '02': 'February', '03': 'March', '04': 'April',
+      '05': 'May', '06': 'June', '07': 'July', '08': 'August',
+      '09': 'September', '10': 'October', '11': 'November', '12': 'December'
+    };
+    return uniqueMonths.map(m => {
+      const [year, monthNum] = m.split('-');
+      const name = monthNames[monthNum] || monthNum;
+      const count = dates.filter(d => d.startsWith(m)).length;
+      return {
+        id: m,
+        label: `${name} ${year} (${count} Days)`
+      };
+    });
+  }, [stats?.all_detected_dates]);
 
   // Multi-Site Bulk List Search States
   const [isMultiSiteModalOpen, setIsMultiSiteModalOpen] = useState(false);
@@ -390,11 +412,13 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
       if (dateMode === 'week') {
         backendDateMode = selectedWeek || 'week';
       } else if (dateMode === 'day') {
-        backendDateMode = 'single_date';
+        backendDateMode = 'day';
       } else if (dateMode === 'month') {
         backendDateMode = 'month';
       } else if (dateMode === 'all') {
         backendDateMode = 'all';
+      } else if (dateMode === 'custom') {
+        backendDateMode = 'custom';
       }
       
       const data = await fetchAvailabilityStats({
@@ -417,6 +441,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         max_avail: maxAvailInput,
         date_mode: backendDateMode,
         selected_date: backendSelectedDate,
+        selected_month: selectedMonth,
         start_date: backendStartDate,
         end_date: backendEndDate,
         upload_log_id: selectedArchiveLogId !== 'active' ? selectedArchiveLogId : undefined
@@ -426,7 +451,9 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         const dates = data.all_detected_dates;
         const latest = dates[dates.length - 1];
         const earliest = dates[0];
+        const latestMonth = latest.slice(0, 7);
         setSelectedDateInput(prev => (!prev || !dates.includes(prev) ? latest : prev));
+        setSelectedMonth(prev => (!prev ? latestMonth : prev));
         setStartDateInput(prev => (!prev ? earliest : prev));
         setEndDateInput(prev => (!prev ? latest : prev));
       }
@@ -452,11 +479,13 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
       if (dateMode === 'week') {
         backendDateMode = selectedWeek || 'week';
       } else if (dateMode === 'day') {
-        backendDateMode = 'single_date';
+        backendDateMode = 'day';
       } else if (dateMode === 'month') {
         backendDateMode = 'month';
       } else if (dateMode === 'all') {
         backendDateMode = 'all';
+      } else if (dateMode === 'custom') {
+        backendDateMode = 'custom';
       }
       
       const res = await fetchAvailabilityRecords({
@@ -479,6 +508,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         max_avail: maxAvailInput,
         date_mode: backendDateMode,
         selected_date: backendSelectedDate,
+        selected_month: selectedMonth,
         start_date: backendStartDate,
         end_date: backendEndDate,
         page: page,
@@ -578,6 +608,13 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     setIsExporting(true);
     try {
       const sdmParam = currentUser && !currentUser.is_superuser ? (currentUser.full_name || currentUser.username) : undefined;
+      let backendDateMode = dateMode;
+      if (dateMode === 'week') backendDateMode = selectedWeek || 'week';
+      else if (dateMode === 'day') backendDateMode = 'day';
+      else if (dateMode === 'month') backendDateMode = 'month';
+      else if (dateMode === 'all') backendDateMode = 'all';
+      else if (dateMode === 'custom') backendDateMode = 'custom';
+
       const blob = await exportAvailabilityExcel({
         sdm: sdmParam,
         is_superuser: currentUser?.is_superuser ? 'true' : 'false',
@@ -594,8 +631,9 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         sla_filter: slaFilter,
         min_avail: minAvailInput,
         max_avail: maxAvailInput,
-        date_mode: dateMode,
+        date_mode: backendDateMode,
         selected_date: selectedDateInput,
+        selected_month: selectedMonth,
         start_date: startDateInput,
         end_date: endDateInput
       });
@@ -1321,49 +1359,58 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
 
           {/* Day Selector */}
           {dateMode === 'day' && (
-            <select
-              value={selectedDateInput}
-              onChange={(e) => { setSelectedDateInput(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-cyan-300 p-2 rounded-xl border border-cyan-500/40 focus:outline-none focus:border-cyan-400 font-mono"
-            >
-              {stats?.all_detected_dates && stats.all_detected_dates.length > 0 ? (
-                stats.all_detected_dates.map(d => (
-                  <option key={d} value={d}>{d}</option>
-                ))
-              ) : (
-                <option value="2026-07-30">2026-07-30</option>
-              )}
-            </select>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold text-cyan-400 font-mono tracking-wider">DAY:</span>
+              <select
+                value={selectedDateInput}
+                onChange={(e) => { setSelectedDateInput(e.target.value); setPage(1); }}
+                className="bg-slate-950 text-xs text-cyan-300 px-3 py-1.5 rounded-xl border border-cyan-500/40 focus:outline-none focus:border-cyan-400 font-mono font-bold shadow-inner"
+              >
+                {stats?.all_detected_dates && stats.all_detected_dates.length > 0 ? (
+                  [...stats.all_detected_dates].reverse().map(d => (
+                    <option key={d} value={d}>📅 {d}</option>
+                  ))
+                ) : (
+                  <option value="2026-08-18">📅 2026-08-18</option>
+                )}
+              </select>
+            </div>
           )}
 
           {/* Week Selector */}
           {dateMode === 'week' && (
-            <select
-              value={selectedWeek}
-              onChange={(e) => { setSelectedWeek(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-cyan-300 p-2 rounded-xl border border-cyan-500/40 focus:outline-none focus:border-cyan-400 font-mono"
-            >
-              {weeks.map(week => (
-                <option key={week.id} value={week.id}>
-                  {week.label} ({week.dates})
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold text-cyan-400 font-mono tracking-wider">WEEK:</span>
+              <select
+                value={selectedWeek}
+                onChange={(e) => { setSelectedWeek(e.target.value); setPage(1); }}
+                className="bg-slate-950 text-xs text-cyan-300 px-3 py-1.5 rounded-xl border border-cyan-500/40 focus:outline-none focus:border-cyan-400 font-mono font-bold shadow-inner"
+              >
+                {weeks.map(week => (
+                  <option key={week.id} value={week.id}>
+                    {week.label} ({week.dates})
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
           {/* Month Selector */}
           {dateMode === 'month' && (
-            <select
-              value={selectedMonth}
-              onChange={(e) => { setSelectedMonth(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-cyan-300 p-2 rounded-xl border border-cyan-500/40 focus:outline-none focus:border-cyan-400 font-mono"
-            >
-              {months.map(month => (
-                <option key={month.id} value={month.id}>
-                  {month.label}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold text-cyan-400 font-mono tracking-wider">MONTH:</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => { setSelectedMonth(e.target.value); setPage(1); }}
+                className="bg-slate-950 text-xs text-cyan-300 px-3 py-1.5 rounded-xl border border-cyan-500/40 focus:outline-none focus:border-cyan-400 font-mono font-bold shadow-inner"
+              >
+                {months.map(month => (
+                  <option key={month.id} value={month.id}>
+                    📅 {month.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
           {/* Custom Date Range Selector */}
