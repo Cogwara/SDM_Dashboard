@@ -5,7 +5,7 @@ import {
   ChevronRight, Radio, Layers, Server, Download, Sparkles, TrendingUp, Archive,
   Clock, CalendarDays, CalendarRange, Sliders, LayoutGrid, List, Eye, TrendingDown, Info, X,
   FileText, Printer, Copy, MapPin, Check, Share2, Wrench, Map,
-  ClipboardList, CheckCheck, ArrowUpDown, MessageSquare, Plus, ExternalLink
+  ClipboardList, CheckCheck, ArrowUpDown, MessageSquare, Plus, ExternalLink, RotateCcw
 } from 'lucide-react';
 import { 
   fetchAvailabilityStats, fetchAvailabilityRecords, fetchAvailabilityArchives, uploadAvailabilityFile, resetBaseAvailability, exportAvailabilityExcel, fetchNotes, exportNotesExcel 
