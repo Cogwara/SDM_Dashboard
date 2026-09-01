@@ -198,6 +198,13 @@ class DailyAvailabilityRecord(models.Model):
     avg_availability = models.FloatField(default=100.0, db_index=True)
     latest_availability = models.FloatField(default=100.0, db_index=True)
     
+    # PI (Performance Index) Weightage fields for weighted availability calculation
+    pi_national = models.FloatField(default=0.0, db_index=True)
+    pi_state = models.FloatField(default=0.0)
+    pi_region = models.FloatField(default=0.0)
+    pi_territory = models.FloatField(default=0.0)
+    configured_capacity = models.FloatField(default=0.0)
+    
     upload_log = models.ForeignKey(DailyAvailabilityUploadLog, on_delete=models.SET_NULL, null=True, blank=True, related_name='records')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -207,7 +214,34 @@ class DailyAvailabilityRecord(models.Model):
         ordering = ['site_id', 'tech']
 
     def __str__(self):
-        return f"{self.site_id} [{self.tech}] - Avg: {self.avg_availability:.2f}%"
+        return f"{self.site_id} [{self.tech}] - Avg: {self.avg_availability:.2f}% (PI: {self.pi_national:.6f})"
+
+
+class PIWeightageRecord(models.Model):
+    tech = models.CharField(max_length=10, db_index=True)  # 2G, 3G, 4G, 5G
+    element_id = models.CharField(max_length=100, db_index=True)
+    site_id = models.CharField(max_length=100, db_index=True)
+    status = models.CharField(max_length=50, blank=True, default='')
+    region = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    state = models.CharField(max_length=50, db_index=True, blank=True, default='')
+    territory = models.CharField(max_length=100, db_index=True, blank=True, default='')
+    tower_co = models.CharField(max_length=100, blank=True, default='')
+    configured_capacity = models.FloatField(default=0.0)  # TCH / ROP duration / Measurement seconds
+    pi_national = models.FloatField(default=0.0, db_index=True)
+    pi_region = models.FloatField(default=0.0)
+    pi_state = models.FloatField(default=0.0)
+    pi_territory = models.FloatField(default=0.0)
+    bsc_rnc = models.CharField(max_length=100, blank=True, default='')
+    zone = models.CharField(max_length=50, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('tech', 'element_id')
+        ordering = ['tech', 'site_id']
+
+    def __str__(self):
+        return f"{self.tech} {self.element_id} (PI: {self.pi_national:.6f})"
 
 
 class HourlyAvailabilityUploadLog(models.Model):

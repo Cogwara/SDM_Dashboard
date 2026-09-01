@@ -934,13 +934,20 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         <div className="glass-panel p-5 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-1">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Overall Availability</span>
-            <Activity className="w-4 h-4 text-cyan-400" />
+            <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
+              🟡 PI WEIGHTED
+            </span>
           </div>
-          <div className="text-2xl font-black text-white font-mono">
-            {stats?.overall_avg !== undefined ? `${stats.overall_avg}%` : '---'}
+          <div className="text-2xl font-black text-white font-mono flex items-baseline gap-2">
+            <span>{stats?.overall_avg !== undefined ? `${stats.overall_avg}%` : '---'}</span>
+            {stats?.unweighted_overall_avg !== undefined && stats.unweighted_overall_avg !== stats.overall_avg && (
+              <span className="text-xs font-normal text-slate-400 font-sans">
+                (Raw: {stats.unweighted_overall_avg}%)
+              </span>
+            )}
           </div>
           <span className="text-[10px] text-emerald-400 font-semibold block">
-            National Network Average ({stats?.total_elements ? stats.total_elements.toLocaleString() : 0} Elements)
+            MTN PI Weighted Average ({stats?.total_elements ? stats.total_elements.toLocaleString() : 0} Elements)
           </span>
         </div>
 
@@ -1391,8 +1398,10 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
               onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
               className="w-full bg-slate-950 text-xs text-amber-400 p-2 rounded-xl border border-amber-500/40 focus:outline-none focus:border-amber-400 font-extrabold"
             >
-              <option value="worst">🔽 Worst First</option>
-              <option value="best">🔼 Best First</option>
+              <option value="worst">🔽 Worst Availability First</option>
+              <option value="pi_worst">⚠️ Worst by PI Outage Impact</option>
+              <option value="pi_weight">🎯 Highest PI Weight (Capacity)</option>
+              <option value="best">🔼 Best Availability First</option>
               <option value="site_id">🔤 Site ID</option>
               <option value="state">🏛️ State</option>
               <option value="territory">📍 Territory</option>
@@ -2543,6 +2552,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   <th className="py-3 px-3">Territory</th>
                   <th className="py-3 px-3">LGA</th>
                   <th className="py-3 px-3">Tower Co</th>
+                  <th className="py-3 px-3 text-center text-amber-400">PI Weight</th>
                   <th className="py-3 px-3 text-center text-cyan-300">
                     {dateMode === 'day' ? `📆 ${selectedDateInput} Availability %` :
                      dateMode === 'week' ? `📊 Week Avg %` :
@@ -2559,6 +2569,10 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   const val = r.period_availability !== undefined ? r.period_availability : r.avg_availability;
                   const isGood = val >= 98.0;
                   const isWarning = val >= 95.0 && val < 98.0;
+                  const piWeightDisplay = r.pi_national > 0
+                    ? `${(r.pi_national * 100).toFixed(4)}%`
+                    : (r.pi_state > 0 ? `${(r.pi_state * 100).toFixed(3)}%` : '---');
+
                   return (
                     <tr key={`${r.site_id}_${r.tech}`} className="hover:bg-slate-800/40">
                       <td className="py-3 px-3 font-mono font-bold text-white">{r.site_id}</td>
@@ -2569,6 +2583,9 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                       <td className="py-3 px-3 text-cyan-300 font-medium">{r.territory || 'N/A'}</td>
                       <td className="py-3 px-3 text-slate-400">{r.lga || 'N/A'}</td>
                       <td className="py-3 px-3 text-slate-400">{r.tower_co || 'N/A'}</td>
+                      <td className="py-3 px-3 text-center font-mono text-[11px] font-bold text-amber-300">
+                        {piWeightDisplay}
+                      </td>
                       <td className="py-3 px-3 text-center">
                         <span className={`px-2.5 py-1 rounded-lg font-mono font-extrabold text-xs ${
                           isGood 

@@ -1647,7 +1647,7 @@ from django.http import HttpResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from .models import DailyAvailabilityRecord, DailyAvailabilityUploadLog, HourlyAvailabilityRecord, HourlyAvailabilityUploadLog
+from .models import DailyAvailabilityRecord, DailyAvailabilityUploadLog, HourlyAvailabilityRecord, HourlyAvailabilityUploadLog, PIWeightageRecord
 from .daily_availability_importer import process_daily_availability_file, DEFAULT_BASE_AVAILABILITY_PATH
 from .hourly_availability_importer import process_hourly_availability_file, DEFAULT_HOURLY_BASE_PATH
 
@@ -2092,13 +2092,22 @@ class DailyAvailabilityStatsView(APIView):
 
         all_records = list(qs.values(
             'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory', 'tower_co', 'vendor', 'status',
-            'avg_availability', 'latest_availability', 'daily_scores'
+            'avg_availability', 'latest_availability', 'daily_scores',
+            'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'
         ))
 
-        all_period_vals = []
-        tech_scores = {}
-        tech_counts = {}
+        # Build in-memory PI weight lookup map from PIWeightageRecord
+        pi_cache = {}
+        for p in PIWeightageRecord.objects.values('tech', 'element_id', 'site_id', 'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'):
+            pi_cache[(p['tech'], p['element_id'])] = p
+            if (p['tech'], p['site_id']) not in pi_cache:
+                pi_cache[(p['tech'], p['site_id'])] = p
 
+        all_period_vals = []
+        weighted_sum = 0.0
+        total_pi_weight = 0.0
+
+        tech_data = {}
         processed = []
         for r in all_records:
             scores_dict = r.get('daily_scores') or {}
@@ -2112,41 +2121,72 @@ class DailyAvailabilityStatsView(APIView):
                 latest_val = round(r['latest_availability'] or 100.0, 2)
                 filtered_scores = scores_dict
 
+            t = r.get('tech') or '2G'
+            elem = (r.get('element_name') or '').strip().upper()
+            sid = (r.get('site_id') or '').strip().upper()
+            pi_rec = pi_cache.get((t, elem)) or pi_cache.get((t, sid)) or {}
+
+            # Determine appropriate PI weight for this element based on scope
+            pi_w = float(r.get('pi_national') or pi_rec.get('pi_national') or 0.0)
+            if pi_w <= 0.0:
+                pi_w = float(r.get('pi_state') or pi_rec.get('pi_state') or 0.0) or float(r.get('pi_territory') or pi_rec.get('pi_territory') or 0.0) or 0.00005
+
+            r['pi_national'] = float(r.get('pi_national') or pi_rec.get('pi_national') or 0.0)
+            r['pi_state'] = float(r.get('pi_state') or pi_rec.get('pi_state') or 0.0)
+            r['pi_territory'] = float(r.get('pi_territory') or pi_rec.get('pi_territory') or 0.0)
+            r['configured_capacity'] = float(r.get('configured_capacity') or pi_rec.get('configured_capacity') or 0.0)
+
             r['period_availability'] = period_val
             r['avg_availability'] = round(r['avg_availability'] or 100.0, 2)
             r['latest_availability'] = latest_val
             r['daily_scores'] = filtered_scores
+            r['pi_weight'] = pi_w
             processed.append(r)
             all_period_vals.append(period_val)
 
-            t = r.get('tech') or 'UNKNOWN'
-            tech_scores.setdefault(t, []).append(period_val)
-            tech_counts[t] = tech_counts.get(t, 0) + 1
+            weighted_sum += period_val * pi_w
+            total_pi_weight += pi_w
 
-        overall_avg = round(sum(all_period_vals) / len(all_period_vals), 2) if all_period_vals else 100.0
+            t = r.get('tech') or 'UNKNOWN'
+            if t not in tech_data:
+                tech_data[t] = {'scores': [], 'weights': [], 'count': 0}
+            tech_data[t]['scores'].append(period_val)
+            tech_data[t]['weights'].append(pi_w)
+            tech_data[t]['count'] += 1
+
+        unweighted_overall_avg = round(sum(all_period_vals) / len(all_period_vals), 2) if all_period_vals else 100.0
+        weighted_overall_avg = round(weighted_sum / total_pi_weight, 2) if total_pi_weight > 0 else unweighted_overall_avg
+        overall_avg = weighted_overall_avg
+
         sla_target = 98.5
         sla_compliant_cnt = len([v for v in all_period_vals if v >= sla_target])
         sla_breached_cnt = len([v for v in all_period_vals if v < sla_target])
         critical_breach_cnt = len([v for v in all_period_vals if v < 95.0])
 
-        tech_breakdown = {
-            t: {
-                'avg': round(sum(tech_scores[t]) / len(tech_scores[t]), 2),
-                'count': tech_counts[t]
+        tech_breakdown = {}
+        for t, td in tech_data.items():
+            t_w_sum = sum(s * w for s, w in zip(td['scores'], td['weights']))
+            t_tot_w = sum(td['weights'])
+            t_w_avg = round(t_w_sum / t_tot_w, 2) if t_tot_w > 0 else round(sum(td['scores'])/len(td['scores']), 2)
+            tech_breakdown[t] = {
+                'avg': t_w_avg,
+                'unweighted_avg': round(sum(td['scores']) / len(td['scores']), 2),
+                'count': td['count'],
+                'total_pi_weight': round(t_tot_w, 6)
             }
-            for t in tech_scores
-        }
 
-        # LGA Breakdown
+        # LGA Breakdown with PI weighting
         lga_dict = {}
         for r in processed:
             lg_name = (r.get('lga') or '').strip().upper()
             if not lg_name:
                 continue
             if lg_name not in lga_dict:
-                lga_dict[lg_name] = {'scores': [], 'count': 0, 'min_avail': 100.0}
+                lga_dict[lg_name] = {'scores': [], 'weights': [], 'count': 0, 'min_avail': 100.0}
             pv = r['period_availability']
+            pw = r['pi_weight']
             lga_dict[lg_name]['scores'].append(pv)
+            lga_dict[lg_name]['weights'].append(pw)
             lga_dict[lg_name]['count'] += 1
             if pv < lga_dict[lg_name]['min_avail']:
                 lga_dict[lg_name]['min_avail'] = pv
@@ -2154,10 +2194,14 @@ class DailyAvailabilityStatsView(APIView):
         lga_breakdown = []
         for l_name, l_data in lga_dict.items():
             scs = l_data['scores']
-            avg_lga = round(sum(scs) / len(scs), 2) if scs else 100.0
+            wts = l_data['weights']
+            l_w_sum = sum(s * w for s, w in zip(scs, wts))
+            l_tot_w = sum(wts)
+            avg_lga = round(l_w_sum / l_tot_w, 2) if l_tot_w > 0 else (round(sum(scs) / len(scs), 2) if scs else 100.0)
             lga_breakdown.append({
                 'lga': l_name,
                 'avg': avg_lga,
+                'unweighted_avg': round(sum(scs) / len(scs), 2) if scs else 100.0,
                 'count': l_data['count'],
                 'sla_compliant_count': len([v for v in scs if v >= sla_target]),
                 'sla_breached_count': len([v for v in scs if v < sla_target]),
@@ -2175,26 +2219,34 @@ class DailyAvailabilityStatsView(APIView):
         eligible_worst.sort(key=lambda x: x['period_availability'])
         worst_sites = eligible_worst[:15]
 
-        # Daily timeline based on target_dates
+        # Daily timeline based on target_dates with PI weighted daily curve
         timeline_dates = target_dates if target_dates else (all_detected_dates[-30:] if len(all_detected_dates) >= 30 else all_detected_dates)
         daily_values = {d: [] for d in timeline_dates}
-        sample_records = list(qs.values_list('daily_scores', flat=True)[:1000])
-        for scores in sample_records:
+        daily_weights = {d: [] for d in timeline_dates}
+
+        for r in processed[:2000]:
+            scores = r.get('daily_scores')
+            pw = r.get('pi_weight', 0.00005)
             if isinstance(scores, dict):
                 for d_str in timeline_dates:
                     v = scores.get(d_str)
                     if v is not None:
                         try:
-                            daily_values[d_str].append(float(v))
+                            fv = float(v)
+                            daily_values[d_str].append(fv)
+                            daily_weights[d_str].append(pw)
                         except (ValueError, TypeError):
                             pass
 
         timeline = []
         for d_str in sorted(daily_values.keys()):
             vals = daily_values[d_str]
+            wts = daily_weights[d_str]
             if vals:
                 vals_sorted = sorted(vals)
-                avg_d = round(sum(vals) / len(vals), 2)
+                w_sum = sum(v * w for v, w in zip(vals, wts))
+                t_w = sum(wts)
+                avg_d = round(w_sum / t_w, 2) if t_w > 0 else round(sum(vals) / len(vals), 2)
                 min_d = round(vals_sorted[0], 2)
                 max_d = round(vals_sorted[-1], 2)
                 open_d = round(vals_sorted[int(len(vals_sorted) * 0.25)], 2)
@@ -2222,6 +2274,10 @@ class DailyAvailabilityStatsView(APIView):
             'date_range': date_label,
             'all_detected_dates': all_detected_dates,
             'is_superuser': is_superuser,
+            'is_pi_weighted': True,
+            'pi_weightage_source': '31st of August..xlsb (MTN Official Weightage)',
+            'overall_avg': overall_avg,
+            'unweighted_overall_avg': unweighted_overall_avg,
             'available_states': unique_states,
             'available_territories': unique_territories,
             'available_lgas': unique_lgas,
@@ -2248,8 +2304,16 @@ class DailyAvailabilityListView(APIView):
 
         records = list(qs.values(
             'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory',
-            'tower_co', 'vendor', 'status', 'avg_availability', 'latest_availability', 'daily_scores'
+            'tower_co', 'vendor', 'status', 'avg_availability', 'latest_availability', 'daily_scores',
+            'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'
         ))
+
+        # Build in-memory PI weight lookup map from PIWeightageRecord
+        pi_cache = {}
+        for p in PIWeightageRecord.objects.values('tech', 'element_id', 'site_id', 'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'):
+            pi_cache[(p['tech'], p['element_id'])] = p
+            if (p['tech'], p['site_id']) not in pi_cache:
+                pi_cache[(p['tech'], p['site_id'])] = p
 
         sla_filter = request.query_params.get('sla_filter', None)
         min_avail = request.query_params.get('min_avail', None)
@@ -2267,6 +2331,16 @@ class DailyAvailabilityListView(APIView):
                 period_val = round(r['avg_availability'] or 100.0, 2)
                 latest_val = round(r['latest_availability'] or 100.0, 2)
                 filtered_scores = scores_dict
+
+            t = r.get('tech') or '2G'
+            elem = (r.get('element_name') or '').strip().upper()
+            sid = (r.get('site_id') or '').strip().upper()
+            pi_rec = pi_cache.get((t, elem)) or pi_cache.get((t, sid)) or {}
+
+            r['pi_national'] = float(r.get('pi_national') or pi_rec.get('pi_national') or 0.0)
+            r['pi_state'] = float(r.get('pi_state') or pi_rec.get('pi_state') or 0.0)
+            r['pi_territory'] = float(r.get('pi_territory') or pi_rec.get('pi_territory') or 0.0)
+            r['configured_capacity'] = float(r.get('configured_capacity') or pi_rec.get('configured_capacity') or 0.0)
 
             r['period_availability'] = period_val
             r['period_label'] = date_label
@@ -2306,6 +2380,11 @@ class DailyAvailabilityListView(APIView):
         sort_by = request.query_params.get('sort_by', 'worst')
         if sort_by == 'best':
             processed.sort(key=lambda x: x['period_availability'], reverse=True)
+        elif sort_by == 'pi_weight' or sort_by == 'weight':
+            processed.sort(key=lambda x: (float(x.get('pi_national') or 0.0), float(x.get('pi_state') or 0.0)), reverse=True)
+        elif sort_by == 'pi_worst':
+            # Impact rank = (100 - availability) * pi_weight
+            processed.sort(key=lambda x: (100.0 - x['period_availability']) * (float(x.get('pi_national') or 0.00001)), reverse=True)
         elif sort_by == 'site_id':
             processed.sort(key=lambda x: str(x['site_id']))
         elif sort_by == 'state':

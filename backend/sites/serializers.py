@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Site, Notification, TNLLink, IHSFiberLink, HuaweiFiberLink, CellSector
+from .models import Site, Notification, TNLLink, IHSFiberLink, HuaweiFiberLink, CellSector, DailyAvailabilityRecord, PIWeightageRecord
 from notes.models import SiteNote, SiteAttachment, SiteTimeline
 from whatsapp.models import WhatsAppMessage
 
@@ -120,4 +120,16 @@ class SiteDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Site
+        fields = '__all__'
+
+
+class PIWeightageRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PIWeightageRecord
+        fields = '__all__'
+
+
+class DailyAvailabilityRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DailyAvailabilityRecord
         fields = '__all__'

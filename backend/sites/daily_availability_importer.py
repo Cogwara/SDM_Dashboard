@@ -129,6 +129,14 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                         is_base=is_base
                     )
 
+            # Pre-load PI Weightage reference dictionary
+            try:
+                from .management.commands.load_pi_weights import load_pi_weights_from_file
+                pi_weights_dict = load_pi_weights_from_file()
+            except Exception as e:
+                print(f"[DailyAvailabilityImporter] Warning: Could not pre-load PI weights: {e}")
+                pi_weights_dict = {}
+
             total_created = 0
             seen_keys = set()
             tech_counts = {}
@@ -164,6 +172,7 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
 
                 sheet_created = 0
                 batch = []
+                sheet_tech = sheet_name.upper()
                 for r in rows_iter:
                     row_vals = [c.v for c in r]
                     if not row_vals or site_col_idx >= len(row_vals) or row_vals[site_col_idx] is None:
@@ -190,7 +199,7 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                         if re.match(r'^[A-Z]{2}\d{2,6}$', cand) or re.match(r'^T\d{2,6}$', cand):
                             s_id = cand
 
-                    rec_key = (s_id, sheet_name.upper())
+                    rec_key = (s_id, sheet_tech)
                     if rec_key in seen_keys:
                         continue
                     seen_keys.add(rec_key)
@@ -219,10 +228,13 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                     avg_val = round(sum(valid_vals) / len(valid_vals), 2) if valid_vals else 100.0
                     latest_val = daily_scores.get(all_sorted_dates[-1], avg_val) if all_sorted_dates else avg_val
 
+                    # Lookup PI weight for this element/site
+                    pi_info = pi_weights_dict.get((sheet_tech, elem_name)) or pi_weights_dict.get((sheet_tech, s_id)) or pi_weights_dict.get((sheet_tech, raw_s_id)) or {}
+
                     batch.append(DailyAvailabilityRecord(
                         upload_log=log,
                         site_id=s_id,
-                        tech=sheet_name.upper(),
+                        tech=sheet_tech,
                         element_name=elem_name,
                         state=state_val,
                         region=region_val,
@@ -234,7 +246,12 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                         vvip=vvip_val,
                         daily_scores=daily_scores,
                         avg_availability=avg_val,
-                        latest_availability=latest_val
+                        latest_availability=latest_val,
+                        pi_national=pi_info.get('pi_national', 0.0),
+                        pi_state=pi_info.get('pi_state', 0.0),
+                        pi_region=pi_info.get('pi_region', 0.0),
+                        pi_territory=pi_info.get('pi_territory', 0.0),
+                        configured_capacity=pi_info.get('configured_capacity', 0.0)
                     ))
 
                     if len(batch) >= 1500:
