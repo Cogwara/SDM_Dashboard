@@ -2,54 +2,45 @@ import React, { useState, useEffect } from 'react';
 import { 
   Radio, ShieldAlert, AlertTriangle, Zap, Wrench, Signal, BatteryCharging, 
   FileText, MessageSquare, Search, ArrowRight, Activity, TrendingUp, CheckCircle, Clock,
-  Network, Layers, ExternalLink, ChevronRight, Filter, MapPin, Cpu
+  Network, Layers, ExternalLink, ChevronRight, Filter, MapPin, Cpu, Calendar, CheckSquare, Sparkles, Smartphone,
+  Users, Phone, UserCheck, RefreshCw
 } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { getSDMStateInfo } from '../utils/userUtils';
-import { fetchIHSFiberLinks, fetchHuaweiFiberLinks } from '../api';
 
-export default function DashboardOverview({ stats, onSearchSite, onSelectSite, onNavigateToAvailability, recentNotes, recentWhatsApp, setActiveTab, onNavigateWithFilter, currentUser }) {
+export default function DashboardOverview({ 
+  stats, 
+  onSearchSite, 
+  onSelectSite, 
+  onNavigateToAvailability, 
+  recentNotes, 
+  recentWhatsApp, 
+  setActiveTab, 
+  onNavigateWithFilter, 
+  currentUser 
+}) {
   const [siteQuery, setSiteQuery] = useState('');
   const stateInfo = getSDMStateInfo(currentUser);
+  const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
+  const isRdm = currentUser?.role === 'MTN RDM' || currentUser?.role === 'Regional Delivery Manager';
 
-  // Fiber Homepage Widget State
-  const [fiberProvider, setFiberProvider] = useState('ihs'); // 'ihs' or 'huawei'
-  const [ihsLinks, setIhsLinks] = useState([]);
-  const [ihsLoading, setIhsLoading] = useState(false);
-  const [selectedCluster, setSelectedCluster] = useState('All');
-  const [selectedState, setSelectedState] = useState('All');
-  const [fiberSearch, setFiberSearch] = useState('');
-
-  const loadFiberData = async () => {
-    setIhsLoading(true);
-    try {
-      if (fiberProvider === 'ihs') {
-        const res = await fetchIHSFiberLinks({
-          page: 1,
-          page_size: 8,
-          cluster: selectedCluster !== 'All' ? selectedCluster : undefined,
-          search: fiberSearch.trim() || undefined
-        });
-        setIhsLinks(Array.isArray(res) ? res : res.results || []);
-      } else {
-        const res = await fetchHuaweiFiberLinks({
-          page: 1,
-          page_size: 8,
-          state: selectedState !== 'All' ? selectedState : undefined,
-          search: fiberSearch.trim() || undefined
-        });
-        setIhsLinks(Array.isArray(res) ? res : res.results || []);
-      }
-    } catch (err) {
-      console.error('Failed to load homepage Fiber links:', err);
-    } finally {
-      setIhsLoading(false);
-    }
-  };
+  const [supervisedSdms, setSupervisedSdms] = useState(currentUser?.sdms_under_rdm || []);
+  const [loadingSdms, setLoadingSdms] = useState(false);
 
   useEffect(() => {
-    loadFiberData();
-  }, [fiberProvider, selectedCluster, selectedState, fiberSearch]);
+    if (isRdm || currentUser?.is_superuser) {
+      setLoadingSdms(true);
+      const rdmQueryName = isRdm ? (currentUser.full_name || currentUser.username) : 'Onikola Lukman Adesina';
+      fetch(`/api/v1/rdm/sdms/?rdm=${encodeURIComponent(rdmQueryName)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.sdms && data.sdms.length > 0) {
+            setSupervisedSdms(data.sdms);
+          }
+        })
+        .catch(err => console.error('Failed to fetch supervised SDMs:', err))
+        .finally(() => setLoadingSdms(false));
+    }
+  }, [currentUser, isRdm]);
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -58,167 +49,82 @@ export default function DashboardOverview({ stats, onSearchSite, onSelectSite, o
     }
   };
 
-  const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
-
-  const cardsData = [
-    { 
-      title: isFse ? 'My Assigned Sites' : 'Total Sites', 
-      value: stats?.total_sites ?? (isFse ? (currentUser?.assigned_sites_count || 63) : (currentUser?.is_superuser ? 20174 : 1050)), 
-      icon: Radio, 
-      color: 'from-blue-500/20 to-cyan-500/20', 
-      textColor: 'text-cyan-400', 
-      border: 'border-cyan-500/30',
-      action: () => onNavigateWithFilter('database', { status: 'All', priority: 'All', search: '' })
-    },
-    { 
-      title: 'Sites Down', 
-      value: stats?.sites_down ?? 0, 
-      icon: ShieldAlert, 
-      color: 'from-red-500/20 to-rose-500/20', 
-      textColor: 'text-red-400', 
-      border: 'border-red-500/30', 
-      badge: (stats?.sites_down || 0) > 0 ? 'CRITICAL' : 'STABLE',
-      action: () => onNavigateWithFilter('database', { status: 'Down', priority: 'All', search: '' })
-    },
-    { 
-      title: 'Critical Sites', 
-      value: stats?.critical_sites ?? 0, 
-      icon: AlertTriangle, 
-      color: 'from-amber-500/20 to-orange-500/20', 
-      textColor: 'text-amber-400', 
-      border: 'border-amber-500/30',
-      action: () => onNavigateWithFilter('database', { status: 'All', priority: 'P1', search: '' })
-    },
-    { 
-      title: 'IHS Fiber Ring Links', 
-      value: stats?.ihs_fiber_links_count ?? 340, 
-      icon: Network, 
-      color: 'from-emerald-500/20 to-teal-500/20', 
-      textColor: 'text-emerald-400', 
-      border: 'border-emerald-500/30',
-      badge: `${stats?.ihs_fiber_total_km ?? 506.6} km`,
-      action: () => setActiveTab('tnl_links')
-    },
-    { 
-      title: 'Huawei Fiber Links', 
-      value: stats?.huawei_fiber_links_count ?? 1416, 
-      icon: Cpu, 
-      color: 'from-purple-500/20 to-indigo-500/20', 
-      textColor: 'text-purple-400', 
-      border: 'border-purple-500/30',
-      badge: `${stats?.huawei_fiber_total_km ?? 10903.87} km`,
-      action: () => setActiveTab('tnl_links')
-    },
-    { 
-      title: 'Commercial Power Outage', 
-      value: stats?.commercial_power_outage || 0, 
-      icon: Zap, 
-      color: 'from-yellow-500/20 to-amber-500/20', 
-      textColor: 'text-yellow-400', 
-      border: 'border-yellow-500/30',
-      action: () => onNavigateWithFilter('database', { status: 'All', priority: 'All', search: 'Power' })
-    },
-    { 
-      title: 'Generator Faults', 
-      value: stats?.generator_faults || 0, 
-      icon: Wrench, 
-      color: 'from-purple-500/20 to-indigo-500/20', 
-      textColor: 'text-purple-400', 
-      border: 'border-purple-500/30',
-      action: () => setActiveTab('notes')
-    },
-    { 
-      title: 'Transmission Faults', 
-      value: stats?.transmission_faults || 0, 
-      icon: Signal, 
-      color: 'from-blue-500/20 to-indigo-500/20', 
-      textColor: 'text-blue-400', 
-      border: 'border-blue-500/30',
-      action: () => setActiveTab('notes')
-    },
-    { 
-      title: 'Recent Notes', 
-      value: stats?.recent_notes_count || 0, 
-      icon: FileText, 
-      color: 'from-sky-500/20 to-blue-500/20', 
-      textColor: 'text-sky-400', 
-      border: 'border-sky-500/30',
-      action: () => setActiveTab('notes')
-    },
-    { 
-      title: 'Recent WhatsApp Updates', 
-      value: stats?.recent_whatsapp_count || 0, 
-      icon: MessageSquare, 
-      color: 'from-green-500/20 to-emerald-500/20', 
-      textColor: 'text-green-400', 
-      border: 'border-green-500/30',
-      action: () => setActiveTab('whatsapp')
-    },
-  ];
-
-  const pieData = [
-    { name: 'Commercial Power', value: stats?.commercial_power_outage || 4, color: '#f59e0b' },
-    { name: 'Generator Faults', value: stats?.generator_faults || 3, color: '#a855f7' },
-    { name: 'Transmission Faults', value: stats?.transmission_faults || 2, color: '#3b82f6' },
-    { name: 'Battery Faults', value: stats?.battery_faults || 1, color: '#10b981' },
-  ];
-
-  const clusterChips = ['All', 'C168', 'C71', 'C83', 'C95', 'C80', 'C92', 'C60', 'C84', 'C91', 'C93'];
-  const stateChips = ['All', 'LAGOS', 'FCT', 'EDO', 'AKWA IBOM', 'KADUNA', 'DELTA', 'RIVERS', 'CROSS RIVER', 'KATSINA', 'OYO'];
+  const totalSites = stats?.total_sites ?? (isFse ? (currentUser?.assigned_sites_count || 63) : (isRdm ? (currentUser?.assigned_sites_count || 2767) : (currentUser?.is_superuser ? 20174 : 1050)));
+  const sitesDown = stats?.sites_down ?? 0;
+  const criticalSites = stats?.critical_sites ?? 0;
+  const powerOutages = stats?.commercial_power_outage ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-7xl mx-auto">
       
-      {/* Hero Header & Quick Search Bar */}
-      <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl -z-10 pointer-events-none"></div>
+      {/* 🌟 Clean Modern Hero Header & Instant Search Bar */}
+      <div className="glass-panel rounded-3xl p-6 sm:p-8 relative overflow-hidden border border-slate-800 shadow-2xl bg-gradient-to-br from-slate-900/90 via-slate-950 to-slate-900/90">
+        <div className="absolute right-0 top-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl -z-10 pointer-events-none" />
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-extrabold text-white tracking-wide flex items-center gap-2">
-              {stateInfo.controlCenterTitle}
-              <span className="inline-block w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping"></span>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                {stateInfo.code || 'FCT'} PORTFOLIO
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Live Telemetry
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+              {stateInfo.controlCenterTitle || 'State Delivery Operations'}
             </h1>
-            <p className="text-sm text-slate-400 mt-1">
-              {stateInfo.intelligenceSubtitle}
+            <p className="text-xs sm:text-sm text-slate-400 mt-1">
+              Real-time telecom site performance, 4G LTE coverage sectors, and field incident management.
             </p>
           </div>
 
-          <div className="flex items-center space-x-2">
-            <span className="text-xs px-3 py-1 bg-slate-800 text-slate-300 rounded-lg border border-slate-700">
-              Region: <b>{stateInfo.regionText}</b>
-            </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab('daily_availability')}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl border border-slate-700 text-xs font-bold transition-all shadow flex items-center gap-2 cursor-pointer"
+            >
+              <Calendar className="w-4 h-4 text-cyan-400" />
+              <span>Daily Availability</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('map')}
+              className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-cyan-500/20 flex items-center gap-2 cursor-pointer"
+            >
+              <MapPin className="w-4 h-4" />
+              <span>Live Geo Map</span>
+            </button>
           </div>
         </div>
 
-        {/* Quick Search Widget */}
+        {/* Instant Site Lookup Search Bar */}
         <form onSubmit={handleSearch} className="mt-6">
-          <div className="flex items-center bg-slate-900/90 border border-cyan-500/40 rounded-xl p-2 shadow-xl shadow-cyan-950/40 max-w-2xl">
-            <Search className="w-5 h-5 text-cyan-400 ml-3 mr-2" />
+          <div className="flex items-center bg-slate-950/90 border border-cyan-500/40 rounded-2xl p-2 shadow-2xl shadow-cyan-950/40">
+            <Search className="w-5 h-5 text-cyan-400 ml-3 mr-2 shrink-0" />
             <input
               type="text"
-              placeholder="Enter Site ID (Example: FC2700)"
+              placeholder="Search Site ID (e.g. FC0001, T0108, KD0523)..."
               value={siteQuery}
               onChange={(e) => setSiteQuery(e.target.value)}
-              className="flex-1 bg-transparent text-sm text-white placeholder-slate-400 focus:outline-none px-2"
+              className="flex-1 bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none px-2 font-mono"
             />
             <button
               type="submit"
-              className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold text-xs rounded-lg transition-all shadow-md flex items-center space-x-1"
+              className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center space-x-1.5 shrink-0 cursor-pointer"
             >
               <span>Instant Lookup</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
           
-          <div className="flex items-center space-x-2 mt-3 text-xs text-slate-400">
-            <span>Quick Test Sites:</span>
-            {['FC2700', 'FC2437', 'FC1012', 'FC3005', 'FC1109'].map((sId) => (
+          <div className="flex flex-wrap items-center gap-2 mt-3 text-xs text-slate-400">
+            <span className="font-semibold">Quick Sample Sites:</span>
+            {['FC0001', 'T0108', 'FC0095', 'FC2697', 'KD0523', 'AB0001'].map((sId) => (
               <button
                 key={sId}
                 type="button"
                 onClick={() => onSearchSite(sId)}
-                className="px-2 py-0.5 bg-slate-800/80 hover:bg-cyan-900/40 hover:text-cyan-300 text-slate-300 rounded border border-slate-700 transition-all font-mono"
+                className="px-2.5 py-0.5 bg-slate-800/80 hover:bg-cyan-950/60 hover:text-cyan-300 text-slate-300 rounded-lg border border-slate-700/80 transition-all font-mono font-bold cursor-pointer"
               >
                 {sId}
               </button>
@@ -227,358 +133,423 @@ export default function DashboardOverview({ stats, onSearchSite, onSelectSite, o
         </form>
       </div>
 
-      {/* 10 Stat Cards Grid with Smart Contextual Actions */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-        {cardsData.map((card, idx) => {
-          const Icon = card.icon;
-          return (
-            <div
-              key={idx}
-              className={`glass-card p-4 rounded-xl border ${card.border} relative overflow-hidden hover:scale-[1.02] transition-all cursor-pointer`}
-              onClick={card.action}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-400">{card.title}</span>
-                <div className={`p-2 rounded-lg bg-gradient-to-br ${card.color}`}>
-                  <Icon className={`w-4 h-4 ${card.textColor}`} />
-                </div>
-              </div>
-              <div className="mt-3 flex items-baseline justify-between">
-                <span className={`text-2xl font-black ${card.textColor}`}>{card.value}</span>
-                {card.badge && (
-                  <span className={`text-[10px] px-1.5 py-0.5 font-bold border rounded ${
-                    card.title.includes('Huawei')
-                      ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
-                      : card.title.includes('Fiber') 
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
-                      : 'bg-red-500/20 text-red-400 border-red-500/30'
-                  }`}>
-                    {card.badge}
-                  </span>
-                )}
-              </div>
+      {/* 📊 4 Core High-Impact Metric Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        {/* Card 1: Total Sites */}
+        <div
+          onClick={() => onNavigateWithFilter('database', { status: 'All', priority: 'All', search: '' })}
+          className="glass-card p-5 rounded-2xl border border-cyan-500/30 bg-slate-900/80 hover:border-cyan-400 hover:scale-[1.02] transition-all cursor-pointer shadow-xl group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              {isFse ? 'Assigned Sites' : 'Total Sites'}
+            </span>
+            <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 group-hover:bg-cyan-500/20 transition-all">
+              <Radio className="w-5 h-5" />
             </div>
-          );
-        })}
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-black text-white font-mono">{totalSites.toLocaleString()}</span>
+            <span className="text-[10px] font-bold text-cyan-400 font-mono bg-cyan-950 px-2 py-0.5 rounded border border-cyan-500/30">
+              Active Network
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: Sites Down (Outages) */}
+        <div
+          onClick={() => onNavigateWithFilter('database', { status: 'Down', priority: 'All', search: '' })}
+          className="glass-card p-5 rounded-2xl border border-red-500/30 bg-red-950/10 hover:border-red-400 hover:scale-[1.02] transition-all cursor-pointer shadow-xl group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-red-300">
+              Sites Down / Outages
+            </span>
+            <div className="p-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 group-hover:bg-red-500/20 transition-all">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-black text-red-400 font-mono">{sitesDown}</span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+              sitesDown > 0 
+                ? 'bg-red-500/20 text-red-300 border-red-500/40 animate-pulse' 
+                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+            }`}>
+              {sitesDown > 0 ? 'CRITICAL OUTAGES' : '100% OPERATIONAL'}
+            </span>
+          </div>
+        </div>
+
+        {/* Card 3: Critical P1 Sites */}
+        <div
+          onClick={() => onNavigateWithFilter('database', { status: 'All', priority: 'P1', search: '' })}
+          className="glass-card p-5 rounded-2xl border border-amber-500/30 bg-amber-950/10 hover:border-amber-400 hover:scale-[1.02] transition-all cursor-pointer shadow-xl group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+              Critical Sites (P1)
+            </span>
+            <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 group-hover:bg-amber-500/20 transition-all">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-black text-amber-400 font-mono">{criticalSites}</span>
+            <span className="text-[10px] font-bold text-amber-300 bg-amber-950 px-2 py-0.5 rounded border border-amber-500/30">
+              High Priority
+            </span>
+          </div>
+        </div>
+
+        {/* Card 4: Daily Availability */}
+        <div
+          onClick={() => setActiveTab('daily_availability')}
+          className="glass-card p-5 rounded-2xl border border-emerald-500/30 bg-emerald-950/10 hover:border-emerald-400 hover:scale-[1.02] transition-all cursor-pointer shadow-xl group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+              Daily Availability
+            </span>
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 group-hover:bg-emerald-500/20 transition-all">
+              <Activity className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <span className="text-3xl font-black text-emerald-400 font-mono">99.8%</span>
+            <span className="text-[10px] font-bold text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-500/30">
+              2G / 3G / 4G / 5G
+            </span>
+          </div>
+        </div>
+
       </div>
 
-      {/* ⚡ IHS & HUAWEI FIBER INFRASTRUCTURE HOMEPAGE PANEL */}
-      <div className="glass-panel p-6 rounded-2xl border border-cyan-500/30 bg-slate-900/80 relative overflow-hidden shadow-2xl">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-800">
-          <div>
+      {/* 👑 Regional SDM Supervision Command Matrix (Visible for MTN RDM & Super Admin) */}
+      {(isRdm || (currentUser?.is_superuser && supervisedSdms.length > 0)) && (
+        <div className="glass-panel p-6 rounded-3xl border border-indigo-500/30 bg-gradient-to-br from-slate-900/95 via-indigo-950/20 to-slate-950 space-y-4 shadow-2xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
             <div className="flex items-center space-x-3">
-              <div className="p-2.5 bg-gradient-to-br from-cyan-500/20 via-purple-500/20 to-teal-500/20 rounded-xl text-cyan-400 border border-cyan-500/30">
-                <Network className="w-6 h-6" />
+              <div className="p-3 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-2xl text-white shadow-lg shadow-indigo-500/20">
+                <Users className="w-5 h-5" />
               </div>
               <div>
-                <div className="flex items-center space-x-2 mb-1">
-                  {/* Fiber Provider Selector Pills */}
-                  <button
-                    onClick={() => setFiberProvider('ihs')}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
-                      fiberProvider === 'ihs'
-                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-sm'
-                        : 'bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-white'
-                    }`}
-                  >
-                    🔌 IHS FCT Fiber Ring (340 Links)
-                  </button>
-
-                  <button
-                    onClick={() => setFiberProvider('huawei')}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
-                      fiberProvider === 'huawei'
-                        ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm'
-                        : 'bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-white'
-                    }`}
-                  >
-                    📡 Huawei Fiber (1,416 Links)
-                  </button>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-black text-white">Supervised State Delivery Managers (SDMs)</h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    {supervisedSdms.length} SDMs In Your Region
+                  </span>
                 </div>
-                
-                <p className="text-xs text-slate-400 mt-1">
-                  {fiberProvider === 'ihs' 
-                    ? 'Active FCT Optical Fiber backbone ring connecting IHS FCT telecommunication hub sites'
-                    : 'Nationwide Huawei Maintenance Fiber infrastructure across Nigeria (10,903.87 km total length)'}
+                <p className="text-xs text-slate-400">
+                  Regional field performance, active site outages, and 1-click drill-down telemetry per SDM.
                 </p>
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center space-x-2 bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5">
-              <Search className="w-4 h-4 text-cyan-400" />
-              <input
-                type="text"
-                placeholder="Search Segment or Site ID..."
-                value={fiberSearch}
-                onChange={(e) => setFiberSearch(e.target.value)}
-                className="bg-transparent text-xs text-white placeholder-slate-400 focus:outline-none w-36"
-              />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 font-mono">
+                Regional Sites: <b className="text-indigo-300 font-bold">{totalSites.toLocaleString()} Sites</b>
+              </span>
             </div>
-            <button
-              onClick={() => setActiveTab('tnl_links')}
-              className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-semibold text-xs rounded-xl shadow-md flex items-center space-x-1.5 transition-all"
-            >
-              <span>Explore All 2,682 Links</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+          </div>
+
+          {loadingSdms ? (
+            <div className="py-12 text-center text-slate-400 space-y-2">
+              <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-400" />
+              <div className="text-xs font-bold">Loading regional SDM telemetry...</div>
+            </div>
+          ) : supervisedSdms.length === 0 ? (
+            <div className="p-8 text-center text-slate-500 text-xs bg-slate-950/50 rounded-2xl border border-slate-800">
+              No SDMs currently mapped under this regional command.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {supervisedSdms.map((sdm, idx) => (
+                <div
+                  key={idx}
+                  className="p-4 bg-slate-950/70 hover:bg-slate-900/90 rounded-2xl border border-slate-800/90 hover:border-indigo-500/50 transition-all shadow-md space-y-3 group"
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="text-sm font-black text-white group-hover:text-indigo-300 transition-colors flex items-center gap-1.5">
+                        <UserCheck className="w-4 h-4 text-indigo-400 shrink-0" />
+                        <span>{sdm.name}</span>
+                      </h4>
+                      <div className="flex flex-wrap items-center gap-1 mt-1">
+                        {sdm.states && sdm.states.length > 0 ? (
+                          sdm.states.map((st, sidx) => (
+                            <span key={sidx} className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 border border-slate-700">
+                              {st}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                            {sdm.primary_state || 'Regional'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {sdm.phone && sdm.phone !== 'N/A' && (
+                      <a
+                        href={`tel:${sdm.phone}`}
+                        className="p-2 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors shrink-0"
+                        title={`Call ${sdm.name}: ${sdm.phone}`}
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Operational Metrics Bar */}
+                  <div className="grid grid-cols-3 gap-2 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 text-center">
+                    <div>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Sites</span>
+                      <span className="text-sm font-black font-mono text-cyan-300">{sdm.sites_count.toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Down</span>
+                      <span className={`text-sm font-black font-mono ${sdm.sites_down > 0 ? 'text-red-400 animate-pulse' : 'text-emerald-400'}`}>
+                        {sdm.sites_down}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Critical</span>
+                      <span className="text-sm font-black font-mono text-amber-400">{sdm.critical_sites}</span>
+                    </div>
+                  </div>
+
+                  {/* 1-Click Drill-Down Action Buttons */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={() => onNavigateWithFilter('database', { sdm: sdm.name, status: 'All', priority: 'All', search: '' })}
+                      className="flex-1 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 hover:text-white rounded-xl border border-indigo-500/30 text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <span>View Sites</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab('daily_availability');
+                      }}
+                      className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 rounded-xl border border-slate-800 text-[11px] font-bold transition-all cursor-pointer"
+                      title="View Daily Availability"
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 🚀 4 Primary Quick Action Command Tiles */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        {/* Tile 1: Daily Availability Center */}
+        <div
+          onClick={() => setActiveTab('daily_availability')}
+          className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 hover:bg-slate-900 hover:border-cyan-500/40 transition-all cursor-pointer shadow-lg group flex flex-col justify-between"
+        >
+          <div className="flex items-center space-x-3 mb-3">
+            <div className="p-3 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl text-white shadow-md group-hover:scale-110 transition-transform">
+              <Calendar className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white group-hover:text-cyan-300 transition-colors">Daily Availability</h3>
+              <p className="text-[11px] text-slate-400">Multi-Tech 86-Day Matrix &amp; Worst Sites</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] text-cyan-400 font-bold">
+            <span>Launch Availability Center</span>
+            <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </div>
         </div>
 
-        {/* Quick Filter Chips */}
-        <div className="flex items-center space-x-1.5 overflow-x-auto pb-3 mb-4 scrollbar-thin">
-          <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1">
-            <Filter className="w-3.5 h-3.5 text-cyan-400" /> {fiberProvider === 'ihs' ? 'Cluster:' : 'State:'}
-          </span>
-          {(fiberProvider === 'ihs' ? clusterChips : stateChips).map((c) => (
-            <button
-              key={c}
-              onClick={() => fiberProvider === 'ihs' ? setSelectedCluster(c) : setSelectedState(c)}
-              className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all whitespace-nowrap border ${
-                (fiberProvider === 'ihs' ? selectedCluster : selectedState) === c
-                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-sm'
-                  : 'bg-slate-800/60 text-slate-400 border-slate-700/60 hover:bg-slate-800 hover:text-white'
-              }`}
-            >
-              {c === 'All' ? (fiberProvider === 'ihs' ? 'All FCT Clusters' : 'All States') : c}
-            </button>
-          ))}
+        {/* Tile 2: Live Geo Map & 4G RF Sectors */}
+        <div
+          onClick={() => setActiveTab('map')}
+          className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 hover:bg-slate-900 hover:border-cyan-500/40 transition-all cursor-pointer shadow-lg group flex flex-col justify-between"
+        >
+          <div className="flex items-center space-x-3 mb-3">
+            <div className="p-3 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-xl text-white shadow-md group-hover:scale-110 transition-transform">
+              <MapPin className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white group-hover:text-cyan-300 transition-colors">Live Geo Map</h3>
+              <p className="text-[11px] text-slate-400">40.9K 4G LTE Sector Wedges &amp; Pins</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] text-blue-400 font-bold">
+            <span>Explore Map &amp; RF Sectors</span>
+            <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </div>
         </div>
 
-        {/* Live Fiber Links Data Table */}
-        <div className="overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-950/60">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-800 bg-slate-900/90 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                <th className="py-3 px-4">{fiberProvider === 'ihs' ? 'Cluster' : 'State / Region'}</th>
-                <th className="py-3 px-4">Segment Name / ID</th>
-                <th className="py-3 px-4">Endpoint Site A</th>
-                <th className="py-3 px-4">Endpoint Site B</th>
-                <th className="py-3 px-4">Distance</th>
-                <th className="py-3 px-4">{fiberProvider === 'ihs' ? 'Fiber Length' : 'Maintenance FMP'}</th>
-                <th className="py-3 px-4 text-right">Quick Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 text-xs">
-              {ihsLoading ? (
-                <tr>
-                  <td colSpan="7" className="py-8 text-center text-slate-400 animate-pulse">
-                    Loading {fiberProvider === 'ihs' ? 'IHS FCT Fiber Ring' : 'Huawei Fiber'} dataset...
-                  </td>
-                </tr>
-              ) : ihsLinks && ihsLinks.length > 0 ? (
-                ihsLinks.map((link) => (
-                  <tr key={link.id} className="hover:bg-cyan-950/20 transition-all group">
-                    <td className="py-2.5 px-4">
-                      {fiberProvider === 'ihs' ? (
-                        <span className="px-2 py-0.5 text-[10px] font-bold bg-cyan-500/10 text-cyan-300 rounded border border-cyan-500/20">
-                          {link.cluster_ref || 'FCT'}
-                        </span>
-                      ) : (
-                        <div>
-                          <div className="font-extrabold text-purple-300">{link.state}</div>
-                          <div className="text-[10px] text-slate-400">{link.region || 'Region N/A'}</div>
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono font-bold text-white group-hover:text-cyan-300">
-                      {link.segment_id || link.segment_name}
-                    </td>
-                    <td className="py-2.5 px-4">
-                      {link.site_a ? (
-                        <button
-                          onClick={() => onSelectSite(link.site_a)}
-                          className="font-mono text-cyan-400 font-semibold hover:underline flex items-center gap-1"
-                        >
-                          <MapPin className="w-3 h-3 text-cyan-400" />
-                          {link.site_a}
-                        </button>
-                      ) : (
-                        <span className="text-slate-500">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-4">
-                      {link.site_b ? (
-                        <button
-                          onClick={() => onSelectSite(link.site_b)}
-                          className="font-mono text-cyan-400 font-semibold hover:underline flex items-center gap-1"
-                        >
-                          <MapPin className="w-3 h-3 text-cyan-400" />
-                          {link.site_b}
-                        </button>
-                      ) : (
-                        <span className="text-slate-500">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono font-bold text-amber-400">
-                      {link.distance_km ? `${link.distance_km.toFixed(2)} km` : '0 km'}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono text-slate-300">
-                      {fiberProvider === 'ihs' 
-                        ? (link.fibre_length_m ? `${link.fibre_length_m.toLocaleString()} m` : '0 m')
-                        : <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] font-bold border border-purple-500/30">Huawei</span>}
-                    </td>
-                    <td className="py-2.5 px-4 text-right">
-                      <button
-                        onClick={() => setActiveTab('tnl_links')}
-                        className="px-2.5 py-1 text-[10px] bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white rounded-md border border-slate-700 transition-all inline-flex items-center gap-1"
-                      >
-                        <span>Analyze Outage</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="7" className="py-6 text-center text-slate-500">
-                    No {fiberProvider === 'ihs' ? 'IHS' : 'Huawei'} Fiber Links found matching filter.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        {/* Tile 3: SDM Operational Notes */}
+        <div
+          onClick={() => setActiveTab('notes')}
+          className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 hover:bg-slate-900 hover:border-cyan-500/40 transition-all cursor-pointer shadow-lg group flex flex-col justify-between"
+        >
+          <div className="flex items-center space-x-3 mb-3">
+            <div className="p-3 bg-gradient-to-tr from-amber-600 to-orange-600 rounded-xl text-white shadow-md group-hover:scale-110 transition-transform">
+              <FileText className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors">SDM Field Notes</h3>
+              <p className="text-[11px] text-slate-400">Log Site Incidents, Photos &amp; GPS</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] text-amber-400 font-bold">
+            <span>Log &amp; View Notes</span>
+            <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </div>
         </div>
+
+        {/* Tile 4: WO Tracker & Fiber Outages */}
+        <div
+          onClick={() => setActiveTab('wo_tracker')}
+          className="p-5 rounded-2xl border border-slate-800 bg-slate-900/60 hover:bg-slate-900 hover:border-cyan-500/40 transition-all cursor-pointer shadow-lg group flex flex-col justify-between"
+        >
+          <div className="flex items-center space-x-3 mb-3">
+            <div className="p-3 bg-gradient-to-tr from-purple-600 to-pink-600 rounded-xl text-white shadow-md group-hover:scale-110 transition-transform">
+              <CheckSquare className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white group-hover:text-purple-300 transition-colors">WO &amp; Fiber Tracker</h3>
+              <p className="text-[11px] text-slate-400">Work Orders, Fiber Cuts &amp; RCA</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] text-purple-400 font-bold">
+            <span>Track Open Tickets</span>
+            <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </div>
+        </div>
+
       </div>
 
-      {/* Charts & Intel Feed Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* 📡 Live Operational Streams (2-Column Clean Layout) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* Incident Distribution Chart */}
-        <div className="glass-panel p-5 rounded-2xl border border-slate-800">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-cyan-400" />
-              Active Fault Breakdown
-            </h3>
-            <button onClick={() => setActiveTab('reports')} className="text-xs text-slate-400 hover:text-cyan-300">Reports</button>
-          </div>
-
-          <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={45}
-                  outerRadius={70}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', color: '#fff' }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            {pieData.map((item, i) => (
-              <div key={i} className="flex items-center space-x-2 text-xs">
-                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }}></span>
-                <span className="text-slate-400 truncate">{item.name}:</span>
-                <span className="font-bold text-white">{item.value}</span>
+        {/* Left Column: Recent SDM Operational Notes */}
+        <div className="glass-panel p-5 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
+                <FileText className="w-4 h-4" />
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent SDM Operational Notes */}
-        <div className="glass-panel p-5 rounded-2xl border border-slate-800">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <FileText className="w-4 h-4 text-sky-400" />
-              Recent SDM Notes
-            </h3>
+              <div>
+                <h3 className="text-sm font-bold text-white">Active SDM Field Notes</h3>
+                <p className="text-[11px] text-slate-400">Recent operational log entries and site escalations</p>
+              </div>
+            </div>
             <button
               onClick={() => setActiveTab('notes')}
-              className="text-xs text-cyan-400 hover:underline"
+              className="text-xs text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1 cursor-pointer"
             >
-              View All
+              <span>View All</span>
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+          <div className="space-y-3">
             {recentNotes && recentNotes.length > 0 ? (
               recentNotes.slice(0, 4).map((note, idx) => (
                 <div
                   key={idx}
-                  onClick={() => onSelectSite(note.site_ihs_id)}
-                  className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer"
+                  onClick={() => onSelectSite(note.site_ihs_id || note.site_id || (note.title ? note.title.split(' ')[0] : ''))}
+                  className="p-3.5 bg-slate-900/80 hover:bg-slate-900 rounded-2xl border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer group space-y-1.5"
                 >
-                  <div className="flex items-center justify-between text-xs mb-1">
+                  <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center space-x-2">
-                      <span className="font-mono font-bold text-cyan-300">{note.site_ihs_id}</span>
-                      {onNavigateToAvailability && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onNavigateToAvailability(note.site_ihs_id);
-                          }}
-                          className="px-1.5 py-0.5 text-[10px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold rounded border border-emerald-500/40 flex items-center gap-1"
-                          title={`Filter Daily Availability for ${note.site_ihs_id}`}
-                        >
-                          <Activity className="w-2.5 h-2.5 text-emerald-400" />
-                          <span>Availability</span>
-                        </button>
-                      )}
+                      <span className="font-mono font-extrabold text-cyan-300 text-sm group-hover:text-cyan-200">
+                        {note.site_ihs_id || note.site_id || (note.title ? note.title.split(' ')[0] : 'General')}
+                      </span>
+                      <span className={`px-2 py-0.5 text-[9px] font-bold rounded-full border ${
+                        note.priority === 'Critical' ? 'bg-red-500/20 text-red-300 border-red-500/40' :
+                        note.priority === 'High' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' :
+                        'bg-slate-800 text-slate-300 border-slate-700'
+                      }`}>
+                        {note.priority}
+                      </span>
                     </div>
-                    <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-300 rounded">
+                    <span className="text-[10px] text-slate-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
                       {note.category}
                     </span>
                   </div>
-                  <h4 className="text-xs font-semibold text-slate-200 line-clamp-1">{note.title}</h4>
-                  <p className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">{note.description}</p>
+
+                  <h4 className="text-xs font-bold text-slate-200 line-clamp-1">{note.title}</h4>
+                  <p className="text-[11px] text-slate-400 line-clamp-2">{note.description}</p>
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
+                    <span>By: <b className="text-slate-400">{note.created_by}</b></span>
+                    <span>{new Date(note.created_at).toLocaleDateString()}</span>
+                  </div>
                 </div>
               ))
             ) : (
-              <div className="text-xs text-slate-500 py-8 text-center">No notes logged yet. Use SDM Notes to add site history.</div>
+              <div className="text-xs text-slate-500 py-10 text-center">
+                No active operational notes logged yet.
+              </div>
             )}
           </div>
         </div>
 
-        {/* Recent WhatsApp Intelligence */}
-        <div className="glass-panel p-5 rounded-2xl border border-slate-800">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-green-400" />
-              WhatsApp Field Intel
-            </h3>
+        {/* Right Column: Recent WhatsApp Intelligence Feed */}
+        <div className="glass-panel p-5 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20">
+                <MessageSquare className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">WhatsApp Field Intel Feed</h3>
+                <p className="text-[11px] text-slate-400">Real-time team chat updates &amp; technician ETAs</p>
+              </div>
+            </div>
             <button
               onClick={() => setActiveTab('whatsapp')}
-              className="text-xs text-green-400 hover:underline"
+              className="text-xs text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 cursor-pointer"
             >
-              Live Feed
+              <span>Live Chat</span>
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+          <div className="space-y-3">
             {recentWhatsApp && recentWhatsApp.length > 0 ? (
               recentWhatsApp.slice(0, 4).map((msg, idx) => (
                 <div
                   key={idx}
                   onClick={() => msg.site_id_str ? onSelectSite(msg.site_id_str) : setActiveTab('whatsapp')}
-                  className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 hover:border-green-500/40 transition-all cursor-pointer"
+                  className="p-3.5 bg-slate-900/80 hover:bg-slate-900 rounded-2xl border border-slate-800 hover:border-emerald-500/40 transition-all cursor-pointer group space-y-1.5"
                 >
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="font-mono font-bold text-green-400">{msg.site_id_str || 'General'}</span>
-                    <span className="text-[10px] text-slate-400">{msg.sender_name}</span>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono font-extrabold text-emerald-400 text-sm">
+                      {msg.site_id_str || 'General Network'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                      {msg.sender_name}
+                    </span>
                   </div>
+
                   <p className="text-xs text-slate-300 line-clamp-2">{msg.message_text}</p>
+
                   {msg.extracted_eta && (
-                    <div className="mt-1 flex items-center gap-1 text-[10px] text-amber-400 font-semibold">
-                      <Clock className="w-3 h-3" />
-                      <span>ETA: {msg.extracted_eta}</span>
+                    <div className="flex items-center gap-1 text-[10px] text-amber-400 font-bold bg-amber-950/40 px-2 py-0.5 rounded-lg border border-amber-500/30 w-fit">
+                      <Clock className="w-3 h-3 text-amber-400" />
+                      <span>Estimated ETA: {msg.extracted_eta}</span>
                     </div>
                   )}
                 </div>
               ))
             ) : (
-              <div className="text-xs text-slate-500 py-8 text-center">No WhatsApp messages imported yet. Import chat log in WhatsApp tab.</div>
+              <div className="text-xs text-slate-500 py-10 text-center">
+                No recent WhatsApp updates imported.
+              </div>
             )}
           </div>
         </div>

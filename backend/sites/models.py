@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.models import User
 
 class Site(models.Model):
     # Primary Identifiers
@@ -187,6 +188,7 @@ class DailyAvailabilityRecord(models.Model):
     state = models.CharField(max_length=50, db_index=True, blank=True, default='')
     region = models.CharField(max_length=50, db_index=True, blank=True, default='')
     lga = models.CharField(max_length=100, blank=True, default='')
+    territory = models.CharField(max_length=100, db_index=True, blank=True, default='')
     tower_co = models.CharField(max_length=100, blank=True, default='')
     vendor = models.CharField(max_length=100, blank=True, default='')
     status = models.CharField(max_length=50, blank=True, default='')
@@ -254,3 +256,62 @@ class HourlyAvailabilityRecord(models.Model):
 
     def __str__(self):
         return f"{self.site_id} [{self.tech}] Hourly - Avg: {self.avg_availability:.2f}%"
+
+
+class CellSector(models.Model):
+    """
+    Represents 4G/5G RF Cell Sectors extracted from KML datasets
+    Contains antenna azimuths, PCIs, TACs, Cell IDs, and polygon coverage coordinates.
+    """
+    site_id = models.CharField(max_length=50, db_index=True)
+    site_ref = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True, blank=True, related_name='cell_sectors')
+    tech = models.CharField(max_length=10, default='4G', db_index=True)
+    cell_name = models.CharField(max_length=100, db_index=True)
+    cell_id = models.IntegerField(null=True, blank=True)
+    pci = models.IntegerField(null=True, blank=True, db_index=True)
+    tac = models.IntegerField(null=True, blank=True)
+    azimuth = models.FloatField(null=True, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    polygon_coords = models.JSONField(default=list, blank=True)
+    region = models.CharField(max_length=50, default='Abuja Region', db_index=True)
+    source_kml = models.CharField(max_length=255, default='ABUJA REGION KML 07292026 (4G).kml')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['site_id', 'cell_name']
+        indexes = [
+            models.Index(fields=['site_id', 'tech']),
+            models.Index(fields=['pci']),
+            models.Index(fields=['latitude', 'longitude']),
+        ]
+
+    def __str__(self):
+        return f"{self.site_id} - {self.cell_name} (PCI: {self.pci}, Az: {self.azimuth}°)"
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    phone_number = models.CharField(max_length=50, blank=True, default='')
+    job_title = models.CharField(max_length=150, blank=True, default='')
+    company = models.CharField(max_length=150, blank=True, default='')
+    bio = models.TextField(blank=True, default='')
+    whatsapp_number = models.CharField(max_length=50, blank=True, default='')
+    department = models.CharField(max_length=100, blank=True, default='Network Operations')
+    preferred_language = models.CharField(max_length=20, default='en')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['user__username']
+
+    def __str__(self):
+        return f"Profile: {self.user.username} ({self.user.get_full_name() or self.user.username})"
+
+    @property
+    def avatar_url(self):
+        if self.avatar and hasattr(self.avatar, 'url'):
+            return self.avatar.url
+        return None
+

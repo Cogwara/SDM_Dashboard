@@ -59,6 +59,38 @@
   --input-bg: rgba(6, 78, 59, 0.9);
 }
 
+/* 5. MTN Operations Portal (Official Gold Light) */
+[data-theme="mtn"] {
+  --bg-color: #f2f4f8;
+  --text-main: #111827;
+  --text-muted: #4b5563;
+  --panel-bg: #ffffff;
+  --card-bg: #ffffff;
+  --card-hover-border: #ffcc00;
+  --border-color: #e2e8f0;
+  --accent-glow: rgba(255, 204, 0, 0.25);
+  --table-head-bg: #ffcc00;
+  --input-bg: #ffffff;
+  --header-bg: #ffcc00;
+  --header-text: #000000;
+}
+
+/* 6. MTN Operations Portal (Official Gold Dark) */
+[data-theme="mtn-dark"] {
+  --bg-color: #0c101b;
+  --text-main: #f9fafb;
+  --text-muted: #9ca3af;
+  --panel-bg: #182234;
+  --card-bg: #111827;
+  --card-hover-border: #ffcc00;
+  --border-color: #2d3b55;
+  --accent-glow: rgba(255, 204, 0, 0.2);
+  --table-head-bg: #ffcc00;
+  --input-bg: #1f2937;
+  --header-bg: #ffcc00;
+  --header-text: #000000;
+}
+
 body {
   background-color: var(--bg-color);
   color: var(--text-main);
@@ -294,4 +326,133 @@ body {
 .leaflet-tooltip.custom-hover-tooltip::before {
   border-top-color: rgba(15, 23, 42, 0.96) !important;
 }
+
+/* ========================================================
+   MTN OPERATIONS PORTAL THEME STYLES (Light & Dark)
+   ======================================================== */
+
+[data-theme="mtn"] body {
+  background-color: #f2f4f8 !important;
+  color: #111827 !important;
+  background-image: none !important;
+}
+
+/* MTN Gold Header Bar */
+[data-theme="mtn"] header,
+[data-theme="mtn-dark"] header {
+  background-color: #ffcc00 !important;
+  background: #ffcc00 !important;
+  border-bottom: 2px solid #000000 !important;
+  color: #000000 !important;
+}
+
+[data-theme="mtn"] header .text-white,
+[data-theme="mtn"] header .text-slate-100,
+[data-theme="mtn"] header .text-slate-200,
+[data-theme="mtn"] header .text-slate-300,
+[data-theme="mtn"] header .text-slate-400,
+[data-theme="mtn-dark"] header .text-white,
+[data-theme="mtn-dark"] header .text-slate-100,
+[data-theme="mtn-dark"] header .text-slate-200,
+[data-theme="mtn-dark"] header .text-slate-300,
+[data-theme="mtn-dark"] header .text-slate-400 {
+  color: #000000 !important;
+}
+
+[data-theme="mtn"] header .bg-slate-900\/90,
+[data-theme="mtn"] header .bg-slate-900,
+[data-theme="mtn"] header .bg-slate-950,
+[data-theme="mtn-dark"] header .bg-slate-900\/90,
+[data-theme="mtn-dark"] header .bg-slate-900,
+[data-theme="mtn-dark"] header .bg-slate-950 {
+  background-color: #000000 !important;
+  color: #ffcc00 !important;
+  border-color: #000000 !important;
+}
+
+[data-theme="mtn"] header .border-slate-700\/80,
+[data-theme="mtn"] header .border-slate-800,
+[data-theme="mtn-dark"] header .border-slate-700\/80,
+[data-theme="mtn-dark"] header .border-slate-800 {
+  border-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+/* Glass panel & cards in MTN Light theme */
+[data-theme="mtn"] .glass-panel,
+[data-theme="mtn"] .glass-card {
+  background-color: #ffffff !important;
+  background: #ffffff !important;
+  border-color: #e5e7eb !important;
+  box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.06) !important;
+}
+
+[data-theme="mtn"] .glass-card:hover {
+  border-color: #ffcc00 !important;
+  box-shadow: 0 8px 20px -4px rgba(255, 204, 0, 0.25) !important;
+}
+
+/* Typography in MTN Light */
+[data-theme="mtn"] .text-white,
+[data-theme="mtn"] .text-slate-100,
+[data-theme="mtn"] .text-slate-50 {
+  color: #111827 !important;
+}
+
+[data-theme="mtn"] .text-slate-200,
+[data-theme="mtn"] .text-slate-300 {
+  color: #374151 !important;
+}
+
+[data-theme="mtn"] .text-slate-400,
+[data-theme="mtn"] .text-slate-500 {
+  color: #6b7280 !important;
+}
+
+[data-theme="mtn"] .text-cyan-300,
+[data-theme="mtn"] .text-cyan-400 {
+  color: #d97706 !important;
+}
+
+/* Input, Textarea, Select */
+[data-theme="mtn"] input,
+[data-theme="mtn"] textarea,
+[data-theme="mtn"] select {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #d1d5db !important;
+}
+
+[data-theme="mtn"] input:focus,
+[data-theme="mtn"] textarea:focus,
+[data-theme="mtn"] select:focus {
+  border-color: #ffcc00 !important;
+  box-shadow: 0 0 0 3px rgba(255, 204, 0, 0.3) !important;
+}
+
+/* Dark Slate containers in MTN Light */
+[data-theme="mtn"] .bg-slate-900,
+[data-theme="mtn"] .bg-slate-950,
+[data-theme="mtn"] .bg-black,
+[data-theme="mtn"] [class*="bg-slate-9"],
+[data-theme="mtn"] [class*="bg-slate-8"] {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #e5e7eb !important;
+}
+
+[data-theme="mtn"] .border-slate-800,
+[data-theme="mtn"] .border-slate-700,
+[data-theme="mtn"] .border-slate-800\/80,
+[data-theme="mtn"] .border-slate-800\/60 {
+  border-color: #e5e7eb !important;
+}
+
+/* Exclude overlays from background override */
+[data-theme="mtn"] .fixed.inset-0.bg-black\/70,
+[data-theme="mtn"] .fixed.inset-0.bg-black\/80,
+[data-theme="mtn"] .fixed.inset-0.bg-black\/90,
+[data-theme="mtn"] .fixed.inset-0.bg-slate-950\/80 {
+  background-color: rgba(15, 23, 42, 0.65) !important;
+}
+
 

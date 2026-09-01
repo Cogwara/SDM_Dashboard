@@ -15,8 +15,9 @@ export default function SiteDatabase({
   initialCluster = 'All' 
 }) {
   const isSuperuser = currentUser?.is_superuser;
+  const isRdm = currentUser?.role === 'MTN RDM' || currentUser?.role === 'Regional Delivery Manager';
   const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
-  const isSdm = !isSuperuser && !isFse && (currentUser?.role === 'State Delivery Manager' || currentUser?.role === 'SDM Manager');
+  const isSdm = !isSuperuser && !isFse && !isRdm && (currentUser?.role === 'State Delivery Manager' || currentUser?.role === 'SDM Manager');
   const userName = currentUser?.full_name || currentUser?.username || '';
 
   const [sites, setSites] = useState([]);
@@ -42,7 +43,7 @@ export default function SiteDatabase({
   const [lgaFilter, setLgaFilter] = useState('All');
   const [sdmFilter, setSdmFilter] = useState(isSdm ? userName : 'All');
   const [fseFilter, setFseFilter] = useState(isFse ? userName : 'All');
-  const [rdmFilter, setRdmFilter] = useState('All');
+  const [rdmFilter, setRdmFilter] = useState(isRdm ? userName : 'All');
 
   // Quick 87-Column Specs Modal
   const [quickSpecSite, setQuickSpecSite] = useState(null);
@@ -51,14 +52,16 @@ export default function SiteDatabase({
     setSearch(initialSearch);
     setStatus(initialStatus);
     setPriority(initialPriority);
-    if (isSdm && userName) {
+    if (isRdm && userName) {
+      setRdmFilter(userName);
+    } else if (isSdm && userName) {
       setSdmFilter(userName);
       setFseFilter('All');
     } else if (isFse && userName) {
       setFseFilter(userName);
       setSdmFilter('All');
     }
-  }, [initialSearch, initialStatus, initialPriority, userName, isSdm, isFse]);
+  }, [initialSearch, initialStatus, initialPriority, userName, isSdm, isFse, isRdm]);
 
   // Load cascading filter options dynamically
   useEffect(() => {

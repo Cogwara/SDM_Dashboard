@@ -153,6 +153,18 @@ export const loginSDM = async (username, password) => {
   return res.data;
 };
 
+export const fetchUserProfile = async (params = {}) => {
+  const res = await api.get('/auth/profile/', { params });
+  return res.data;
+};
+
+export const updateUserProfile = async (profileData) => {
+  const isFormData = profileData instanceof FormData;
+  const config = isFormData ? { headers: { 'Content-Type': 'multipart/form-data' } } : {};
+  const res = await api.post('/auth/profile/', profileData, config);
+  return res.data;
+};
+
 export const fetchSDMList = async () => {
   const res = await api.get('/auth/sdms/');
   return res.data;
@@ -168,13 +180,23 @@ export const syncFSEAccounts = async () => {
   return res.data;
 };
 
-export const assignStateToSDM = async (sdmName, stateName = '', sdmPhone = '', siteIds = null) => {
-  const payload = { sdm_name: sdmName, sdm_phone: sdmPhone };
+export const assignStateToSDM = async (name, stateOrStates = '', phone = '', siteIds = null, role = 'sdm') => {
+  const payload = { 
+    name, 
+    sdm_name: name,
+    rdm_name: name,
+    phone, 
+    sdm_phone: phone, 
+    role: role || 'sdm', 
+    target_type: role || 'sdm' 
+  };
   if (siteIds) {
     payload.site_ids = siteIds;
   }
-  if (stateName) {
-    payload.state = stateName;
+  if (Array.isArray(stateOrStates)) {
+    payload.states = stateOrStates;
+  } else if (stateOrStates) {
+    payload.state = stateOrStates;
   }
   const res = await api.post('/auth/assign_state/', payload);
   return res.data;
@@ -455,5 +477,30 @@ export const resetHourlyBaseAvailability = async (uploaderName) => {
   const res = await api.post('/hourly_availability/reset_base/', { uploaded_by: uploaderName });
   return res.data;
 };
+
+// 4G LTE KML Cell Sectors API Helpers
+export const fetchSiteCellSectors = async (siteId) => {
+  const res = await api.get(`/sites/${encodeURIComponent(siteId)}/sectors/`);
+  return res.data;
+};
+
+export const fetchCellSectors = async (params = {}) => {
+  const res = await api.get('/sectors/', { params });
+  return res.data;
+};
+
+export const fetchKmlStats = async () => {
+  const res = await api.get('/kml/stats/');
+  return res.data;
+};
+
+export const importKmlFile = async (formData) => {
+  const res = await api.post('/kml/import/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  });
+  return res.data;
+};
+
 
 

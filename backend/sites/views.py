@@ -1,4 +1,5 @@
 import time
+import re
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -8,10 +9,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Q, Count, Sum, Avg, Min, Max
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
-from .models import Site, Notification, TNLLink, IHSFiberLink, HuaweiFiberLink
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from .models import Site, Notification, TNLLink, IHSFiberLink, HuaweiFiberLink, CellSector, UserProfile
 from notes.models import SiteNote
 from whatsapp.models import WhatsAppMessage
-from .serializers import SiteSerializer, SiteDetailSerializer, NotificationSerializer, TNLLinkSerializer, IHSFiberLinkSerializer, HuaweiFiberLinkSerializer
+from .serializers import SiteSerializer, SiteDetailSerializer, NotificationSerializer, TNLLinkSerializer, IHSFiberLinkSerializer, HuaweiFiberLinkSerializer, CellSectorSerializer
+from .kml_importer import parse_and_import_kml
 
 # Brute-Force Lockout Tracking (5 attempts per 15 mins)
 FAILED_LOGIN_ATTEMPTS = {}
@@ -59,11 +62,17 @@ def scope_queryset_by_user(qs, request, site_id_field='ihs_site_id', state_field
     user_state = request.query_params.get('user_state', '')
     sdm_param = request.query_params.get('sdm', '') or request.query_params.get('user_name', '')
     fse_param = request.query_params.get('fse', '') or request.query_params.get('fse_name', '')
+    rdm_param = request.query_params.get('rdm', '') or request.query_params.get('rdm_name', '')
 
     if request.user and request.user.is_authenticated:
         full_n = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
+        is_rdm_group = request.user.groups.filter(name__icontains='RDM').exists()
         is_fse_group = request.user.groups.filter(name__icontains='FSE').exists()
-        if is_fse_group or user_role in ['SMC FSE Engineer', 'FSE Engineer', 'FSE']:
+
+        if is_rdm_group or user_role in ['MTN RDM', 'Regional Delivery Manager', 'RDM'] or request.user.username.startswith('rdm_'):
+            user_role = 'MTN RDM'
+            rdm_param = rdm_param or full_n
+        elif is_fse_group or user_role in ['SMC FSE Engineer', 'FSE Engineer', 'FSE']:
             user_role = 'SMC FSE Engineer'
             fse_param = fse_param or full_n
         else:
@@ -71,7 +80,42 @@ def scope_queryset_by_user(qs, request, site_id_field='ihs_site_id', state_field
                 user_role = 'State Delivery Manager'
             sdm_param = sdm_param or full_n
 
-    # 2. SMC FSE Engineer: Sees ONLY their own assigned sites
+    # 2. MTN RDM: Regional Delivery Manager sees all sites & SDMs under their regional command
+    if user_role in ['MTN RDM', 'Regional Delivery Manager', 'RDM'] or (rdm_param and rdm_param != 'All' and rdm_param != 'undefined'):
+        target_rdm = rdm_param if (rdm_param and rdm_param != 'All' and rdm_param != 'undefined') else None
+        if not target_rdm and request.user and request.user.is_authenticated:
+            target_rdm = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
+
+        if target_rdm:
+            clean_rdm = target_rdm.strip()
+            parts = [p for p in clean_rdm.split() if len(p) >= 3]
+            rdm_q = Q(mtn_rdm_name__iexact=clean_rdm) | Q(mtn_rdm_name__icontains=clean_rdm)
+            if len(parts) >= 2:
+                rdm_q |= (Q(mtn_rdm_name__icontains=parts[0]) & Q(mtn_rdm_name__icontains=parts[-1]))
+            elif len(parts) == 1:
+                rdm_q |= Q(mtn_rdm_name__icontains=parts[0])
+
+            # If RDM selected a specific SDM under them to filter by:
+            if sdm_param and sdm_param != 'All' and sdm_param != 'undefined':
+                rdm_q &= (Q(sdm_name__iexact=sdm_param.strip()) | Q(sdm_name__icontains=sdm_param.strip()))
+
+            if site_id_field == 'site_id':
+                # For DailyAvailabilityRecord / HourlyAvailabilityRecord
+                rdm_site_ids = list(Site.objects.filter(rdm_q).values_list('ihs_site_id', flat=True))
+                if rdm_site_ids:
+                    expanded_ids = set(rdm_site_ids)
+                    for sid in rdm_site_ids:
+                        expanded_ids.add('U' + sid)
+                        expanded_ids.add('L' + sid)
+                        expanded_ids.add('N' + sid)
+                        expanded_ids.add('LTE' + sid)
+                    return qs.filter(Q(site_id__in=expanded_ids) | Q(element_name__in=expanded_ids))
+                return qs.filter(Q(site_id__icontains=clean_rdm))
+            else:
+                # For Site model
+                return qs.filter(rdm_q)
+
+    # 3. SMC FSE Engineer: Sees ONLY their own assigned sites
     if (user_role in ['SMC FSE Engineer', 'FSE Engineer', 'FSE'] or (fse_param and fse_param != 'All' and fse_param != 'undefined')) and fse_param != 'undefined':
         target_fse = fse_param if (fse_param and fse_param != 'All' and fse_param != 'undefined') else (sdm_param if user_role in ['SMC FSE Engineer', 'FSE Engineer', 'FSE'] else None)
         if target_fse and target_fse != 'All' and target_fse != 'undefined':
@@ -85,13 +129,19 @@ def scope_queryset_by_user(qs, request, site_id_field='ihs_site_id', state_field
                 # For DailyAvailabilityRecord / HourlyAvailabilityRecord
                 fse_site_ids = list(Site.objects.filter(fse_q).values_list('ihs_site_id', flat=True))
                 if fse_site_ids:
-                    return qs.filter(Q(site_id__in=fse_site_ids) | Q(element_name__icontains=clean_fse))
+                    expanded_ids = set(fse_site_ids)
+                    for sid in fse_site_ids:
+                        expanded_ids.add('U' + sid)
+                        expanded_ids.add('L' + sid)
+                        expanded_ids.add('N' + sid)
+                        expanded_ids.add('LTE' + sid)
+                    return qs.filter(Q(site_id__in=expanded_ids) | Q(element_name__in=expanded_ids) | Q(element_name__icontains=clean_fse))
                 return qs.filter(Q(site_id__icontains=clean_fse) | Q(element_name__icontains=clean_fse))
             else:
                 # For Site model
                 return qs.filter(fse_q)
 
-    # 3. State Delivery Manager (SDM): If an explicit state filter is provided, enforce it directly
+    # 4. State Delivery Manager (SDM): If an explicit state filter is provided, enforce it directly
     if explicit_state and explicit_state != 'All':
         clean_st = explicit_state.strip().upper()
         if clean_st.startswith('RT') and len(clean_st) > 2:
@@ -229,6 +279,244 @@ class SiteViewSet(viewsets.ModelViewSet):
         })
 
 
+class UserProfileView(APIView):
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+
+    def _resolve_user(self, request):
+        if request.user and request.user.is_authenticated:
+            return request.user
+        username = request.data.get('username') or request.query_params.get('username') or request.data.get('user') or request.query_params.get('user')
+        if username:
+            clean_u = str(username).strip().lower().replace(' ', '_')
+            user = User.objects.filter(Q(username__iexact=clean_u) | Q(first_name__icontains=username) | Q(email__iexact=username)).first()
+            if user:
+                return user
+        user_id = request.data.get('user_id') or request.query_params.get('user_id')
+        if user_id and str(user_id).isdigit():
+            return User.objects.filter(pk=int(user_id)).first()
+        return None
+
+    def _get_user_role_and_sites(self, user):
+        full_name = f"{user.first_name} {user.last_name}".strip() or user.username
+        clean_user_name = full_name if (user.first_name and user.last_name) else user.username.replace('_', ' ')
+        parts = [p for p in clean_user_name.split() if len(p) >= 3]
+
+        is_fse_group = user.groups.filter(name='SMC FSE Engineer').exists()
+        fse_query = Q(smc_fse_name__iexact=full_name) | Q(smc_fse_name__iexact=clean_user_name) | Q(smc_fse_name__icontains=full_name)
+        if len(parts) >= 2:
+            fse_query |= (Q(smc_fse_name__icontains=parts[0]) & Q(smc_fse_name__icontains=parts[-1]))
+        elif user.first_name:
+            fse_query |= Q(smc_fse_name__icontains=user.first_name)
+        fse_sites_qs = Site.objects.filter(fse_query)
+
+        is_rdm_group = user.groups.filter(name='MTN RDM').exists() or user.username.startswith('rdm_') or user.username in ['mtn_rdm', 'rdmadmin']
+        rdm_query = Q(mtn_rdm_name__iexact=full_name) | Q(mtn_rdm_name__icontains=full_name) | Q(mtn_rdm_name__iexact=clean_user_name)
+        if len(parts) >= 2:
+            rdm_query |= (Q(mtn_rdm_name__icontains=parts[0]) & Q(mtn_rdm_name__icontains=parts[-1]))
+        elif user.first_name:
+            rdm_query |= Q(mtn_rdm_name__icontains=user.first_name)
+
+        rdm_sites_qs = Site.objects.filter(rdm_query)
+        if (is_rdm_group or user.username in ['mtn_rdm', 'rdmadmin']) and not rdm_sites_qs.exists():
+            rdm_sites_qs = Site.objects.filter(mtn_rdm_name__icontains='Onikola')
+
+        sdm_sites_qs = Site.objects.filter(sdm_name__iexact=full_name)
+        if not sdm_sites_qs.exists() and full_name:
+            sdm_sites_qs = Site.objects.filter(sdm_name__icontains=full_name)
+        if not sdm_sites_qs.exists() and user.first_name and user.last_name:
+            sdm_sites_qs = Site.objects.filter(sdm_name__icontains=user.first_name).filter(sdm_name__icontains=user.last_name)
+        if not sdm_sites_qs.exists() and user.first_name:
+            sdm_sites_qs = Site.objects.filter(sdm_name__icontains=user.first_name)
+
+        is_rdm = is_rdm_group or (rdm_sites_qs.exists() and not is_fse_group and not sdm_sites_qs.exists())
+        is_fse = is_fse_group or (fse_sites_qs.exists() and not sdm_sites_qs.exists() and not is_rdm)
+
+        if user.is_superuser:
+            role = 'Super Administrator'
+            assigned_sites_qs = Site.objects.all()
+            assigned_count = assigned_sites_qs.count()
+            user_state = 'ALL'
+            all_assigned_states = ['ALL']
+        elif is_rdm:
+            role = 'MTN RDM'
+            assigned_sites_qs = rdm_sites_qs
+            assigned_count = assigned_sites_qs.count()
+            all_states_raw = assigned_sites_qs.values_list('state', flat=True).distinct()
+            all_assigned_states = []
+            for st in all_states_raw:
+                if not st: continue
+                clean_st = st.strip().upper()
+                if clean_st.startswith('RT') and len(clean_st) > 2:
+                    clean_st = clean_st[2:]
+                if clean_st and clean_st not in all_assigned_states:
+                    all_assigned_states.append(clean_st)
+            user_state = ', '.join(all_assigned_states[:3]) if all_assigned_states else 'Regional Command'
+        elif is_fse:
+            role = 'SMC FSE Engineer'
+            assigned_sites_qs = fse_sites_qs
+            assigned_count = assigned_sites_qs.count()
+            user_state = 'FSE_ONLY'
+            all_assigned_states = ['FSE_ONLY']
+        else:
+            role = 'State Delivery Manager'
+            assigned_sites_qs = sdm_sites_qs
+            assigned_count = assigned_sites_qs.count()
+            all_states_raw = assigned_sites_qs.values_list('state', flat=True).distinct()
+            all_assigned_states = []
+            for st in all_states_raw:
+                if not st: continue
+                clean_st = st.strip().upper()
+                if clean_st.startswith('RT') and len(clean_st) > 2:
+                    clean_st = clean_st[2:]
+                if clean_st and clean_st not in all_assigned_states:
+                    all_assigned_states.append(clean_st)
+            user_state = all_assigned_states[0] if all_assigned_states else 'FCT'
+
+        return role, assigned_count, user_state, all_assigned_states
+
+    def get(self, request):
+        user = self._resolve_user(request)
+        if not user:
+            return Response({'error': 'User not found or unauthenticated.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        role, assigned_count, user_state, all_assigned_states = self._get_user_role_and_sites(user)
+
+        full_name = f"{user.first_name} {user.last_name}".strip() or user.username
+        avatar_url = profile.avatar.url if (profile.avatar and hasattr(profile.avatar, 'url')) else None
+
+        default_company = profile.company or ('MTN Nigeria' if role == 'MTN RDM' else ('Huawei / SMC' if role == 'SMC FSE Engineer' else ('IHS Towers' if role == 'State Delivery Manager' else 'FCT Telecom Network')))
+        default_job_title = profile.job_title or (role if role != 'State Delivery Manager' else 'State Delivery Manager (SDM)')
+
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'full_name': full_name,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'email': user.email or f"{user.username}@fcttelecom.ng",
+            'avatar_url': avatar_url,
+            'phone_number': profile.phone_number or getattr(user, 'phone', '') or '',
+            'phone': profile.phone_number or getattr(user, 'phone', '') or '',
+            'job_title': default_job_title,
+            'company': default_company,
+            'bio': profile.bio or '',
+            'whatsapp_number': profile.whatsapp_number or profile.phone_number or '',
+            'department': profile.department or 'Network Operations',
+            'preferred_language': profile.preferred_language or 'en',
+            'role': role,
+            'is_superuser': user.is_superuser,
+            'assigned_sites_count': assigned_count,
+            'state': user_state,
+            'assigned_states': all_assigned_states,
+            'date_joined': user.date_joined,
+            'last_login': user.last_login
+        })
+
+    def post(self, request):
+        user = self._resolve_user(request)
+        if not user:
+            return Response({'error': 'User not found or unauthenticated.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        data = request.data
+
+        # 1. Update Profile Picture / Avatar
+        if 'avatar' in request.FILES:
+            profile.avatar = request.FILES['avatar']
+        elif data.get('remove_avatar') in [True, 'true', '1']:
+            if profile.avatar:
+                profile.avatar.delete(save=False)
+            profile.avatar = None
+
+        # 2. Update Name
+        if 'full_name' in data and data['full_name'].strip():
+            raw_full = data['full_name'].strip()
+            parts = raw_full.split(maxsplit=1)
+            user.first_name = parts[0]
+            user.last_name = parts[1] if len(parts) > 1 else ''
+        else:
+            if 'first_name' in data:
+                user.first_name = data['first_name'].strip()
+            if 'last_name' in data:
+                user.last_name = data['last_name'].strip()
+
+        # 3. Update Email
+        if 'email' in data and data['email'].strip():
+            user.email = data['email'].strip()
+
+        # 4. Update Profile Details
+        if 'phone_number' in data:
+            profile.phone_number = str(data['phone_number']).strip()
+        if 'job_title' in data:
+            profile.job_title = str(data['job_title']).strip()
+        if 'company' in data:
+            profile.company = str(data['company']).strip()
+        if 'bio' in data:
+            profile.bio = str(data['bio']).strip()
+        if 'whatsapp_number' in data:
+            profile.whatsapp_number = str(data['whatsapp_number']).strip()
+        if 'department' in data:
+            profile.department = str(data['department']).strip()
+        if 'preferred_language' in data:
+            profile.preferred_language = str(data['preferred_language']).strip()
+
+        # 5. Handle Password Change if requested
+        new_password = data.get('new_password', '').strip()
+        if new_password:
+            current_password = data.get('current_password', '').strip()
+            if not user.is_superuser and not user.check_password(current_password):
+                return Response({'error': 'Current password does not match. Please verify and try again.'}, status=status.HTTP_400_BAD_REQUEST)
+            if len(new_password) < 6:
+                return Response({'error': 'New password must be at least 6 characters long.'}, status=status.HTTP_400_BAD_REQUEST)
+            user.set_password(new_password)
+
+        user.save()
+        profile.save()
+
+        # Sync updated phone number to site database records for SDMs, RDMs, and FSEs
+        if profile.phone_number:
+            full_name = f"{user.first_name} {user.last_name}".strip() or user.username
+            Site.objects.filter(sdm_name__iexact=full_name).update(sdm_phone=profile.phone_number)
+            Site.objects.filter(mtn_rdm_name__iexact=full_name).update(mtn_rdm_phone=profile.phone_number)
+            Site.objects.filter(smc_fse_name__iexact=full_name).update(smc_fse_phone=profile.phone_number)
+
+        role, assigned_count, user_state, all_assigned_states = self._get_user_role_and_sites(user)
+        avatar_url = profile.avatar.url if (profile.avatar and hasattr(profile.avatar, 'url')) else None
+
+        return Response({
+            'message': 'Profile updated successfully!',
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'full_name': f"{user.first_name} {user.last_name}".strip() or user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'email': user.email or f"{user.username}@fcttelecom.ng",
+                'avatar_url': avatar_url,
+                'phone': profile.phone_number,
+                'phone_number': profile.phone_number,
+                'job_title': profile.job_title or role,
+                'company': profile.company,
+                'bio': profile.bio,
+                'whatsapp_number': profile.whatsapp_number or profile.phone_number,
+                'department': profile.department,
+                'preferred_language': profile.preferred_language,
+                'role': role,
+                'is_superuser': user.is_superuser,
+                'assigned_sites_count': assigned_count,
+                'state': user_state,
+                'assigned_states': all_assigned_states
+            }
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        return self.post(request)
+
+    def patch(self, request):
+        return self.post(request)
+
+
 class SDMLoginView(APIView):
     def post(self, request):
         client_ip = request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR', '127.0.0.1')
@@ -276,20 +564,34 @@ class SDMLoginView(APIView):
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
 
+        # Ensure user profile exists
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        avatar_url = profile.avatar.url if (profile.avatar and hasattr(profile.avatar, 'url')) else None
+
         full_name = f"{user.first_name} {user.last_name}".strip() or user.username
+        clean_user_name = full_name if (user.first_name and user.last_name) else user.username.replace('_', ' ')
+        parts = [p for p in clean_user_name.split() if len(p) >= 3]
         
         # Check if user is in 'SMC FSE Engineer' group or has matching FSE sites
         is_fse_group = user.groups.filter(name='SMC FSE Engineer').exists()
-        clean_user_name = full_name if (user.first_name and user.last_name) else user.username.replace('_', ' ')
-        parts = [p for p in clean_user_name.split() if len(p) >= 3]
-
         fse_query = Q(smc_fse_name__iexact=full_name) | Q(smc_fse_name__iexact=clean_user_name) | Q(smc_fse_name__icontains=full_name)
         if len(parts) >= 2:
             fse_query |= (Q(smc_fse_name__icontains=parts[0]) & Q(smc_fse_name__icontains=parts[-1]))
         elif user.first_name:
             fse_query |= Q(smc_fse_name__icontains=user.first_name)
-
         fse_sites_qs = Site.objects.filter(fse_query)
+
+        # Check if user is in 'MTN RDM' group or has matching RDM sites
+        is_rdm_group = user.groups.filter(name='MTN RDM').exists() or user.username.startswith('rdm_') or user.username in ['mtn_rdm', 'rdmadmin']
+        rdm_query = Q(mtn_rdm_name__iexact=full_name) | Q(mtn_rdm_name__icontains=full_name) | Q(mtn_rdm_name__iexact=clean_user_name)
+        if len(parts) >= 2:
+            rdm_query |= (Q(mtn_rdm_name__icontains=parts[0]) & Q(mtn_rdm_name__icontains=parts[-1]))
+        elif user.first_name:
+            rdm_query |= Q(mtn_rdm_name__icontains=user.first_name)
+
+        rdm_sites_qs = Site.objects.filter(rdm_query)
+        if (is_rdm_group or user.username in ['mtn_rdm', 'rdmadmin']) and not rdm_sites_qs.exists():
+            rdm_sites_qs = Site.objects.filter(mtn_rdm_name__icontains='Onikola')
 
         sdm_sites_qs = Site.objects.filter(sdm_name__iexact=full_name)
         if not sdm_sites_qs.exists() and full_name:
@@ -299,21 +601,70 @@ class SDMLoginView(APIView):
         if not sdm_sites_qs.exists() and user.first_name:
             sdm_sites_qs = Site.objects.filter(sdm_name__icontains=user.first_name)
 
-        is_fse = is_fse_group or (fse_sites_qs.exists() and not sdm_sites_qs.exists())
+        is_rdm = is_rdm_group or (rdm_sites_qs.exists() and not is_fse_group and not sdm_sites_qs.exists())
+        is_fse = is_fse_group or (fse_sites_qs.exists() and not sdm_sites_qs.exists() and not is_rdm)
 
+        sdms_under_rdm = []
         if user.is_superuser:
             role = 'Super Administrator'
             assigned_sites_qs = Site.objects.all()
             assigned_count = assigned_sites_qs.count()
             user_state = 'ALL'
             all_assigned_states = ['ALL']
-            phone = '0800-000-000'
+            phone = profile.phone_number or '0800-000-000'
+        elif is_rdm:
+            role = 'MTN RDM'
+            assigned_sites_qs = rdm_sites_qs
+            assigned_count = assigned_sites_qs.count()
+            site_sample = assigned_sites_qs.first()
+            phone = profile.phone_number or getattr(site_sample, 'mtn_rdm_phone', None) or '0800-000-000'
+
+            all_states_raw = assigned_sites_qs.values_list('state', flat=True).distinct()
+            all_assigned_states = []
+            for st in all_states_raw:
+                if not st: continue
+                clean_st = st.strip().upper()
+                if clean_st.startswith('RT') and len(clean_st) > 2:
+                    clean_st = clean_st[2:]
+                if clean_st and clean_st not in all_assigned_states:
+                    all_assigned_states.append(clean_st)
+
+            user_state = ', '.join(all_assigned_states[:3]) if all_assigned_states else 'Regional Command'
+
+            # Extract list of SDMs under this RDM with live status
+            for s_name in assigned_sites_qs.exclude(sdm_name='').exclude(sdm_name__isnull=True).values_list('sdm_name', flat=True).distinct():
+                s_sites = assigned_sites_qs.filter(sdm_name=s_name)
+                s_sample = s_sites.first()
+                s_states = list(s_sites.exclude(state='').exclude(state__isnull=True).values_list('state', flat=True).distinct())
+                clean_s_states = []
+                for st in s_states:
+                    cst = st.strip().upper()
+                    if cst.startswith('RT') and len(cst) > 2:
+                        cst = cst[2:]
+                    if cst and cst not in clean_s_states:
+                        clean_s_states.append(cst)
+
+                cnt = s_sites.count()
+                down_cnt = s_sites.filter(Q(is_down=True) | Q(operational_status__icontains='down')).count()
+                crit_cnt = s_sites.filter(Q(is_critical=True) | Q(priority__icontains='P1')).count()
+
+                sdms_under_rdm.append({
+                    'name': s_name,
+                    'phone': getattr(s_sample, 'sdm_phone', None) or 'N/A',
+                    'states': clean_s_states,
+                    'primary_state': clean_s_states[0] if clean_s_states else 'FCT',
+                    'sites_count': cnt,
+                    'sites_down': down_cnt,
+                    'critical_sites': crit_cnt,
+                    'operational_percentage': round(100.0 - (down_cnt / max(1, cnt) * 100.0), 2)
+                })
+            sdms_under_rdm.sort(key=lambda x: x['sites_count'], reverse=True)
         elif is_fse:
             role = 'SMC FSE Engineer'
             assigned_sites_qs = fse_sites_qs
             assigned_count = assigned_sites_qs.count()
             site_sample = assigned_sites_qs.first()
-            phone = getattr(site_sample, 'smc_fse_phone', None) or '0800-000-000'
+            phone = profile.phone_number or getattr(site_sample, 'smc_fse_phone', None) or '0800-000-000'
             user_state = 'FSE_ONLY'
             all_assigned_states = ['FSE_ONLY']
         else:
@@ -321,7 +672,7 @@ class SDMLoginView(APIView):
             assigned_sites_qs = sdm_sites_qs
             assigned_count = assigned_sites_qs.count()
             site_sample = assigned_sites_qs.first()
-            phone = getattr(site_sample, 'sdm_phone', None) or '0800-000-000'
+            phone = profile.phone_number or getattr(site_sample, 'sdm_phone', None) or '0800-000-000'
 
             all_states_raw = assigned_sites_qs.values_list('state', flat=True).distinct()
             all_assigned_states = []
@@ -344,14 +695,26 @@ class SDMLoginView(APIView):
                 'id': user.id,
                 'username': user.username,
                 'full_name': full_name,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
                 'email': user.email or f"{user.username}@fcttelecom.ng",
+                'avatar_url': avatar_url,
                 'phone': phone,
+                'phone_number': profile.phone_number or phone,
+                'job_title': profile.job_title or role,
+                'company': profile.company or ('MTN Nigeria' if role == 'MTN RDM' else ('Huawei / SMC' if role == 'SMC FSE Engineer' else ('IHS Towers' if role == 'State Delivery Manager' else 'FCT Telecom Network'))),
+                'bio': profile.bio or '',
+                'whatsapp_number': profile.whatsapp_number or phone,
+                'department': profile.department or 'Network Operations',
+                'preferred_language': profile.preferred_language or 'en',
                 'role': role,
                 'is_superuser': user.is_superuser,
                 'assigned_sites_count': assigned_count,
                 'state': user_state,
                 'assigned_states': all_assigned_states,
-                'region': f"{user_state} Territory" if role != 'Super Administrator' and role != 'SMC FSE Engineer' else ('All Nigeria State Territories' if user.is_superuser else f'Assigned FSE Sites ({assigned_count} Sites)')
+                'sdms_under_rdm': sdms_under_rdm,
+                'assigned_sdms_count': len(sdms_under_rdm),
+                'region': f"MTN Regional Command ({len(sdms_under_rdm)} SDMs • {assigned_count:,} Sites)" if role == 'MTN RDM' else (f"{user_state} Territory" if role != 'Super Administrator' and role != 'SMC FSE Engineer' else ('All Nigeria State Territories' if user.is_superuser else f'Assigned FSE Sites ({assigned_count} Sites)'))
             }
         })
 
@@ -363,10 +726,13 @@ class SDMListView(APIView):
         counts_raw = Site.objects.exclude(sdm_name__isnull=True).exclude(sdm_name='').values('sdm_name').annotate(cnt=Count('id'))
         counts_dict = {item['sdm_name'].strip().lower(): item['cnt'] for item in counts_raw}
 
+        rdm_counts_raw = Site.objects.exclude(mtn_rdm_name__isnull=True).exclude(mtn_rdm_name='').values('mtn_rdm_name').annotate(cnt=Count('id'))
+        rdm_counts_dict = {item['mtn_rdm_name'].strip().lower(): item['cnt'] for item in rdm_counts_raw}
+
         fse_counts_raw = Site.objects.exclude(smc_fse_name__isnull=True).exclude(smc_fse_name='').values('smc_fse_name').annotate(cnt=Count('id'))
         fse_counts_dict = {item['smc_fse_name'].strip().lower(): item['cnt'] for item in fse_counts_raw}
 
-        users = User.objects.all().order_by('-is_superuser', 'first_name')
+        users = User.objects.all().select_related('profile').order_by('-is_superuser', 'first_name')
         sdm_list = []
         registered_names = set()
         registered_usernames = set()
@@ -378,10 +744,20 @@ class SDMListView(APIView):
             if u.first_name:
                 registered_names.add(u.first_name.lower())
 
+            prof = getattr(u, 'profile', None)
+            avatar_url = prof.avatar.url if (prof and prof.avatar and hasattr(prof.avatar, 'url')) else None
+            phone_val = prof.phone_number if prof else ''
+
+            is_rdm_group = u.groups.filter(name='MTN RDM').exists() or u.username.startswith('rdm_') or u.username in ['mtn_rdm', 'rdmadmin']
             is_fse_group = u.groups.filter(name='SMC FSE Engineer').exists()
             if u.is_superuser:
                 role = 'Super Administrator'
                 cnt = total_sites_count
+            elif is_rdm_group:
+                role = 'MTN RDM'
+                cnt = rdm_counts_dict.get(full_name.lower(), 0)
+                if cnt == 0 and u.first_name:
+                    cnt = rdm_counts_dict.get(u.first_name.lower(), 0)
             elif is_fse_group:
                 role = 'SMC FSE Engineer'
                 cnt = fse_counts_dict.get(full_name.lower(), 0)
@@ -398,6 +774,8 @@ class SDMListView(APIView):
                 'username': u.username,
                 'full_name': full_name,
                 'email': u.email,
+                'avatar_url': avatar_url,
+                'phone': phone_val,
                 'is_superuser': u.is_superuser,
                 'role': role,
                 'assigned_sites_count': cnt,
@@ -484,7 +862,11 @@ class RegisterSDMView(APIView):
             is_staff=True
         )
 
-        if role == 'SMC FSE Engineer':
+        if role in ['MTN RDM', 'Regional Delivery Manager', 'RDM']:
+            from django.contrib.auth.models import Group
+            group, _ = Group.objects.get_or_create(name='MTN RDM')
+            user.groups.add(group)
+        elif role == 'SMC FSE Engineer':
             from django.contrib.auth.models import Group
             group, _ = Group.objects.get_or_create(name='SMC FSE Engineer')
             user.groups.add(group)
@@ -500,6 +882,75 @@ class RegisterSDMView(APIView):
                 'role': role
             }
         }, status=status.HTTP_201_CREATED)
+
+
+class RDMSupervisedSDMsView(APIView):
+    def get(self, request):
+        rdm_param = request.query_params.get('rdm', '') or request.query_params.get('user_name', '')
+        if request.user and request.user.is_authenticated:
+            full_n = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
+            if request.user.groups.filter(name__icontains='RDM').exists() or not rdm_param:
+                rdm_param = rdm_param or full_n
+
+        if not rdm_param or rdm_param.lower() in ['all', 'admin', 'superuser', 'rdmadmin', 'mtn_rdm']:
+            # Fallback check
+            rdm_match = Site.objects.filter(mtn_rdm_name__icontains=rdm_param).first() if rdm_param else None
+            if rdm_match:
+                rdm_param = rdm_match.mtn_rdm_name
+            else:
+                rdm_param = 'Onikola Lukman Adesina'
+
+        rdm_q = Q(mtn_rdm_name__iexact=rdm_param) | Q(mtn_rdm_name__icontains=rdm_param)
+        parts = [p for p in rdm_param.split() if len(p) >= 3]
+        if len(parts) >= 2:
+            rdm_q |= (Q(mtn_rdm_name__icontains=parts[0]) & Q(mtn_rdm_name__icontains=parts[-1]))
+        elif len(parts) == 1:
+            rdm_q |= Q(mtn_rdm_name__icontains=parts[0])
+
+        rdm_sites = Site.objects.filter(rdm_q)
+        total_regional_sites = rdm_sites.count()
+        total_sites_down = rdm_sites.filter(Q(is_down=True) | Q(operational_status__icontains='down')).count()
+        total_critical = rdm_sites.filter(Q(is_critical=True) | Q(priority__icontains='P1')).count()
+
+        sdms_list = []
+        for s_name in rdm_sites.exclude(sdm_name='').exclude(sdm_name__isnull=True).values_list('sdm_name', flat=True).distinct():
+            s_sites = rdm_sites.filter(sdm_name=s_name)
+            s_sample = s_sites.first()
+            s_states = list(s_sites.exclude(state='').exclude(state__isnull=True).values_list('state', flat=True).distinct())
+            clean_states = []
+            for st in s_states:
+                clean_st = st.strip().upper()
+                if clean_st.startswith('RT') and len(clean_st) > 2:
+                    clean_st = clean_st[2:]
+                if clean_st and clean_st not in clean_states:
+                    clean_states.append(clean_st)
+
+            cnt = s_sites.count()
+            down_cnt = s_sites.filter(Q(is_down=True) | Q(operational_status__icontains='down')).count()
+            crit_cnt = s_sites.filter(Q(is_critical=True) | Q(priority__icontains='P1')).count()
+            op_pct = round(100.0 - (down_cnt / max(1, cnt) * 100.0), 2)
+
+            sdms_list.append({
+                'name': s_name,
+                'phone': getattr(s_sample, 'sdm_phone', None) or 'N/A',
+                'states': clean_states,
+                'primary_state': clean_states[0] if clean_states else 'FCT',
+                'sites_count': cnt,
+                'sites_down': down_cnt,
+                'critical_sites': crit_cnt,
+                'operational_percentage': op_pct
+            })
+
+        sdms_list.sort(key=lambda x: x['sites_count'], reverse=True)
+
+        return Response({
+            'rdm_name': rdm_param,
+            'total_sites': total_regional_sites,
+            'total_sites_down': total_sites_down,
+            'total_critical': total_critical,
+            'total_sdms': len(sdms_list),
+            'sdms': sdms_list
+        })
 
 
 class SyncFSEAccountsView(APIView):
@@ -558,6 +1009,8 @@ class SyncFSEAccountsView(APIView):
 
 class DashboardStatsView(APIView):
     def get(self, request):
+        user_role = request.query_params.get('user_role', '') or request.query_params.get('role', '')
+        rdm = request.query_params.get('rdm', '').strip()
         sdm = request.query_params.get('sdm', '').strip()
         fse = request.query_params.get('fse', '').strip()
 
@@ -568,11 +1021,37 @@ class DashboardStatsView(APIView):
         sites_down = sites_qs.filter(Q(is_down=True) | Q(operational_status__icontains='down')).count()
         critical_sites = sites_qs.filter(Q(is_critical=True) | Q(priority__icontains='P1') | Q(priority__icontains='Critical')).count()
 
+        is_superuser = (
+            request.query_params.get('is_superuser', '').lower() == 'true' or
+            getattr(request.user, 'is_superuser', False)
+        )
+        is_rdm = user_role in ['MTN RDM', 'Regional Delivery Manager', 'RDM'] or (rdm and rdm != 'All')
+
         notes_qs = SiteNote.objects.all()
-        if sdm and sdm != 'All':
-            notes_qs = notes_qs.filter(site__sdm_name__icontains=sdm)
-        if fse and fse != 'All':
-            notes_qs = notes_qs.filter(site__smc_fse_name__icontains=fse)
+        wa_qs = WhatsAppMessage.objects.all()
+
+        if not is_superuser:
+            if is_rdm:
+                rdm_target = rdm or (f"{request.user.first_name} {request.user.last_name}".strip() if request.user.is_authenticated else 'Onikola')
+                rdm_site_ids = list(sites_qs.values_list('id', flat=True))
+                notes_qs = notes_qs.filter(
+                    Q(site_id__in=rdm_site_ids) | 
+                    Q(site__mtn_rdm_name__icontains=rdm_target) | 
+                    Q(created_by__icontains=rdm_target)
+                )
+                wa_qs = wa_qs.filter(
+                    Q(site_id__in=rdm_site_ids) | 
+                    Q(site__mtn_rdm_name__icontains=rdm_target)
+                )
+                if sdm and sdm != 'All':
+                    notes_qs = notes_qs.filter(Q(site__sdm_name__icontains=sdm) | Q(created_by__icontains=sdm))
+                    wa_qs = wa_qs.filter(site__sdm_name__icontains=sdm)
+            elif sdm and sdm != 'All':
+                notes_qs = notes_qs.filter(Q(site__sdm_name__icontains=sdm) | Q(created_by__icontains=sdm))
+                wa_qs = wa_qs.filter(site__sdm_name__icontains=sdm)
+            elif fse and fse != 'All':
+                notes_qs = notes_qs.filter(Q(site__smc_fse_name__icontains=fse) | Q(created_by__icontains=fse))
+                wa_qs = wa_qs.filter(site__smc_fse_name__icontains=fse)
 
         generator_faults = notes_qs.filter(category='Generator', status__in=['Open', 'In Progress', 'Escalated']).count()
         transmission_faults = notes_qs.filter(category='Transmission', status__in=['Open', 'In Progress', 'Escalated']).count()
@@ -580,10 +1059,6 @@ class DashboardStatsView(APIView):
         
         open_incidents = notes_qs.filter(status__in=['Open', 'In Progress', 'Escalated']).count()
         recent_notes_count = notes_qs.count()
-        
-        wa_qs = WhatsAppMessage.objects.all()
-        if sdm and sdm != 'All':
-            wa_qs = wa_qs.filter(site__sdm_name__icontains=sdm)
         recent_whatsapp_count = wa_qs.count()
 
         ihs_fiber_qs = IHSFiberLink.objects.all()
@@ -647,16 +1122,25 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 class AssignStateToSDMView(APIView):
     def post(self, request):
-        sdm_name = request.data.get('sdm_name', '').strip()
-        raw_state = request.data.get('state', '').strip()
+        target_name = request.data.get('rdm_name', '') or request.data.get('sdm_name', '') or request.data.get('name', '').strip()
+        target_role = request.data.get('role', '') or request.data.get('target_type', 'sdm').strip()
+        raw_states = request.data.get('states', None) or request.data.get('state', '')
         site_ids = request.data.get('site_ids', None)
-        sdm_phone = request.data.get('sdm_phone', '').strip()
+        phone = request.data.get('phone', '') or request.data.get('sdm_phone', '') or request.data.get('rdm_phone', '').strip()
 
-        if not sdm_name:
-            return Response({'error': 'SDM Manager Name is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not target_name:
+            return Response({'error': 'Manager / RDM Name is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if target is an RDM
+        is_rdm = target_role.lower() in ['rdm', 'mtn rdm', 'regional delivery manager'] or 'rdm' in target_role.lower()
+        if not is_rdm:
+            # Check user groups / username
+            u = User.objects.filter(Q(first_name__iexact=target_name) | Q(username__iexact=target_name.lower().replace(' ', '_'))).first()
+            if u and (u.groups.filter(name__icontains='RDM').exists() or u.username.startswith('rdm_') or u.username in ['mtn_rdm', 'rdmadmin']):
+                is_rdm = True
 
         matching_sites = Site.objects.none()
-        clean_state = ''
+        clean_states = []
 
         if site_ids:
             if isinstance(site_ids, str):
@@ -667,35 +1151,59 @@ class AssignStateToSDMView(APIView):
                 s_list = []
             matching_sites = Site.objects.filter(ihs_site_id__in=s_list)
 
-        elif raw_state:
-            clean_state = raw_state.split('(')[0].strip()
-            matching_sites = Site.objects.filter(Q(state__iexact=clean_state) | Q(state__iexact=f"RT{clean_state}"))
-            if matching_sites.count() == 0:
-                matching_sites = Site.objects.filter(state__icontains=clean_state)
+        elif raw_states:
+            raw_list = []
+            if isinstance(raw_states, list):
+                raw_list = raw_states
+            elif isinstance(raw_states, str):
+                raw_list = [s.strip() for s in raw_states.split(',') if s.strip()]
+
+            for raw in raw_list:
+                st = str(raw).split('(')[0].strip().upper()
+                if st.startswith('RT') and len(st) > 2:
+                    st = st[2:]
+                if st and st not in clean_states:
+                    clean_states.append(st)
+
+            if clean_states:
+                state_q = Q()
+                for st in clean_states:
+                    state_q |= Q(state__iexact=st) | Q(state__iexact=f"RT{st}") | Q(state__icontains=st)
+                matching_sites = Site.objects.filter(state_q)
 
         total_matching = matching_sites.count()
         if total_matching == 0:
-            return Response({'error': 'No matching telecom sites found for assignment.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'No matching telecom sites found for the specified states/sites.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Update sdm_name (and phone if provided) across all matching sites
-        update_data = {'sdm_name': sdm_name}
-        if sdm_phone:
-            update_data['sdm_phone'] = sdm_phone
+        # Apply update depending on whether target is RDM or SDM
+        if is_rdm:
+            update_data = {'mtn_rdm_name': target_name}
+            if phone:
+                update_data['mtn_rdm_phone'] = phone
+            updated_rows = matching_sites.update(**update_data)
+            
+            sdms_count = matching_sites.exclude(sdm_name='').exclude(sdm_name__isnull=True).values('sdm_name').distinct().count()
+            msg = f"Successfully assigned {len(clean_states)} State(s) ({', '.join(clean_states)}) with {updated_rows:,} sites and {sdms_count} supervised SDMs to MTN RDM {target_name}!"
+        else:
+            update_data = {'sdm_name': target_name}
+            if phone:
+                update_data['sdm_phone'] = phone
+            updated_rows = matching_sites.update(**update_data)
+            msg = f"Successfully assigned {len(clean_states) if clean_states else 1} State(s) ({', '.join(clean_states) if clean_states else 'Custom Sites'}) with {updated_rows:,} site(s) to SDM Manager {target_name}!"
 
-        updated_rows = matching_sites.update(**update_data)
-
-        # Sync user object if found
-        user_obj = User.objects.filter(Q(first_name__iexact=sdm_name) | Q(username__iexact=sdm_name.lower().replace(' ', '_'))).first()
+        # Sync Django user object if exists
+        user_obj = User.objects.filter(Q(first_name__iexact=target_name) | Q(username__iexact=target_name.lower().replace(' ', '_'))).first()
         if user_obj and not user_obj.first_name:
-            parts = sdm_name.split()
+            parts = target_name.split()
             user_obj.first_name = parts[0]
             user_obj.last_name = ' '.join(parts[1:]) if len(parts) > 1 else ''
             user_obj.save()
 
         return Response({
-            'message': f'Successfully assigned {updated_rows} site(s) to SDM Manager {sdm_name}!',
-            'state': clean_state,
-            'sdm_name': sdm_name,
+            'message': msg,
+            'target_name': target_name,
+            'role': 'MTN RDM' if is_rdm else 'State Delivery Manager',
+            'states': clean_states,
             'updated_count': updated_rows
         }, status=status.HTTP_200_OK)
 
@@ -1286,6 +1794,11 @@ def get_availability_queryset(request):
             lga_q |= Q(lga__icontains='AMAC') | Q(lga__icontains='MUNICIPAL')
         qs = qs.filter(lga_q)
 
+    territory = request.query_params.get('territory', None)
+    if territory and territory != 'All':
+        clean_terr = territory.strip().upper()
+        qs = qs.filter(Q(territory__iexact=clean_terr) | Q(territory__icontains=clean_terr))
+
     site_ids_param = request.query_params.get('site_ids', None) or (request.data.get('site_ids', None) if hasattr(request, 'data') and isinstance(request.data, dict) else None)
     search = request.query_params.get('search', None)
 
@@ -1299,7 +1812,21 @@ def get_availability_queryset(request):
             raw_tokens = [t.strip() for t in re.split(r'[,;\s\n\r\t]+', str(site_ids_param)) if t.strip()]
         clean_tokens = [t.upper() for t in raw_tokens if t]
         if clean_tokens:
-            q_conditions = [Q(site_id__iexact=t) | Q(site_id__icontains=t) | Q(element_name__icontains=t) for t in clean_tokens]
+            expanded_tokens = set(clean_tokens)
+            for t in clean_tokens:
+                expanded_tokens.add('U' + t)
+                expanded_tokens.add('L' + t)
+                expanded_tokens.add('N' + t)
+                expanded_tokens.add('LTE' + t)
+                if len(t) >= 5 and (t.startswith('L') or t.startswith('U') or t.startswith('N')):
+                    expanded_tokens.add(t[1:])
+                elif len(t) >= 6 and t.startswith('LTE'):
+                    expanded_tokens.add(t[3:])
+            q_conditions = [
+                Q(site_id__in=expanded_tokens) | Q(element_name__in=expanded_tokens) |
+                Q(site_id__iexact=t) | Q(site_id__icontains=t) | Q(element_name__icontains=t)
+                for t in clean_tokens
+            ]
             qs = qs.filter(reduce(operator.or_, q_conditions))
     elif search:
         import re
@@ -1314,13 +1841,28 @@ def get_availability_queryset(request):
         
         if len(tokens) > 1:
             clean_tokens = [t.upper() for t in tokens if t]
-            q_conditions = [Q(site_id__iexact=t) | Q(site_id__icontains=t) | Q(element_name__icontains=t) for t in clean_tokens]
+            expanded_tokens = set(clean_tokens)
+            for t in clean_tokens:
+                expanded_tokens.add('U' + t)
+                expanded_tokens.add('L' + t)
+                expanded_tokens.add('N' + t)
+                expanded_tokens.add('LTE' + t)
+                if len(t) >= 5 and (t.startswith('L') or t.startswith('U') or t.startswith('N')):
+                    expanded_tokens.add(t[1:])
+                elif len(t) >= 6 and t.startswith('LTE'):
+                    expanded_tokens.add(t[3:])
+            q_conditions = [
+                Q(site_id__in=expanded_tokens) | Q(element_name__in=expanded_tokens) |
+                Q(site_id__iexact=t) | Q(site_id__icontains=t) | Q(element_name__icontains=t)
+                for t in clean_tokens
+            ]
             qs = qs.filter(reduce(operator.or_, q_conditions))
         else:
             qs = qs.filter(
                 Q(site_id__icontains=search_str) |
                 Q(element_name__icontains=search_str) |
                 Q(lga__icontains=search_str) |
+                Q(territory__icontains=search_str) |
                 Q(state__icontains=search_str) |
                 Q(tower_co__icontains=search_str) |
                 Q(vendor__icontains=search_str)
@@ -1400,6 +1942,8 @@ def get_availability_queryset(request):
         qs = qs.order_by('site_id')
     elif sort_by == 'state':
         qs = qs.order_by('state', 'site_id')
+    elif sort_by == 'territory':
+        qs = qs.order_by('territory', 'site_id')
     elif sort_by == 'lga':
         qs = qs.order_by('lga', 'site_id')
     else:
@@ -1498,6 +2042,7 @@ class DailyAvailabilityStatsView(APIView):
 
         unique_states = sorted(list(set([s.strip().upper() for s in all_states if s])))
 
+        unique_territories = sorted(list(set([t.strip().upper() for t in qs.values_list('territory', flat=True).distinct() if t])))
         unique_lgas = sorted(list(set([l.strip().upper() for l in qs.values_list('lga', flat=True).distinct() if l])))[:150]
         unique_tower_cos = sorted(list(set([t.strip().upper() for t in qs.values_list('tower_co', flat=True).distinct() if t])))
         unique_vendors = sorted(list(set([v.strip().upper() for v in qs.values_list('vendor', flat=True).distinct() if v])))
@@ -1529,6 +2074,7 @@ class DailyAvailabilityStatsView(APIView):
                 'all_detected_dates': all_detected_dates,
                 'is_superuser': is_superuser,
                 'available_states': unique_states,
+                'available_territories': unique_territories,
                 'available_lgas': unique_lgas,
                 'available_tower_cos': unique_tower_cos,
                 'available_vendors': unique_vendors,
@@ -1545,7 +2091,7 @@ class DailyAvailabilityStatsView(APIView):
             })
 
         all_records = list(qs.values(
-            'id', 'site_id', 'tech', 'element_name', 'state', 'lga', 'tower_co', 'vendor', 'status',
+            'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory', 'tower_co', 'vendor', 'status',
             'avg_availability', 'latest_availability', 'daily_scores'
         ))
 
@@ -1677,6 +2223,7 @@ class DailyAvailabilityStatsView(APIView):
             'all_detected_dates': all_detected_dates,
             'is_superuser': is_superuser,
             'available_states': unique_states,
+            'available_territories': unique_territories,
             'available_lgas': unique_lgas,
             'available_tower_cos': unique_tower_cos,
             'available_vendors': unique_vendors,
@@ -1700,7 +2247,7 @@ class DailyAvailabilityListView(APIView):
         qs, _, (target_dates, date_label) = get_availability_queryset(request)
 
         records = list(qs.values(
-            'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga',
+            'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory',
             'tower_co', 'vendor', 'status', 'avg_availability', 'latest_availability', 'daily_scores'
         ))
 
@@ -1763,6 +2310,8 @@ class DailyAvailabilityListView(APIView):
             processed.sort(key=lambda x: str(x['site_id']))
         elif sort_by == 'state':
             processed.sort(key=lambda x: (str(x['state']), str(x['site_id'])))
+        elif sort_by == 'territory':
+            processed.sort(key=lambda x: (str(x.get('territory') or ''), str(x['site_id'])))
         elif sort_by == 'lga':
             processed.sort(key=lambda x: (str(x['lga']), str(x['site_id'])))
         else: # worst
@@ -1877,7 +2426,7 @@ class DailyAvailabilityExportView(APIView):
             ws_summary[f'A{row}'].border = thin_border
             ws_summary[f'B{row}'].border = thin_border
 
-        matrix_headers = ["SITE ID", "TECH", "STATE", "LGA", "TOWER CO", "VENDOR", "STATUS", "PERIOD AVAIL %", "MONTH AVG %", "LATEST DAY %", "SLA STATUS"]
+        matrix_headers = ["SITE ID", "TECH", "STATE", "TERRITORY", "LGA", "TOWER CO", "VENDOR", "STATUS", "PERIOD AVAIL %", "MONTH AVG %", "LATEST DAY %", "SLA STATUS"]
         ws_matrix.append(matrix_headers)
         for col_num in range(1, len(matrix_headers) + 1):
             c = ws_matrix.cell(row=1, column=col_num)
@@ -1898,6 +2447,7 @@ class DailyAvailabilityExportView(APIView):
                 r.site_id,
                 r.tech,
                 r.state,
+                r.territory or '',
                 r.lga,
                 r.tower_co,
                 r.vendor,
@@ -2761,3 +3311,176 @@ class ResetHourlyBaseAvailabilityView(APIView):
             return Response({'message': 'Successfully reset Hourly Availability to base dataset 12AM.xlsb.', 'details': result}, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+
+# -------------------------------------------------------------
+# 📡 4G LTE KML CELL SECTORS & COVERAGE VIEWS
+# -------------------------------------------------------------
+
+DEFAULT_KML_BASE_PATH = '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml/ABUJA REGION KML 07292026 (4G).kml'
+
+class SiteCellSectorsView(APIView):
+    """
+    Returns all 4G LTE cell sectors for a given Site ID
+    Includes antenna azimuths, PCIs, TACs, Cell IDs, and polygon coverage coordinates.
+    """
+    def get(self, request, site_id):
+        clean_id = site_id.strip()
+        sectors = CellSector.objects.filter(
+            Q(site_id__iexact=clean_id) |
+            Q(site_ref__ihs_site_id__iexact=clean_id) |
+            Q(site_ref__mtn_id__iexact=clean_id)
+        ).order_by('cell_name')
+
+        serializer = CellSectorSerializer(sectors, many=True)
+        return Response({
+            'site_id': clean_id,
+            'total_sectors': sectors.count(),
+            'sectors': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class CellSectorListView(APIView):
+    """
+    Query cell sectors across the network by Site ID, PCI, TAC, Cell Name, Search Query, or Map Bounding Box.
+    """
+    def get(self, request):
+        qs = CellSector.objects.all()
+
+        site_ids = request.query_params.get('site_ids')
+        if site_ids:
+            s_list = [x.strip().upper() for x in site_ids.split(',') if x.strip()]
+            if s_list:
+                qs = qs.filter(site_id__in=s_list)
+
+        site_id = request.query_params.get('site_id')
+        if site_id:
+            qs = qs.filter(site_id__icontains=site_id.strip())
+
+        pci = request.query_params.get('pci')
+        if pci:
+            try:
+                qs = qs.filter(pci=int(pci.strip()))
+            except ValueError:
+                pass
+
+        tac = request.query_params.get('tac')
+        if tac:
+            try:
+                qs = qs.filter(tac=int(tac.strip()))
+            except ValueError:
+                pass
+
+        cell_name = request.query_params.get('cell_name')
+        if cell_name:
+            qs = qs.filter(cell_name__icontains=cell_name.strip())
+
+        search = request.query_params.get('search')
+        if search:
+            s = search.strip()
+            try:
+                num_s = int(s)
+                qs = qs.filter(
+                    Q(site_id__icontains=s) |
+                    Q(cell_name__icontains=s) |
+                    Q(pci=num_s) |
+                    Q(tac=num_s) |
+                    Q(cell_id=num_s)
+                )
+            except ValueError:
+                qs = qs.filter(
+                    Q(site_id__icontains=s) |
+                    Q(cell_name__icontains=s)
+                )
+
+        # Bounding box filter for map viewport optimization: bbox=min_lat,min_lng,max_lat,max_lng
+        bbox = request.query_params.get('bbox')
+        if bbox:
+            try:
+                parts = [float(x.strip()) for x in bbox.split(',')]
+                if len(parts) == 4:
+                    min_lat, min_lng, max_lat, max_lng = parts
+                    qs = qs.filter(
+                        latitude__gte=min_lat,
+                        latitude__lte=max_lat,
+                        longitude__gte=min_lng,
+                        longitude__lte=max_lng
+                    )
+            except Exception:
+                pass
+
+        limit_param = request.query_params.get('limit', '500')
+        try:
+            limit = min(int(limit_param), 2500)
+        except ValueError:
+            limit = 500
+
+        total_count = qs.count()
+        sectors = qs[:limit]
+        serializer = CellSectorSerializer(sectors, many=True)
+
+        return Response({
+            'count': total_count,
+            'limit': limit,
+            'results': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class KmlStatsView(APIView):
+    """
+    Returns high-level statistics and metadata about the imported 4G LTE KML coverage dataset.
+    """
+    def get(self, request):
+        total_sectors = CellSector.objects.count()
+        unique_sites = CellSector.objects.values('site_id').distinct().count()
+        matched_sites = CellSector.objects.filter(site_ref__isnull=False).values('site_id').distinct().count()
+        unique_pcis = CellSector.objects.exclude(pci__isnull=True).values('pci').distinct().count()
+        unique_tacs = CellSector.objects.exclude(tac__isnull=True).values('tac').distinct().count()
+
+        top_pcis = list(CellSector.objects.exclude(pci__isnull=True).values('pci').annotate(count=Count('id')).order_by('-count')[:10])
+        top_tacs = list(CellSector.objects.exclude(tac__isnull=True).values('tac').annotate(count=Count('id')).order_by('-count')[:10])
+
+        return Response({
+            'dataset_name': 'ABUJA REGION KML 07292026 (4G)',
+            'tech': '4G LTE',
+            'region': 'Abuja Region (FCT, Niger, Nasarawa, Kogi, Plateau, Kaduna)',
+            'total_sectors': total_sectors,
+            'unique_sites': unique_sites,
+            'matched_sites_in_db': matched_sites,
+            'unique_pcis': unique_pcis,
+            'unique_tacs': unique_tacs,
+            'top_pcis': top_pcis,
+            'top_tacs': top_tacs,
+            'is_integrated': total_sectors > 0
+        }, status=status.HTTP_200_OK)
+
+
+class KmlImportView(APIView):
+    """
+    API endpoint to trigger KML re-ingestion or upload a new KML file.
+    """
+    def post(self, request):
+        kml_file = request.FILES.get('file')
+        region = request.data.get('region', 'Abuja Region')
+
+        if kml_file:
+            save_dir = '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml'
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, kml_file.name)
+            with open(save_path, 'wb+') as dest:
+                for chunk in kml_file.chunks():
+                    dest.write(chunk)
+            kml_path = save_path
+        else:
+            kml_path = DEFAULT_KML_BASE_PATH
+            if not os.path.exists(kml_path):
+                alt_path = '/home/mrchrys/Downloads/WhatSie/ABUJA REGION KML 07292026 (4G).kml'
+                if os.path.exists(alt_path):
+                    kml_path = alt_path
+
+        if not os.path.exists(kml_path):
+            return Response({'error': f'KML file not found at {kml_path}'}, status=status.HTTP_404_NOT_FOUND)
+
+        res = parse_and_import_kml(kml_path, region_name=region)
+        return Response(res, status=status.HTTP_200_OK)
+

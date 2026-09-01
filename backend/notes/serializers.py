@@ -10,6 +10,7 @@ class SiteAttachmentSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class SiteNoteSerializer(serializers.ModelSerializer):
+    site_id = serializers.CharField(source='site.ihs_site_id', read_only=True)
     site_ihs_id = serializers.CharField(source='site.ihs_site_id', read_only=True)
     site_cluster = serializers.CharField(source='site.cluster_name', read_only=True)
     attachments = SiteAttachmentSerializer(many=True, read_only=True)

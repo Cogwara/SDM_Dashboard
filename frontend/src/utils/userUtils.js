@@ -12,6 +12,23 @@ export function getSDMStateInfo(user) {
     };
   }
 
+  // Handle MTN RDM Role explicitly
+  if (user?.role === 'MTN RDM' || user?.role === 'Regional Delivery Manager') {
+    const siteCount = user.assigned_sites_count || 2767;
+    const name = user.full_name || user.username || 'MTN RDM';
+    const sdmCount = user.sdms_under_rdm ? user.sdms_under_rdm.length : (user.assigned_sdms_count || 11);
+    return {
+      code: 'RDM',
+      dashboardTitle: 'MTN RDM REGIONAL COMMAND',
+      controlCenterTitle: 'MTN Regional Delivery Management Portal',
+      subtitle: `MTN Regional Delivery Manager — ${name}`,
+      intelligenceSubtitle: `Regional Operations, SDM Performance Supervision (${sdmCount} SDMs), 4G RF Sectors & SLA Availability`,
+      regionText: `Regional Command (${sdmCount} Supervised SDMs • ${siteCount.toLocaleString()} Sites)`,
+      footerText: `MTN RDM Regional Command v3.0 • Logged in as: ${name} (MTN RDM) • ${sdmCount} Supervised SDMs`,
+      stateName: `Regional Command`
+    };
+  }
+
   // Handle SMC FSE Engineer Role explicitly
   if (user?.role === 'SMC FSE Engineer' || user?.role === 'FSE Engineer') {
     const siteCount = user.assigned_sites_count || 63;

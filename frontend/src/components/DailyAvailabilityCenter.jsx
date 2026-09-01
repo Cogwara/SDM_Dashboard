@@ -163,38 +163,6 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     return dateStr;
   };
 
-  const modalSisterRecords = React.useMemo(() => {
-    if (!selectedSiteModal || !selectedSiteModal.record) return [];
-    const curRec = selectedSiteModal.record;
-    const rawId = curRec.site_id || '';
-    const baseId = rawId.replace(/^[UL345]/i, '').toUpperCase();
-    
-    if (!records || records.length === 0) return [curRec];
-    
-    const matches = records.filter(r => {
-      if (!r || !r.site_id) return false;
-      const rRaw = r.site_id.toUpperCase();
-      const rBase = rRaw.replace(/^[UL345]/i, '');
-      return rRaw === rawId.toUpperCase() || rBase === baseId;
-    });
-
-    if (matches.length === 0) return [curRec];
-    
-    const techOrder = { '2G': 1, '3G': 2, '4G': 3, 'LTE': 3, '5G': 4 };
-    return matches.sort((a, b) => (techOrder[a.tech] || 99) - (techOrder[b.tech] || 99));
-  }, [selectedSiteModal, records]);
-
-  const modalAllDates = React.useMemo(() => {
-    if (!modalSisterRecords || modalSisterRecords.length === 0) return [];
-    const dateSet = new Set();
-    modalSisterRecords.forEach(r => {
-      if (r.daily_scores && typeof r.daily_scores === 'object') {
-        Object.keys(r.daily_scores).forEach(d => dateSet.add(d));
-      }
-    });
-    return Array.from(dateSet).sort();
-  }, [modalSisterRecords]);
-
   // LGA Operational Report State
   const [selectedLgaReport, setSelectedLgaReport] = useState(null);
   const handleGenerateLgaReport = (lgaItem) => setSelectedLgaReport(lgaItem);
@@ -202,6 +170,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
   // Filter States
   const [selectedTech, setSelectedTech] = useState('All');
   const [selectedState, setSelectedState] = useState('All');
+  const [selectedTerritory, setSelectedTerritory] = useState('All');
   const [selectedLga, setSelectedLga] = useState('All');
   const [selectedTowerCo, setSelectedTowerCo] = useState('All');
   const [selectedVendor, setSelectedVendor] = useState('All');
@@ -297,6 +266,70 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     });
   }, [stats?.all_detected_dates]);
 
+  // Modal Sister Records States & Effect (Multi-Tech Sister Fetching)
+  const [modalFetchedRecords, setModalFetchedRecords] = useState([]);
+  const [modalLoadingSisters, setModalLoadingSisters] = useState(false);
+
+  useEffect(() => {
+    if (!selectedSiteModal || !selectedSiteModal.record) {
+      setModalFetchedRecords([]);
+      return;
+    }
+    const curRec = selectedSiteModal.record;
+    const sid = curRec.site_id;
+    if (!sid) return;
+
+    let isMounted = true;
+    setModalLoadingSisters(true);
+    fetchAvailabilityRecords({
+      site_ids: sid,
+      upload_log_id: selectedArchiveLogId,
+      date_mode: dateMode,
+      date: selectedDateInput,
+      week: selectedWeek,
+      month: selectedMonth,
+      start_date: startDateInput,
+      end_date: endDateInput,
+      page_size: 50
+    }).then((res) => {
+      if (isMounted) {
+        const results = res?.results || res || [];
+        if (results.length > 0) {
+          const techOrder = { '2G': 1, '3G': 2, '4G': 3, 'LTE': 3, '5G': 4 };
+          results.sort((a, b) => (techOrder[a.tech] || 99) - (techOrder[b.tech] || 99));
+          setModalFetchedRecords(results);
+        } else {
+          setModalFetchedRecords([curRec]);
+        }
+      }
+    }).catch(() => {
+      if (isMounted) setModalFetchedRecords([curRec]);
+    }).finally(() => {
+      if (isMounted) setModalLoadingSisters(false);
+    });
+
+    return () => { isMounted = false; };
+  }, [selectedSiteModal, selectedArchiveLogId, dateMode, selectedDateInput, selectedWeek, selectedMonth, startDateInput, endDateInput]);
+
+  const modalSisterRecords = React.useMemo(() => {
+    if (modalFetchedRecords && modalFetchedRecords.length > 0) {
+      return modalFetchedRecords;
+    }
+    if (!selectedSiteModal || !selectedSiteModal.record) return [];
+    return [selectedSiteModal.record];
+  }, [modalFetchedRecords, selectedSiteModal]);
+
+  const modalAllDates = React.useMemo(() => {
+    if (!modalSisterRecords || modalSisterRecords.length === 0) return [];
+    const dateSet = new Set();
+    modalSisterRecords.forEach(r => {
+      if (r.daily_scores && typeof r.daily_scores === 'object') {
+        Object.keys(r.daily_scores).forEach(d => dateSet.add(d));
+      }
+    });
+    return Array.from(dateSet).sort();
+  }, [modalSisterRecords]);
+
   // Multi-Site Bulk List Search States
   const [isMultiSiteModalOpen, setIsMultiSiteModalOpen] = useState(false);
   const [multiSiteRawInput, setMultiSiteRawInput] = useState('');
@@ -371,6 +404,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
   const handleResetFilters = () => {
     setSelectedTech('All');
     setSelectedState('All');
+    setSelectedTerritory('All');
     setSelectedLga('All');
     setSelectedTowerCo('All');
     setSelectedVendor('All');
@@ -428,6 +462,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         is_superuser: currentUser?.is_superuser ? 'true' : 'false',
         user_state: stateInfo?.code,
         state: selectedState,
+        territory: selectedTerritory,
         lga: selectedLga,
         tech: selectedTech,
         tower_co: selectedTowerCo,
@@ -495,6 +530,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         is_superuser: currentUser?.is_superuser ? 'true' : 'false',
         user_state: stateInfo?.code,
         state: selectedState,
+        territory: selectedTerritory,
         lga: selectedLga,
         tech: selectedTech,
         tower_co: selectedTowerCo,
@@ -530,7 +566,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     loadStatsData();
     loadRecordsData();
   }, [
-    selectedState, selectedLga, selectedTech, selectedTowerCo, selectedVendor, selectedStatus, 
+    selectedState, selectedTerritory, selectedLga, selectedTech, selectedTowerCo, selectedVendor, selectedStatus, 
     selectedFse, sortBy, searchQuery, multiSiteParsedList, slaFilter, minAvailInput, maxAvailInput, 
     dateMode, selectedDateInput, selectedWeek, selectedMonth, startDateInput, endDateInput, page,
     selectedArchiveLogId
@@ -552,7 +588,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
       const res = await uploadAvailabilityFile(formData);
 
       if (res && res.success) {
-        setUploadMsg(`Daily Availability updated! Processed ${res.records_count.toLocaleString()} elements for date range ${res.date_range}.`);
+        setUploadMsg(`Successfully processed ${res.records_count} network elements across 2G/3G/4G/5G.`);
         setSelectedFile(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
         setSelectedArchiveLogId('active');
@@ -572,33 +608,34 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         setErrorMsg(res?.error || 'Failed to process Daily Availability spreadsheet.');
       }
     } catch (e) {
-      console.error('Availability upload error:', e);
-      setErrorMsg(e.response?.data?.error || 'Failed to upload Daily Availability file to server.');
+      console.error('Upload failed:', e);
+      setErrorMsg(e.response?.data?.error || 'Failed to upload spreadsheet.');
     } finally {
       setUploading(false);
     }
   };
 
   const handleResetBase = async () => {
-    if (!window.confirm('Reset Daily Availability back to base 2026-07-30 dataset?')) return;
+    if (!window.confirm('Are you sure you want to reset and reload the base Daily Availability database (2026-07-30.xlsb)? This will refresh all sheets.')) return;
 
     setUploading(true);
-    setUploadMsg('Resetting Daily Availability to base 2026-07-30 dataset...');
+    setUploadMsg('Restoring base Daily Availability database from server repository...');
     setErrorMsg('');
 
     try {
       const uploaderName = currentUser ? (currentUser.full_name || currentUser.username) : 'System Administrator';
       const res = await resetBaseAvailability(uploaderName);
       if (res && res.success) {
-        setUploadMsg(`Reset to base Daily Availability 2026-07-30 (${res.records_count.toLocaleString()} elements).`);
+        setUploadMsg('Base availability dataset restored successfully.');
+        await loadArchivesData();
         await loadStatsData();
         await loadRecordsData();
       } else {
-        setErrorMsg(res?.error || 'Failed to reset Daily Availability.');
+        setErrorMsg(res?.error || 'Failed to restore base availability database.');
       }
     } catch (e) {
-      console.error('Reset error:', e);
-      setErrorMsg('Error resetting Daily Availability database.');
+      console.error('Reset base failed:', e);
+      setErrorMsg(e.response?.data?.error || 'Server error while resetting base availability.');
     } finally {
       setUploading(false);
     }
@@ -620,6 +657,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
         is_superuser: currentUser?.is_superuser ? 'true' : 'false',
         user_state: stateInfo?.code,
         state: selectedState,
+        territory: selectedTerritory,
         lga: selectedLga,
         tech: selectedTech,
         tower_co: selectedTowerCo,
@@ -1115,37 +1153,48 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
 
 
 
-      {/* ENHANCED: Search & Filter Bar with Multi-Site Bulk Search and Date Mode */}
-      <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-900/60 space-y-4">
+      {/* ENHANCED & CLEANED: Search & Filter Command Deck with Territory Support */}
+      <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-900/70 space-y-3.5 shadow-xl">
         
-        {/* Row 1: Search and Basic Filters */}
-        <div className="flex flex-col lg:flex-row items-center justify-between gap-3">
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto flex-1 max-w-2xl">
-            <div className="relative flex-1 min-w-[220px]">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search Site ID, LGA, or paste multiple IDs (e.g. FC0001, FC0002)..."
-                value={searchQuery}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setSearchQuery(val);
-                  setPage(1);
-                  const parsed = parseSiteIdsFromText(val);
-                  if (parsed.length > 1) {
-                    setMultiSiteParsedList(parsed);
-                  } else if (multiSiteParsedList.length > 0 && !val) {
-                    setMultiSiteParsedList([]);
-                  }
-                }}
-                className="w-full bg-slate-950 text-xs text-white placeholder-slate-500 pl-9 pr-3 py-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
-              />
-            </div>
+        {/* Tier 1: Search and Primary Actions */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+          {/* Search Input Box */}
+          <div className="relative flex-1 min-w-[260px]">
+            <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search Site ID, LGA, Territory, Vendor, FSE, or paste multiple IDs (e.g. FC0001, FC0002)..."
+              value={searchQuery}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSearchQuery(val);
+                setPage(1);
+                const parsed = parseSiteIdsFromText(val);
+                if (parsed.length > 1) {
+                  setMultiSiteParsedList(parsed);
+                } else if (multiSiteParsedList.length > 0 && !val) {
+                  setMultiSiteParsedList([]);
+                }
+              }}
+              className="w-full bg-slate-950 text-xs text-white placeholder-slate-500 pl-10 pr-9 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono shadow-inner transition-colors"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => { setSearchQuery(''); setPage(1); }}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-white p-0.5 rounded-md hover:bg-slate-800 transition-colors"
+                title="Clear search query"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
 
+          {/* Quick Tool Actions */}
+          <div className="flex items-center gap-2 shrink-0">
             {/* Multi-Site Paste List Button */}
             <button
               onClick={() => setIsMultiSiteModalOpen(true)}
-              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-md ${
+              className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-md ${
                 multiSiteParsedList.length > 0
                   ? 'bg-cyan-500 text-slate-950 font-black border border-cyan-400 shadow-cyan-500/20'
                   : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700'
@@ -1162,33 +1211,51 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                 loadMultiSiteNotes(multiSiteParsedList.length > 0 ? multiSiteParsedList : records.map(r => r.site_id));
                 setIsMultiNotesModalOpen(true);
               }}
-              className="px-3 py-2 bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-md"
+              className="px-3.5 py-2.5 bg-purple-900/40 hover:bg-purple-800/60 text-purple-200 border border-purple-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-md"
               title="View all SDM operational notes for currently displayed sites"
             >
               <FileText className="w-3.5 h-3.5 text-purple-400" />
               <span>SDM Notes {multiSiteNotes.length > 0 ? `(${multiSiteNotes.length})` : ''}</span>
             </button>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            {/* Tech Filter */}
+            {/* Reset All Filters Button */}
+            <button
+              onClick={handleResetFilters}
+              className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white rounded-xl text-xs font-bold border border-slate-700 hover:border-cyan-500/40 flex items-center gap-1.5 transition-all shadow-md shrink-0"
+              title="Reset all filters and sorting to defaults"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Reset</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tier 2: Grouped Operational & Geographic Dropdown Filters Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-2 pt-2 border-t border-slate-800/60">
+          
+          {/* Tech Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tech</label>
             <select
               value={selectedTech}
               onChange={(e) => { setSelectedTech(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
+              className="w-full bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
             >
-              <option value="All">All Techs</option>
+              <option value="All">All Techs (2G, 3G, 4G, 5G)</option>
               <option value="2G">2G Only</option>
               <option value="3G">3G Only</option>
               <option value="4G">4G Only</option>
               <option value="5G">5G Only</option>
             </select>
+          </div>
 
-            {/* State Filter */}
+          {/* State Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">State</label>
             <select
               value={selectedState}
-              onChange={(e) => { setSelectedState(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
+              onChange={(e) => { setSelectedState(e.target.value); setSelectedTerritory('All'); setSelectedLga('All'); setPage(1); }}
+              className="w-full bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
             >
               <option value="All">
                 {currentUser?.is_superuser ? 'All States' : 'All Managed States'}
@@ -1201,57 +1268,107 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                 <option value={stateInfo?.code}>{stateInfo?.code}</option>
               )}
             </select>
+          </div>
 
-            {/* SMC FSE Engineer Filter for SDM Manager & Super Admin */}
+          {/* Territory Filter (New!) */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider block flex items-center gap-1">
+              <MapPin className="w-3 h-3 text-cyan-400" />
+              <span>Territory</span>
+            </label>
+            <select
+              value={selectedTerritory}
+              onChange={(e) => { setSelectedTerritory(e.target.value); setPage(1); }}
+              className="w-full bg-slate-950 text-xs text-cyan-300 p-2 rounded-xl border border-cyan-500/50 focus:outline-none focus:border-cyan-400 font-semibold shadow-inner"
+            >
+              <option value="All">
+                {stats?.available_territories && stats.available_territories.length > 0 
+                  ? `All Territories (${stats.available_territories.length})` 
+                  : 'All Territories'}
+              </option>
+              {stats?.available_territories && stats.available_territories.map((terr) => (
+                <option key={terr} value={terr}>{terr}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* LGA Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">LGA</label>
+            <select
+              value={selectedLga}
+              onChange={(e) => { setSelectedLga(e.target.value); setPage(1); }}
+              className="w-full bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
+            >
+              <option value="All">
+                {stats?.available_lgas && stats.available_lgas.length > 0 ? `All LGAs (${stats.available_lgas.length})` : 'All LGAs'}
+              </option>
+              {stats?.available_lgas && stats.available_lgas.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* SMC FSE Engineer Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">SMC FSE</label>
             {!isFse ? (
               <select
                 value={selectedFse}
                 onChange={(e) => { setSelectedFse(e.target.value); setPage(1); }}
-                className="bg-slate-950 text-xs text-cyan-300 p-2 rounded-xl border border-cyan-500/50 focus:outline-none focus:border-cyan-400 font-semibold shadow-inner"
+                className="w-full bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
               >
                 <option value="All">
-                  {currentUser?.is_superuser ? 'All FSE Engineers (540)' : 'All SMC FSE Engineers'}
+                  {currentUser?.is_superuser ? 'All FSEs (540)' : 'All SMC FSE Engineers'}
                 </option>
                 {stats?.available_fses && stats.available_fses.map((fseName) => (
                   <option key={fseName} value={fseName}>{fseName}</option>
                 ))}
               </select>
             ) : (
-              <div className="bg-cyan-950/60 text-cyan-300 text-xs px-3 py-2 rounded-xl border border-cyan-500/40 font-semibold font-mono flex items-center gap-1.5 shadow-inner">
-                <span>FSE: {userName}</span>
-                <span className="text-[10px] bg-cyan-500/20 text-cyan-200 px-1.5 py-0.5 rounded">My Sites</span>
+              <div className="w-full bg-cyan-950/60 text-cyan-300 text-xs p-2 rounded-xl border border-cyan-500/40 font-semibold font-mono truncate shadow-inner">
+                {userName}
               </div>
             )}
+          </div>
 
-            {/* Tower Co Filter */}
+          {/* Tower Co Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tower Co</label>
             <select
               value={selectedTowerCo}
               onChange={(e) => { setSelectedTowerCo(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
+              className="w-full bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
             >
               <option value="All">All Tower Cos</option>
               {stats?.available_tower_cos && stats.available_tower_cos.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
+          </div>
 
-            {/* Vendor Filter */}
+          {/* Vendor Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Vendor</label>
             <select
               value={selectedVendor}
               onChange={(e) => { setSelectedVendor(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
+              className="w-full bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
             >
               <option value="All">All Vendors</option>
               {stats?.available_vendors && stats.available_vendors.map((v) => (
                 <option key={v} value={v}>{v}</option>
               ))}
             </select>
+          </div>
 
-            {/* Status Filter */}
+          {/* Status Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Status</label>
             <select
               value={selectedStatus}
               onChange={(e) => { setSelectedStatus(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
+              className="w-full bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
             >
               <option value="All">All Statuses</option>
               {stats?.available_statuses ? stats.available_statuses.map((st) => (
@@ -1264,45 +1381,114 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                 </>
               )}
             </select>
+          </div>
 
-            {/* LGA Filter */}
-            {stats?.available_lgas && stats.available_lgas.length > 0 && (
-              <select
-                value={selectedLga}
-                onChange={(e) => { setSelectedLga(e.target.value); setPage(1); }}
-                className="bg-slate-950 text-xs text-slate-200 p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-semibold"
-              >
-                <option value="All">All LGAs ({stats.available_lgas.length})</option>
-                {stats.available_lgas.map((l) => (
-                  <option key={l} value={l}>{l}</option>
-                ))}
-              </select>
-            )}
-
-            {/* Sort By Filter */}
+          {/* Sort By Filter */}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">Sort Order</label>
             <select
               value={sortBy}
               onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
-              className="bg-slate-950 text-xs text-cyan-400 p-2 rounded-xl border border-cyan-500/40 focus:outline-none focus:border-cyan-400 font-extrabold"
+              className="w-full bg-slate-950 text-xs text-amber-400 p-2 rounded-xl border border-amber-500/40 focus:outline-none focus:border-amber-400 font-extrabold"
             >
               <option value="worst">🔽 Worst First</option>
               <option value="best">🔼 Best First</option>
               <option value="site_id">🔤 Site ID</option>
               <option value="state">🏛️ State</option>
+              <option value="territory">📍 Territory</option>
               <option value="lga">🗺️ LGA</option>
             </select>
-
-            {/* Reset All Filters */}
-            <button
-              onClick={handleResetFilters}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-xl text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition-all shadow-md"
-              title="Reset all filters"
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
-              Reset
-            </button>
           </div>
         </div>
+
+        {/* Tier 3: Active Filters Pills Bar (When any filter is active) */}
+        {(selectedTech !== 'All' || selectedState !== 'All' || selectedTerritory !== 'All' || selectedLga !== 'All' || selectedTowerCo !== 'All' || selectedVendor !== 'All' || selectedStatus !== 'All' || selectedFse !== 'All' || slaFilter !== 'all' || minAvailInput !== '' || maxAvailInput !== '' || searchQuery !== '' || multiSiteParsedList.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/60 text-xs">
+            <span className="text-[11px] font-bold text-slate-400 font-mono mr-1 flex items-center gap-1">
+              <Filter className="w-3 h-3 text-cyan-400" />
+              Active Filters:
+            </span>
+            {selectedState !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-800 text-slate-200 border border-slate-700 rounded-lg text-[11px] font-semibold">
+                <span>🏛️ State: {selectedState}</span>
+                <button onClick={() => { setSelectedState('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {selectedTerritory !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 rounded-lg text-[11px] font-bold shadow-sm">
+                <span>📍 Territory: {selectedTerritory}</span>
+                <button onClick={() => { setSelectedTerritory('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {selectedLga !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-800 text-slate-200 border border-slate-700 rounded-lg text-[11px] font-semibold">
+                <span>🗺️ LGA: {selectedLga}</span>
+                <button onClick={() => { setSelectedLga('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {selectedTech !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-purple-950/80 text-purple-300 border border-purple-500/40 rounded-lg text-[11px] font-semibold">
+                <span>📶 Tech: {selectedTech}</span>
+                <button onClick={() => { setSelectedTech('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {selectedFse !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-800 text-cyan-300 border border-cyan-500/30 rounded-lg text-[11px] font-semibold">
+                <span>👤 FSE: {selectedFse}</span>
+                <button onClick={() => { setSelectedFse('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {selectedTowerCo !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-800 text-slate-300 border border-slate-700 rounded-lg text-[11px] font-semibold">
+                <span>🗼 Tower: {selectedTowerCo}</span>
+                <button onClick={() => { setSelectedTowerCo('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {selectedVendor !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-800 text-slate-300 border border-slate-700 rounded-lg text-[11px] font-semibold">
+                <span>⚙️ Vendor: {selectedVendor}</span>
+                <button onClick={() => { setSelectedVendor('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {selectedStatus !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-800 text-slate-300 border border-slate-700 rounded-lg text-[11px] font-semibold">
+                <span>Status: {selectedStatus}</span>
+                <button onClick={() => { setSelectedStatus('All'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {slaFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-red-950/80 text-red-300 border border-red-500/40 rounded-lg text-[11px] font-semibold">
+                <span>SLA: {slaFilter.replace(/_/g, ' ')}</span>
+                <button onClick={() => { setSlaFilter('all'); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {(minAvailInput !== '' || maxAvailInput !== '') && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-950/80 text-amber-300 border border-amber-500/40 rounded-lg text-[11px] font-semibold font-mono">
+                <span>Avail: {minAvailInput || '0'}% - {maxAvailInput || '100'}%</span>
+                <button onClick={() => { setMinAvailInput(''); setMaxAvailInput(''); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {searchQuery && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-800 text-white border border-slate-600 rounded-lg text-[11px] font-mono">
+                <span>Search: "{searchQuery}"</span>
+                <button onClick={() => { setSearchQuery(''); setPage(1); }} className="hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+            {multiSiteParsedList.length > 0 && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-cyan-500 text-slate-950 font-bold rounded-lg text-[11px] font-mono">
+                <span>{multiSiteParsedList.length} Sites Pasted</span>
+                <button onClick={handleClearMultiSiteSearch} className="hover:text-red-900 ml-0.5"><X className="w-3 h-3" /></button>
+              </span>
+            )}
+
+            <button
+              onClick={handleResetFilters}
+              className="ml-auto text-[11px] text-cyan-400 hover:text-cyan-300 font-bold hover:underline py-0.5"
+            >
+              Clear All Filters
+            </button>
+          </div>
+        )}
 
         {/* Row 2: Date/Time Period Filter Section - Enhanced */}
         <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-800/60">
@@ -1927,6 +2113,16 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                         <span className="bg-slate-950 px-2 py-0.5 rounded text-slate-400 text-[10px] font-medium border border-slate-800">
                           🏛️ {site.state || 'FCT'}
                         </span>
+                        {site.territory && (
+                          <span className="bg-cyan-950/60 px-2 py-0.5 rounded text-cyan-300 text-[10px] font-medium border border-cyan-500/30">
+                            📍 {site.territory}
+                          </span>
+                        )}
+                        {site.lga && (
+                          <span className="bg-slate-950 px-2 py-0.5 rounded text-slate-400 text-[10px] font-medium border border-slate-800">
+                            🗺️ {site.lga}
+                          </span>
+                        )}
                         {site.tower_co && (
                           <span className="bg-slate-950 px-2 py-0.5 rounded text-slate-400 text-[10px] font-medium border border-slate-800">
                             🗼 {site.tower_co}
@@ -2024,7 +2220,9 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   <tr className="border-b border-slate-800 text-slate-400 text-[10px] uppercase font-extrabold">
                     <th className="py-2.5 px-3">Site ID</th>
                     <th className="py-2.5 px-3">Tech</th>
-                    <th className="py-2.5 px-3">State / Region</th>
+                    <th className="py-2.5 px-3">State</th>
+                    <th className="py-2.5 px-3">Territory</th>
+                    <th className="py-2.5 px-3">LGA</th>
                     <th className="py-2.5 px-3">Tower Co</th>
                     <th className="py-2.5 px-3 text-center">Month Avg %</th>
                     <th className="py-2.5 px-3 text-center">Latest Day %</th>
@@ -2039,6 +2237,8 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                         <span className="px-2 py-0.5 bg-slate-800 rounded font-mono text-[10px] text-slate-200">{site.tech}</span>
                       </td>
                       <td className="py-2.5 px-3 text-slate-300">{site.state || 'N/A'}</td>
+                      <td className="py-2.5 px-3 text-cyan-300 font-medium">{site.territory || 'N/A'}</td>
+                      <td className="py-2.5 px-3 text-slate-400">{site.lga || 'N/A'}</td>
                       <td className="py-2.5 px-3 text-slate-400">{site.tower_co || 'N/A'}</td>
                       <td className="py-2.5 px-3 text-center">
                         <span className={`px-2 py-0.5 rounded font-mono font-bold ${
@@ -2174,8 +2374,18 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                     {/* Location & Metadata Badges */}
                     <div className="text-xs text-slate-300 mb-3 flex flex-wrap items-center gap-1.5">
                       <span className="bg-slate-950 px-2 py-0.5 rounded text-slate-400 text-[11px] font-medium border border-slate-800">
-                        🏛️ {r.state || 'FCT'} {r.lga ? `• ${r.lga}` : ''}
+                        🏛️ {r.state || 'FCT'}
                       </span>
+                      {r.territory && (
+                        <span className="bg-cyan-950/60 px-2 py-0.5 rounded text-cyan-300 text-[11px] font-medium border border-cyan-500/30">
+                          📍 {r.territory}
+                        </span>
+                      )}
+                      {r.lga && (
+                        <span className="bg-slate-950 px-2 py-0.5 rounded text-slate-400 text-[11px] font-medium border border-slate-800">
+                          🗺️ {r.lga}
+                        </span>
+                      )}
                       {r.tower_co && (
                         <span className="bg-slate-950 px-2 py-0.5 rounded text-slate-400 text-[11px] font-medium border border-slate-800">
                           🗼 {r.tower_co}
@@ -2330,6 +2540,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   <th className="py-3 px-3">Site ID</th>
                   <th className="py-3 px-3">Tech</th>
                   <th className="py-3 px-3">State</th>
+                  <th className="py-3 px-3">Territory</th>
                   <th className="py-3 px-3">LGA</th>
                   <th className="py-3 px-3">Tower Co</th>
                   <th className="py-3 px-3 text-center text-cyan-300">
@@ -2355,6 +2566,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                         <span className="px-2 py-0.5 bg-slate-800 rounded font-mono text-[10px] text-cyan-300">{r.tech}</span>
                       </td>
                       <td className="py-3 px-3 text-slate-300">{r.state || 'N/A'}</td>
+                      <td className="py-3 px-3 text-cyan-300 font-medium">{r.territory || 'N/A'}</td>
                       <td className="py-3 px-3 text-slate-400">{r.lga || 'N/A'}</td>
                       <td className="py-3 px-3 text-slate-400">{r.tower_co || 'N/A'}</td>
                       <td className="py-3 px-3 text-center">
@@ -2449,7 +2661,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   <CalendarDays className="w-7 h-7" />
                 </div>
                 <div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="px-3 py-0.5 font-mono font-black text-sm text-cyan-300 bg-cyan-950/60 rounded-md border border-cyan-500/30">
                       {selectedSiteModal.record.site_id}
                     </span>
@@ -2457,8 +2669,18 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                       {selectedSiteModal.record.tech} Layer
                     </span>
                     <span className="px-2.5 py-0.5 bg-slate-800 text-slate-300 font-bold text-xs rounded border border-slate-700">
-                      {selectedSiteModal.record.state || 'FCT'}
+                      🏛️ {selectedSiteModal.record.state || 'FCT'}
                     </span>
+                    {selectedSiteModal.record.territory && (
+                      <span className="px-2.5 py-0.5 bg-cyan-950/80 text-cyan-300 font-bold text-xs rounded border border-cyan-500/40">
+                        📍 {selectedSiteModal.record.territory}
+                      </span>
+                    )}
+                    {selectedSiteModal.record.lga && (
+                      <span className="px-2.5 py-0.5 bg-slate-800 text-slate-300 font-bold text-xs rounded border border-slate-700">
+                        🗺️ {selectedSiteModal.record.lga}
+                      </span>
+                    )}
                   </div>
                   <h2 className="text-lg font-black text-white mt-1">
                     30-Day Daily Availability Breakdown Log
@@ -3035,11 +3257,13 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   className="bg-slate-900 text-xs text-cyan-300 px-3 py-1.5 rounded-xl border border-slate-700 focus:outline-none font-bold"
                 >
                   <option value="All">All Sites ({multiSiteNotes.length})</option>
-                  {Array.from(new Set(multiSiteNotes.map(n => n.site?.ihs_site_id || n.site_id_str || n.site_id_input).filter(Boolean))).map((sid) => (
+                  {Array.from(new Set(multiSiteNotes.map(n => n.site_ihs_id || n.site_id || n.site?.ihs_site_id || n.site_id_str || n.site_id_input || (n.title ? n.title.split(' ')[0] : '')).filter(Boolean))).map((sid) => (
                     <option key={sid} value={sid}>Site: {sid}</option>
                   ))}
                 </select>
+              </div>
 
+              <div className="flex flex-wrap items-center gap-2">
                 {/* Filter by Category */}
                 <select
                   value={notesCategoryFilter}
@@ -3081,20 +3305,20 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                   <option value="Medium">Medium</option>
                   <option value="Low">Low</option>
                 </select>
-              </div>
 
-              <button
-                onClick={() => {
-                  setNotesSiteFilter('All');
-                  setNotesCategoryFilter('All');
-                  setNotesPriorityFilter('All');
-                  setNotesStatusFilter('All');
-                  setNotesSearchQuery('');
-                }}
-                className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 text-xs font-bold rounded-xl border border-slate-800"
-              >
-                Reset
-              </button>
+                <button
+                  onClick={() => {
+                    setNotesSiteFilter('All');
+                    setNotesCategoryFilter('All');
+                    setNotesPriorityFilter('All');
+                    setNotesStatusFilter('All');
+                    setNotesSearchQuery('');
+                  }}
+                  className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 text-xs font-bold rounded-xl border border-slate-800"
+                >
+                  Reset
+                </button>
+              </div>
             </div>
 
             {/* Notes List */}
@@ -3115,7 +3339,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
               <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                 {multiSiteNotes
                   .filter((n) => {
-                    const sid = (n.site?.ihs_site_id || n.site_id_str || n.site_id_input || '').toUpperCase();
+                    const sid = (n.site_ihs_id || n.site_id || n.site?.ihs_site_id || n.site_id_str || n.site_id_input || (n.title ? n.title.split(' ')[0] : '')).toUpperCase();
                     if (notesSiteFilter !== 'All' && sid !== notesSiteFilter.toUpperCase()) return false;
                     if (notesCategoryFilter !== 'All' && n.category !== notesCategoryFilter) return false;
                     if (notesPriorityFilter !== 'All' && n.priority !== notesPriorityFilter) return false;
@@ -3130,7 +3354,7 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
                     return true;
                   })
                   .map((note) => {
-                    const sid = note.site?.ihs_site_id || note.site_id_str || note.site_id_input || 'N/A';
+                    const sid = note.site_ihs_id || note.site_id || note.site?.ihs_site_id || note.site_id_str || note.site_id_input || (note.title ? note.title.split(' ')[0] : 'General');
                     const isCritical = note.priority === 'Critical';
                     const isResolved = note.status === 'Resolved';
 

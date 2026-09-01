@@ -3,7 +3,7 @@ import {
   ArrowLeft, Radio, Zap, Shield, Phone, User, MapPin, Calendar, Clock, 
   FileText, MessageSquare, AlertTriangle, ChevronRight, CheckCircle2, 
   ExternalLink, Layers, Search, Database, Cpu, Wifi, Edit3, Camera, Upload, X, Maximize2, Trash2,
-  Activity, BarChart3, RefreshCw, ArrowRight
+  Activity, BarChart3, RefreshCw, ArrowRight, Compass
 } from 'lucide-react';
 import { lookupSite, createNote, updateNote, resolveNote, deleteNote, fetchAvailabilityRecords, getMediaUrl } from '../api';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
@@ -18,6 +18,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
   // Active Specs Tab
   const [activeSpecTab, setActiveSpecTab] = useState('radio');
   const [specsSearch, setSpecsSearch] = useState('');
+  const [sectorSearch, setSectorSearch] = useState('');
 
   // Note Modal (Create & Edit)
   const [showNoteModal, setShowNoteModal] = useState(false);
@@ -381,6 +382,7 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
           <div className="flex space-x-1 overflow-x-auto no-scrollbar">
             {[
               { id: 'radio', label: 'Radio & Tech Status', icon: Wifi },
+              { id: 'sectors', label: `4G LTE RF Sectors (${site?.cell_sectors?.length || 0})`, icon: Radio },
               { id: 'geo', label: 'Geography & Location', icon: MapPin },
               { id: 'tower', label: 'Tower & Infrastructure', icon: Layers },
               { id: 'power', label: 'Power & Electrical', icon: Zap },
@@ -416,6 +418,145 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Tab: 4G LTE RF Sectors (KML Coverage) */}
+        {activeSpecTab === 'sectors' && (
+          <div className="space-y-4">
+            {/* Header & Filter Bar */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-900/90 p-4 rounded-2xl border border-slate-800">
+              <div>
+                <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-cyan-400" />
+                  <span>4G LTE Radio Frequency Sectors & Antenna Coverage</span>
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Extracted from <b className="text-cyan-300 font-mono">ABUJA REGION KML 07292026 (4G)</b> • {site.cell_sectors?.length || 0} Carriers Mapped
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative min-w-[220px]">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search Cell Name, PCI, TAC, Azimuth..."
+                    value={sectorSearch}
+                    onChange={(e) => setSectorSearch(e.target.value)}
+                    className="w-full bg-slate-950 text-xs text-white placeholder-slate-500 pl-8 pr-7 py-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500 font-mono"
+                  />
+                  {sectorSearch && (
+                    <button onClick={() => setSectorSearch('')} className="absolute right-2.5 top-2 text-slate-400 hover:text-white">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {onNavigateTab && (
+                  <button
+                    onClick={() => onNavigateTab('map')}
+                    className="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm shrink-0 cursor-pointer"
+                    title="View cell coverage polygons on Live Map"
+                  >
+                    <MapPin className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>View on Map</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Grid of Sector Cards */}
+            {(() => {
+              const sectors = (site.cell_sectors || []).filter((sec) => {
+                if (!sectorSearch.trim()) return true;
+                const q = sectorSearch.toLowerCase().trim();
+                return (
+                  (sec.cell_name || '').toLowerCase().includes(q) ||
+                  String(sec.pci || '').includes(q) ||
+                  String(sec.tac || '').includes(q) ||
+                  String(sec.azimuth || '').includes(q) ||
+                  String(sec.cell_id || '').includes(q)
+                );
+              });
+
+              if (sectors.length === 0) {
+                return (
+                  <div className="text-center py-10 bg-slate-900/40 rounded-2xl border border-slate-800 text-slate-400 space-y-2">
+                    <Radio className="w-8 h-8 mx-auto text-slate-600" />
+                    <p className="text-xs font-semibold text-slate-300">
+                      {sectorSearch ? `No 4G sectors matching "${sectorSearch}"` : `No 4G KML sector coverage data mapped for site ${site.ihs_site_id}.`}
+                    </p>
+                    {sectorSearch && (
+                      <button onClick={() => setSectorSearch('')} className="text-xs text-cyan-400 hover:underline">
+                        Clear search filter
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
+                  {sectors.map((sec) => {
+                    const az = sec.azimuth || 0;
+
+                    return (
+                      <div key={sec.id || sec.cell_name} className="bg-slate-900/80 p-4 rounded-2xl border border-slate-800/90 hover:border-cyan-500/50 transition-all space-y-3 shadow-lg">
+                        {/* Header */}
+                        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                          <div className="flex items-center space-x-1.5">
+                            <Radio className="w-3.5 h-3.5 text-cyan-400" />
+                            <span className="font-extrabold text-white font-mono text-sm">{sec.cell_name}</span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono">
+                            4G LTE
+                          </span>
+                        </div>
+
+                        {/* Telemetry Metrics */}
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">PCI</span>
+                            <span className="text-base font-black text-cyan-300 font-mono mt-0.5 block">{sec.pci ?? 'N/A'}</span>
+                          </div>
+
+                          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Azimuth</span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {/* Live SVG Azimuth Needle */}
+                              <div className="w-4 h-4 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center relative shrink-0">
+                                <div
+                                  style={{ transform: `rotate(${az}deg)` }}
+                                  className="w-0.5 h-2.5 bg-gradient-to-t from-red-500 to-amber-400 rounded origin-center transition-transform"
+                                />
+                              </div>
+                              <span className="text-xs font-black text-emerald-400 font-mono">{sec.azimuth != null ? `${sec.azimuth}°` : 'N/A'}</span>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">TAC</span>
+                            <span className="text-xs font-bold text-slate-300 font-mono mt-0.5 block">{sec.tac ?? 'N/A'}</span>
+                          </div>
+
+                          <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Cell ID</span>
+                            <span className="text-xs font-bold text-slate-300 font-mono mt-0.5 block">{sec.cell_id ?? 'N/A'}</span>
+                          </div>
+                        </div>
+
+                        {/* Location Details */}
+                        <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/80 font-mono">
+                          <span>Lat: {sec.latitude?.toFixed(4) ?? 'N/A'}</span>
+                          <span>Lng: {sec.longitude?.toFixed(4) ?? 'N/A'}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 

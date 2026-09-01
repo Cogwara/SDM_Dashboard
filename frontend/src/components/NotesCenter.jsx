@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Search, Filter, Clock, Tag, AlertTriangle, CheckCircle, User, Radio, Lock, Edit3, Download, CheckCircle2, Camera, Upload, X, Maximize2, Calendar, Trash2, Activity, ArrowUpRight } from 'lucide-react';
-import { fetchNotes, createNote, updateNote, resolveNote, deleteNote, exportNotesExcel, getMediaUrl } from '../api';
+import { FileText, Plus, Search, Filter, Clock, Tag, AlertTriangle, CheckCircle, User, Radio, Lock, Edit3, Download, CheckCircle2, Camera, Upload, X, Maximize2, Calendar, Trash2, Activity, ArrowUpRight, Users } from 'lucide-react';
+import { fetchNotes, createNote, updateNote, resolveNote, deleteNote, exportNotesExcel, getMediaUrl, fetchFilterOptions } from '../api';
 import { getSDMStateInfo } from '../utils/userUtils';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 
 export default function NotesCenter({ onSelectSite, onNavigateToAvailability, currentUser }) {
   const isSuperuser = currentUser?.is_superuser;
-  const userSdmName = currentUser?.full_name || '';
+  const isRdm = currentUser?.role === 'MTN RDM' || currentUser?.role === 'Regional Delivery Manager' || currentUser?.groups?.some(g => g.name?.includes('RDM'));
+  const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
+  const isSdm = !isSuperuser && !isRdm && !isFse;
+  const userSdmName = currentUser?.full_name || currentUser?.username || '';
   const stateInfo = getSDMStateInfo(currentUser);
 
   const [notes, setNotes] = useState([]);
@@ -17,6 +20,8 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [sdmFilter, setSdmFilter] = useState('All');
+  const [availableSdms, setAvailableSdms] = useState([]);
   
   // Date Filtering State
   const [dateFilter, setDateFilter] = useState('All'); // 'All', 'yesterday', 'today', '7days', '30days', 'custom'
@@ -29,7 +34,20 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, categoryFilter, priorityFilter, statusFilter, dateFilter, startDate, endDate]);
+  }, [search, categoryFilter, priorityFilter, statusFilter, sdmFilter, dateFilter, startDate, endDate]);
+
+  // Load available supervised SDMs for RDM / Superadmin filter
+  useEffect(() => {
+    if (isSuperuser || isRdm) {
+      fetchFilterOptions({ rdm: isRdm ? userSdmName : undefined })
+        .then((res) => {
+          if (res?.sdm_names) {
+            setAvailableSdms(res.sdm_names);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [isSuperuser, isRdm, userSdmName]);
 
   // Incident Occurrence Timestamp State
   const toLocalISOString = (d) => {
@@ -63,9 +81,9 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
 
   useEffect(() => {
     if (userSdmName && !editingNote) {
-      setCreatedBy(userSdmName);
+      setCreatedBy(isRdm ? `${userSdmName} (MTN RDM)` : userSdmName);
     }
-  }, [userSdmName, editingNote]);
+  }, [userSdmName, editingNote, isRdm]);
 
   const categories = [
     'All', 'Power', 'Transmission', 'Generator', 'Battery', 'Fuel', 
@@ -76,17 +94,18 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
   const loadNotes = async () => {
     setLoading(true);
     try {
-      const isFse = currentUser?.role === 'SMC FSE Engineer' || currentUser?.role === 'FSE Engineer';
-      const isSdm = !isSuperuser && !isFse;
-
-      const sdmParam = isSdm ? (currentUser?.full_name || currentUser?.username) : undefined;
+      const sdmParam = isSdm ? (currentUser?.full_name || currentUser?.username) : (sdmFilter !== 'All' ? sdmFilter : undefined);
+      const rdmParam = isRdm ? (currentUser?.full_name || currentUser?.username) : undefined;
       const fseParam = isFse ? (currentUser?.full_name || currentUser?.username) : undefined;
 
       const data = await fetchNotes({
+        rdm: rdmParam,
         sdm: sdmParam,
         fse: fseParam,
         is_superuser: isSuperuser ? 'true' : 'false',
-        user_state: stateInfo?.code,
+        role: currentUser?.role,
+        user_role: currentUser?.role,
+        user_state: isRdm ? undefined : stateInfo?.code,
         search,
         category: categoryFilter !== 'All' ? categoryFilter : undefined,
         priority: priorityFilter !== 'All' ? priorityFilter : undefined,
@@ -108,7 +127,7 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
 
   useEffect(() => {
     loadNotes();
-  }, [search, categoryFilter, priorityFilter, statusFilter, dateFilter, startDate, endDate, userSdmName, isSuperuser, currentUser]);
+  }, [search, categoryFilter, priorityFilter, statusFilter, sdmFilter, dateFilter, startDate, endDate, userSdmName, isSuperuser, currentUser]);
 
   const totalPages = Math.ceil(notes.length / pageSize) || 1;
 
@@ -118,7 +137,8 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
   }, [notes, currentPage, pageSize]);
 
   const isCreatorOfNote = (note) => {
-    if (isSuperuser) return true;
+    // MTN RDM and Superadmin have full supervisor rights to Edit & Delete SDM notes in their region!
+    if (isSuperuser || isRdm) return true;
     if (!userSdmName || !note.created_by) return true;
     const cleanUser = userSdmName.trim().toLowerCase();
     const cleanCreator = note.created_by.trim().toLowerCase();
@@ -181,6 +201,8 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
       await resolveNote(note.id, {
         updated_by: userSdmName,
         sdm: userSdmName,
+        rdm: isRdm ? userSdmName : undefined,
+        role: currentUser?.role,
         is_superuser: isSuperuser
       });
       loadNotes();
@@ -203,6 +225,8 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
       await deleteNote(noteToDelete.id, {
         user: userSdmName,
         sdm: userSdmName,
+        rdm: isRdm ? userSdmName : undefined,
+        role: currentUser?.role,
         is_superuser: isSuperuser
       });
       setNoteToDelete(null);
@@ -218,9 +242,13 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
     setExporting(true);
     try {
       const activeDateFilter = typeof overrideDateFilter === 'string' ? overrideDateFilter : dateFilter;
-      const sdmParam = !isSuperuser ? userSdmName : undefined;
+      const sdmParam = isSdm ? (currentUser?.full_name || currentUser?.username) : (sdmFilter !== 'All' ? sdmFilter : undefined);
+      const rdmParam = isRdm ? (currentUser?.full_name || currentUser?.username) : undefined;
       await exportNotesExcel({
+        rdm: rdmParam,
         sdm: sdmParam,
+        role: currentUser?.role,
+        is_superuser: isSuperuser ? 'true' : 'false',
         search: search || undefined,
         category: categoryFilter !== 'All' ? categoryFilter : undefined,
         priority: priorityFilter !== 'All' ? priorityFilter : undefined,
@@ -265,10 +293,14 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
       if (editingNote) {
         formData.append('updated_by', userSdmName);
         formData.append('sdm', userSdmName);
+        formData.append('rdm', isRdm ? userSdmName : '');
+        formData.append('role', currentUser?.role || '');
         formData.append('is_superuser', isSuperuser ? 'true' : 'false');
         await updateNote(editingNote.id, formData);
       } else {
-        formData.append('created_by', createdBy || userSdmName);
+        formData.append('created_by', isRdm ? `${userSdmName} (MTN RDM)` : (createdBy || userSdmName));
+        formData.append('rdm', isRdm ? userSdmName : '');
+        formData.append('role', currentUser?.role || '');
         await createNote(formData);
       }
 
@@ -299,12 +331,16 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
             SDM Operational Notes & Incident Records
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            {!isSuperuser ? (
+            {isSuperuser ? (
+              `Super Administrator Access • Full Operational Memory Log Across All State Delivery Managers (${totalCount || notes.length} Notes Logged)`
+            ) : isRdm ? (
+              <span className="text-indigo-300 font-semibold flex items-center gap-1 mt-0.5">
+                <Users className="w-3.5 h-3.5 text-indigo-400" /> MTN Regional Command: <b>{currentUser?.full_name || 'MTN RDM'}</b> ({totalCount || notes.length} Supervised SDM Notes Across Portfolio)
+              </span>
+            ) : (
               <span className="text-cyan-300 font-semibold flex items-center gap-1 mt-0.5">
                 <Lock className="w-3 h-3 text-cyan-400" /> Scoped to SDM Portfolio: <b>{stateInfo.regionText}</b> ({totalCount || notes.length} Portfolio Notes Logged)
               </span>
-            ) : (
-              `Super Administrator Access \u2022 Full Operational Memory Log Across All State Delivery Managers (${totalCount || notes.length} Notes Logged)`
             )}
           </p>
         </div>
@@ -317,7 +353,7 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
               handleExportExcel('yesterday');
             }}
             disabled={exporting}
-            className="px-3.5 py-2.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/50 shadow-lg flex items-center space-x-1.5 transition-all disabled:opacity-50"
+            className="px-3.5 py-2.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/50 shadow-lg flex items-center space-x-1.5 transition-all disabled:opacity-50 cursor-pointer"
             title="Instantly download yesterday's SDM operational notes to Excel"
           >
             <Calendar className="w-4 h-4 text-emerald-400" />
@@ -327,7 +363,7 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
           <button
             onClick={() => handleExportExcel()}
             disabled={exporting}
-            className="px-4 py-2.5 bg-slate-900 hover:bg-emerald-950/60 text-emerald-400 hover:text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/40 shadow-lg flex items-center space-x-2 transition-all disabled:opacity-50"
+            className="px-4 py-2.5 bg-slate-900 hover:bg-emerald-950/60 text-emerald-400 hover:text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/40 shadow-lg flex items-center space-x-2 transition-all disabled:opacity-50 cursor-pointer"
             title="Download notes matching current filters as Microsoft Excel (.xlsx) file"
           >
             <Download className={`w-4 h-4 text-emerald-400 ${exporting ? 'animate-bounce' : ''}`} />
@@ -336,10 +372,14 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
 
           <button
             onClick={handleOpenCreateModal}
-            className="px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center space-x-2 transition-all"
+            className={`px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-lg flex items-center space-x-2 transition-all cursor-pointer ${
+              isRdm 
+                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-indigo-600/30'
+                : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500'
+            }`}
           >
             <Plus className="w-4 h-4" />
-            <span>Record New SDM Operational Note</span>
+            <span>{isRdm ? 'Record Regional SDM Operational Note' : 'Record New SDM Operational Note'}</span>
           </button>
         </div>
       </div>
@@ -359,6 +399,25 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
             className="w-full bg-slate-900/80 text-xs text-white placeholder-slate-500 pl-9 pr-3 py-2 rounded-lg border border-slate-700 focus:outline-none focus:border-cyan-500"
           />
         </div>
+
+        {/* SDM Filter for RDM & Superadmins */}
+        {(isSuperuser || isRdm) && availableSdms.length > 0 && (
+          <div className="flex items-center space-x-1.5 text-xs">
+            <span className="text-indigo-400 font-bold flex items-center gap-1">
+              <User className="w-3.5 h-3.5 text-indigo-400" /> SDM:
+            </span>
+            <select
+              value={sdmFilter}
+              onChange={(e) => setSdmFilter(e.target.value)}
+              className="bg-slate-900 text-indigo-200 text-xs px-2.5 py-1.5 rounded-lg border border-indigo-500/40 focus:outline-none focus:border-indigo-400 font-semibold"
+            >
+              <option value="All">{isRdm ? '👑 All Supervised SDMs' : '🌐 All SDM Managers'}</option>
+              {availableSdms.map((sdm) => (
+                <option key={sdm} value={sdm}>{sdm}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Date Filter Dropdown */}
         <div className="flex items-center space-x-1.5 text-xs">
@@ -554,23 +613,23 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
                       <div className="flex items-center space-x-1.5">
                         <button
                           onClick={() => handleOpenEditModal(note)}
-                          className="px-2.5 py-1 bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 font-semibold text-xs rounded-lg border border-slate-700 hover:border-cyan-500/40 transition-all flex items-center gap-1.5"
-                          title="Update your SDM Operational Note"
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 font-semibold text-xs rounded-lg border border-slate-700 hover:border-cyan-500/40 transition-all flex items-center gap-1.5 cursor-pointer"
+                          title={isRdm ? "Update / Append Note (MTN RDM Regional Supervisor)" : "Update your SDM Operational Note"}
                         >
                           <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
                           <span>Edit</span>
                         </button>
                         <button
                           onClick={() => handleDeleteNote(note)}
-                          className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs rounded-lg border border-rose-500/30 transition-all flex items-center gap-1.5"
-                          title={isSuperuser ? "Delete Note (Superuser)" : "Delete your note"}
+                          className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs rounded-lg border border-rose-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                          title={isSuperuser ? "Delete Note (Superuser)" : isRdm ? "Delete Note (MTN RDM Regional Supervisor)" : "Delete your note"}
                         >
                           <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                           <span>Delete</span>
                         </button>
                       </div>
                     ) : (
-                      <span className="px-2 py-1 bg-slate-900/60 text-slate-500 text-[11px] rounded-lg border border-slate-800 flex items-center gap-1 cursor-not-allowed" title={`Only creator (${note.created_by}) can edit or delete this note`}>
+                      <span className="px-2 py-1 bg-slate-900/60 text-slate-500 text-[11px] rounded-lg border border-slate-800 flex items-center gap-1 cursor-not-allowed" title={`Only creator (${note.created_by}) or supervising MTN RDM can edit or delete this note`}>
                         <Lock className="w-3 h-3 text-slate-600" /> Read Only
                       </span>
                     )}

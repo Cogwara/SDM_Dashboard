@@ -12,7 +12,7 @@ import {
 import { 
   checkServerHealth, createNote, updateNote, createWhatsAppMessage, fetchSites, setCustomServerIp,
   fetchNotes, resolveNote, deleteNote, fetchWhatsAppMessages, queryAIAssistant,
-  fetchDashboardStats, lookupSite
+  fetchDashboardStats, lookupSite, getMediaUrl
 } from '../api';
 import { getSDMStateInfo } from '../utils/userUtils';
 import GeoMap from './GeoMap';
@@ -24,7 +24,8 @@ import SDMUserManagement from './SDMUserManagement';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 import DailyAvailabilityCenter from './DailyAvailabilityCenter';
 import HourlyAvailabilityCenter from './HourlyAvailabilityCenter';
-import { Calendar } from 'lucide-react';
+import UserProfileModal from './UserProfileModal';
+import { Calendar, UserCog, Edit2 } from 'lucide-react';
 
 const fileToBase64 = (file) => {
   return new Promise((resolve) => {
@@ -204,6 +205,7 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
   const [pendingAudits, setPendingAudits] = useState(getPendingFseAudits());
   const [cachedSites, setCachedSites] = useState(getCachedSites());
   const [syncStatusMsg, setSyncStatusMsg] = useState(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   const handleMobileSelectSite = (siteId) => {
     if (!siteId) return;
@@ -217,6 +219,8 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
   const [showThemeModal, setShowThemeModal] = useState(false);
 
   const mobileThemes = [
+    { id: 'mtn', label: 'MTN Operations Gold (Official)', icon: Radio, color: 'text-amber-400' },
+    { id: 'mtn-dark', label: 'MTN Operations Dark', icon: Moon, color: 'text-amber-300' },
     { id: 'sky', label: 'Skyblueish Glass (Default)', icon: Sparkles, color: 'text-cyan-400' },
     { id: 'dark', label: 'Obsidian Midnight Dark', icon: Moon, color: 'text-indigo-400' },
     { id: 'emerald', label: 'Tactical Emerald Field', icon: Shield, color: 'text-emerald-400' },
@@ -307,12 +311,28 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
     if (reachable && currentUser) {
       setLoadingData(true);
       try {
-        const sdmParam = !currentUser.is_superuser ? (currentUser.full_name || currentUser.username) : undefined;
+        const isRdm = currentUser?.role === 'MTN RDM' || currentUser?.role === 'Regional Delivery Manager';
+        const isSdm = currentUser?.role === 'State Delivery Manager';
+        const isFse = currentUser?.role === 'SMC FSE Engineer';
+        const rdmParam = isRdm ? (currentUser.full_name || currentUser.username) : undefined;
+        const sdmParam = isSdm ? (currentUser.full_name || currentUser.username) : undefined;
+        const fseParam = isFse ? (currentUser.full_name || currentUser.username) : undefined;
+
+        const scopeParams = {
+          rdm: rdmParam,
+          sdm: sdmParam,
+          fse: fseParam,
+          role: currentUser.role,
+          user_role: currentUser.role,
+          user_name: currentUser.full_name || currentUser.username,
+          is_superuser: currentUser.is_superuser ? 'true' : 'false'
+        };
+
         const [statsRes, notesRes, waRes, sitesRes] = await Promise.allSettled([
-          fetchDashboardStats({ sdm: sdmParam }),
-          fetchNotes({ sdm: sdmParam, page_size: 25 }),
-          fetchWhatsAppMessages({ sdm: sdmParam, page_size: 25 }),
-          fetchSites({ sdm: sdmParam, page_size: 25000 })
+          fetchDashboardStats(scopeParams),
+          fetchNotes({ ...scopeParams, page_size: 50 }),
+          fetchWhatsAppMessages({ ...scopeParams, page_size: 50 }),
+          fetchSites({ ...scopeParams, page_size: 25000 })
         ]);
 
         if (statsRes.status === 'fulfilled') setDashboardStats(statsRes.value);
@@ -874,16 +894,51 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
           </div>
 
           {/* User Profile Info Card */}
-          <div className="glass-panel p-4 rounded-2xl border border-cyan-500/30 bg-slate-900/90 space-y-3">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white font-extrabold text-base shadow-md">
-                {currentUser?.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'S'}
+          <div 
+            onClick={() => {
+              setIsMobileDrawerOpen(false);
+              setShowProfileModal(true);
+            }}
+            className="glass-panel p-3.5 rounded-2xl border border-cyan-500/30 bg-slate-900/90 space-y-3 cursor-pointer hover:border-cyan-400 transition-all shadow-md group"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3 min-w-0">
+                <div className={`w-11 h-11 rounded-xl overflow-hidden flex items-center justify-center font-bold text-sm border shrink-0 ${
+                  currentUser?.is_superuser
+                    ? 'border-amber-400/60 bg-amber-950 text-amber-300'
+                    : currentUser?.role === 'MTN RDM'
+                      ? 'border-indigo-400/60 bg-indigo-950 text-indigo-300'
+                      : 'border-cyan-400/60 bg-slate-800 text-cyan-300'
+                }`}>
+                  {currentUser?.avatar_url ? (
+                    <img
+                      src={getMediaUrl(currentUser.avatar_url)}
+                      alt={currentUser.full_name || 'User'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span>{currentUser?.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'U'}</span>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-sm font-bold text-white leading-tight truncate group-hover:text-cyan-300 transition-colors">
+                    {currentUser?.full_name || 'Field SDM'}
+                  </h4>
+                  <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-md border mt-0.5 ${
+                    currentUser?.role === 'MTN RDM'
+                      ? 'bg-indigo-950/80 text-indigo-300 border-indigo-500/40'
+                      : currentUser?.is_superuser
+                        ? 'bg-amber-950/80 text-amber-300 border-amber-500/40'
+                        : 'bg-cyan-950/80 text-cyan-300 border-cyan-500/40'
+                  }`}>
+                    {currentUser?.role || 'State Delivery Manager'}
+                  </span>
+                </div>
               </div>
-              <div>
-                <h4 className="text-sm font-bold text-white leading-tight">{currentUser?.full_name || 'Field SDM'}</h4>
-                <span className="inline-block text-[11px] font-semibold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded-md border border-cyan-500/30 mt-0.5">
-                  {currentUser?.role || 'State Delivery Manager'}
-                </span>
+
+              <div className="p-2 rounded-xl bg-slate-800 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/20 transition-all flex items-center gap-1 text-[11px] font-bold">
+                <UserCog className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Profile</span>
               </div>
             </div>
 
@@ -902,45 +957,114 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
           </div>
 
           {/* Mobile Navigation Views List */}
-          <div className="space-y-1">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 mb-2">Mobile Navigation Menu</div>
-            {[
-              { id: 'overview', label: 'Dashboard Overview', icon: BarChart3 },
-              { id: 'daily_avail', label: 'Daily Availability Command Center', icon: Calendar },
-              { id: 'hourly_avail', label: 'Hourly Availability Center', icon: Clock },
-              { id: 'sites', label: `Sites Directory (${cachedSites.length})`, icon: Layers },
-              { id: 'map', label: 'Live Geo Map', icon: MapPin },
-              { id: 'fse', label: 'FSE Field Inspector', icon: UserCheck },
-              { id: 'note', label: 'Record SDM Field Note', icon: Edit3 },
-              { id: 'whatsapp', label: 'WhatsApp Intel', icon: MessageSquare },
-              { id: 'ai', label: 'AI Operations Assistant', icon: Bot },
-              { id: 'reports', label: 'Executive Analytics', icon: TrendingUp },
-              { id: 'queue', label: `Offline Sync Queue (${pendingTotal})`, icon: UploadCloud },
-            ].map((sub) => {
-              const IconComp = sub.icon;
-              const isActive = activeSubTab === sub.id;
-              return (
-                <button
-                  key={sub.id}
-                  onClick={() => {
-                    setSelectedSiteId(null);
-                    setActiveSubTab(sub.id);
-                    setIsMobileDrawerOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold transition-all ${
-                    isActive
-                      ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-lg'
-                      : 'text-slate-300 hover:bg-slate-900 border border-transparent'
-                  }`}
-                >
-                  <div className="flex items-center space-x-3">
-                    <IconComp className={`w-5 h-5 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-                    <span>{sub.label}</span>
-                  </div>
-                  {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
-                </button>
-              );
-            })}
+          <div className="space-y-3">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-2 mb-1.5">Core Operations</div>
+              <div className="space-y-1">
+                {[
+                  { id: 'overview', label: 'Dashboard Overview', icon: BarChart3 },
+                  { id: 'daily_avail', label: 'Daily Availability Center', icon: Calendar },
+                  { id: 'hourly_avail', label: 'Hourly Availability (24H)', icon: Clock },
+                  { id: 'sites', label: `Sites Directory (${cachedSites.length})`, icon: Layers },
+                ].map((sub) => {
+                  const IconComp = sub.icon;
+                  const isActive = activeSubTab === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      onClick={() => {
+                        setSelectedSiteId(null);
+                        setActiveSubTab(sub.id);
+                        setIsMobileDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-md'
+                          : 'text-slate-300 hover:bg-slate-900 border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <IconComp className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                        <span>{sub.label}</span>
+                      </div>
+                      {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-2 mb-1.5">Field Control &amp; Incidents</div>
+              <div className="space-y-1">
+                {[
+                  { id: 'map', label: 'Live Geo Map & 4G Sectors', icon: MapPin },
+                  { id: 'note', label: 'Record SDM Field Note', icon: Edit3 },
+                  { id: 'fse', label: 'FSE Field Inspector', icon: UserCheck },
+                  { id: 'whatsapp', label: 'WhatsApp Field Intel', icon: MessageSquare },
+                  { id: 'tnl', label: 'Fiber & TNL Links', icon: Radio },
+                ].map((sub) => {
+                  const IconComp = sub.icon;
+                  const isActive = activeSubTab === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      onClick={() => {
+                        setSelectedSiteId(null);
+                        setActiveSubTab(sub.id);
+                        setIsMobileDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-md'
+                          : 'text-slate-300 hover:bg-slate-900 border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <IconComp className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                        <span>{sub.label}</span>
+                      </div>
+                      {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-2 mb-1.5">Analytics &amp; Queue</div>
+              <div className="space-y-1">
+                {[
+                  { id: 'ai', label: 'AI Operations Assistant', icon: Bot },
+                  { id: 'reports', label: 'Executive Analytics', icon: TrendingUp },
+                  { id: 'queue', label: `Offline Sync Queue (${pendingTotal})`, icon: UploadCloud },
+                ].map((sub) => {
+                  const IconComp = sub.icon;
+                  const isActive = activeSubTab === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      onClick={() => {
+                        setSelectedSiteId(null);
+                        setActiveSubTab(sub.id);
+                        setIsMobileDrawerOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-md'
+                          : 'text-slate-300 hover:bg-slate-900 border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <IconComp className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                        <span>{sub.label}</span>
+                      </div>
+                      {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {/* Android APK Download Card in Drawer */}
@@ -1565,10 +1689,10 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
                     <div key={note.id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
                         <span 
-                          onClick={() => handleMobileSelectSite(note.site_ihs_id)}
+                          onClick={() => handleMobileSelectSite(note.site_ihs_id || note.site_id || (note.title ? note.title.split(' ')[0] : ''))}
                           className="font-extrabold text-cyan-300 font-mono cursor-pointer hover:underline"
                         >
-                          {note.site_ihs_id}
+                          {note.site_ihs_id || note.site_id || (note.title ? note.title.split(' ')[0] : 'General')}
                         </span>
                         <div className="flex flex-wrap items-center gap-1">
                           <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
@@ -2150,6 +2274,18 @@ export default function MobileAppView({ currentUser, onLogout, onSelectSite, cur
           </div>
         </div>
       )}
+
+      {/* User Profile & Account Settings Modal */}
+      <UserProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        currentUser={currentUser}
+        onUpdateUser={(updatedUser) => {
+          const existing = JSON.parse(localStorage.getItem('fct_sdm_user') || '{}');
+          const merged = { ...existing, ...updatedUser };
+          localStorage.setItem('fct_sdm_user', JSON.stringify(merged));
+        }}
+      />
 
       {/* Confirm Delete Modal */}
       <ConfirmDeleteModal

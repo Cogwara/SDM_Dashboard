@@ -21,6 +21,8 @@ import SiteFSELookupView from './components/SiteFSELookupView';
 import FiberOutagesTracker from './components/FiberOutagesTracker';
 import WOTrackerView from './components/WOTrackerView';
 import RightNavDrawer from './components/RightNavDrawer';
+import UserProfileModal from './components/UserProfileModal';
+import MTNOperationsHub from './components/MTNOperationsHub';
 import { fetchDashboardStats, fetchNotes, fetchWhatsAppMessages, fetchNotifications, markAllNotificationsRead } from './api';
 import { getSDMStateInfo } from './utils/userUtils';
 import { Bell, CheckCircle, AlertTriangle, Radio, Eye, Bot, X, ShieldAlert, Clock, MapPin, User } from 'lucide-react';
@@ -45,6 +47,9 @@ export default function App() {
       return null;
     }
   });
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
 
   // Theme state
@@ -75,8 +80,10 @@ export default function App() {
       const scopeParams = {
         is_superuser: targetUser.is_superuser ? 'true' : 'false',
         user_role: targetUser.role,
-        user_state: targetUser.state,
+        role: targetUser.role,
+        user_state: targetUser.role === 'MTN RDM' ? undefined : targetUser.state,
         user_name: targetUser.full_name || targetUser.username,
+        rdm: (targetUser.role === 'MTN RDM' || targetUser.role === 'Regional Delivery Manager') ? (targetUser.full_name || targetUser.username) : undefined,
         sdm: targetUser.role === 'State Delivery Manager' ? (targetUser.full_name || targetUser.username) : undefined,
         fse: targetUser.role === 'SMC FSE Engineer' ? (targetUser.full_name || targetUser.username) : undefined,
       };
@@ -188,10 +195,15 @@ export default function App() {
         onThemeChange={setTheme}
         currentUser={currentUser}
         onLogout={handleLogout}
+        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        isSidebarOpen={isSidebarOpen}
+        onOpenProfile={() => setShowProfileModal(true)}
       />
 
-      {/* Right Edge Floating Auto-Hide Navigation Drawer */}
+      {/* Slide-out Navigation Drawer Menu */}
       <RightNavDrawer
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
         activeTab={activeTab === 'profile' ? 'database' : activeTab}
         setActiveTab={(tab) => {
           if (tab === 'database') {
@@ -202,11 +214,23 @@ export default function App() {
           setActiveTab(tab);
         }}
         currentUser={currentUser}
+        onLogout={handleLogout}
+        onOpenProfile={() => setShowProfileModal(true)}
       />
 
       {/* Main Workspace Container */}
       <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6">
         
+        {activeTab === 'noc_hub' && (
+          <MTNOperationsHub
+            currentUser={currentUser}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+            onSelectSite={handleSelectSite}
+            stats={stats}
+            recentNotes={recentNotes}
+          />
+        )}
+
         {activeTab === 'dashboard' && (
           <DashboardOverview
             stats={stats}
@@ -459,6 +483,17 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* User Profile & Account Settings Modal */}
+      <UserProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        currentUser={currentUser}
+        onUpdateUser={(updatedUser) => {
+          setCurrentUser(updatedUser);
+          loadGlobalData(updatedUser);
+        }}
+      />
 
       {/* Footer */}
       <footer className="glass-panel border-t border-slate-800/80 py-4 mt-8 text-center text-xs text-slate-500">

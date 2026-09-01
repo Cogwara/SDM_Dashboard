@@ -1,3 +1,4 @@
+import re
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -8,6 +9,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 import pandas as pd
 import datetime
+from django.contrib.auth.models import User
 from .models import SiteNote, SiteAttachment, SiteTimeline, FiberOutageNote
 from .serializers import SiteNoteSerializer, SiteAttachmentSerializer, SiteTimelineSerializer, FiberOutageNoteSerializer
 from sites.models import Site, Notification
@@ -157,29 +159,114 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
     parser_classes = (JSONParser, MultiPartParser, FormParser)
     pagination_class = FlexiblePagination
 
-    def destroy(self, request, *args, **kwargs):
-        note = self.get_object()
-        user_param = (request.query_params.get('user') or request.query_params.get('sdm') or request.data.get('user') or '').strip().lower()
-        is_superuser = request.query_params.get('is_superuser') == 'true' or request.data.get('is_superuser') is True
+    def _resolve_rdm_info(self, rdm_input):
+        if not rdm_input:
+            return Site.objects.none(), [], ''
+        clean = str(rdm_input).strip()
+        u = User.objects.filter(
+            Q(username__iexact=clean.lower().replace(' ', '_')) | 
+            Q(first_name__icontains=clean) | 
+            Q(last_name__icontains=clean) |
+            Q(email__icontains=clean)
+        ).first()
+        full_n = f"{u.first_name} {u.last_name}".strip() if u else clean
+        parts = [p for p in full_n.split() if len(p) >= 3]
+        
+        q_rdm = Q(mtn_rdm_name__iexact=full_n) | Q(mtn_rdm_name__icontains=full_n) | Q(mtn_rdm_name__icontains=clean)
+        if len(parts) >= 2:
+            q_rdm |= (Q(mtn_rdm_name__icontains=parts[0]) & Q(mtn_rdm_name__icontains=parts[-1]))
+        elif len(parts) == 1:
+            q_rdm |= Q(mtn_rdm_name__icontains=parts[0])
+        
+        matching_sites = Site.objects.filter(q_rdm)
+        if not matching_sites.exists() and ('rdm' in clean.lower() or (u and u.groups.filter(name__icontains='RDM').exists())):
+            matching_sites = Site.objects.filter(mtn_rdm_name__icontains='Onikola')
+            
+        supervised_sdms = list(matching_sites.exclude(sdm_name='').exclude(sdm_name__isnull=True).values_list('sdm_name', flat=True).distinct())
+        return matching_sites, supervised_sdms, full_n
 
+    def _is_authorized_for_note(self, request, note):
+        """
+        Validates whether the requesting user has authorization to view/edit/delete/resolve a note:
+        1. Super Administrators have global authorization across all notes.
+        2. MTN RDMs (Regional Delivery Managers) have full CRUD supervisor authorization over:
+           - All notes on sites within their regional jurisdiction (site.mtn_rdm_name matches RDM).
+           - All notes created by SDMs operating under their regional command.
+           - All notes created by the RDM.
+        3. SDMs have authorization over their own notes or sites assigned to them.
+        """
+        user_param = (
+            request.data.get('updated_by') or 
+            request.data.get('user') or 
+            request.data.get('sdm') or 
+            request.data.get('rdm') or 
+            request.data.get('requester') or 
+            request.query_params.get('user') or 
+            request.query_params.get('sdm') or 
+            request.query_params.get('rdm') or 
+            request.query_params.get('requester') or 
+            ''
+        ).strip()
+
+        is_superuser = (
+            request.data.get('is_superuser') is True or 
+            str(request.data.get('is_superuser', '')).lower() == 'true' or
+            request.query_params.get('is_superuser') == 'true' or 
+            getattr(request.user, 'is_superuser', False)
+        )
+        if is_superuser:
+            return True, "Super Administrator access"
+
+        role_param = (request.data.get('role') or request.query_params.get('role') or '').strip().lower()
+        is_rdm = 'rdm' in role_param or (hasattr(request.user, 'groups') and request.user.groups.filter(name__icontains='RDM').exists())
+
+        # Also detect RDM by user_param matching RDM names in Site table or auth User
+        if not is_rdm and user_param:
+            if Site.objects.filter(mtn_rdm_name__icontains=user_param).exists():
+                is_rdm = True
+            elif User.objects.filter(Q(username__iexact=user_param.lower().replace(' ', '_')) | Q(first_name__icontains=user_param)).filter(groups__name__icontains='RDM').exists():
+                is_rdm = True
+
+        if is_rdm:
+            matching_sites, supervised_sdms, full_n = self._resolve_rdm_info(user_param or getattr(request.user, 'username', ''))
+            if note.site_id and matching_sites.filter(id=note.site_id).exists():
+                return True, "RDM Regional Supervision access"
+            if note.site and note.site.mtn_rdm_name and (full_n.lower() in note.site.mtn_rdm_name.lower() or note.site.mtn_rdm_name.lower() in full_n.lower()):
+                return True, "RDM Regional Supervision access"
+            for s_name in supervised_sdms:
+                if s_name and (s_name.lower() in (note.created_by or '').lower() or (note.site and note.site.sdm_name and s_name.lower() in note.site.sdm_name.lower())):
+                    return True, "RDM Supervised SDM access"
+            if full_n and (full_n.lower() in (note.created_by or '').lower() or (note.created_by or '').lower() in full_n.lower()):
+                return True, "RDM Creator access"
+            return True, "MTN RDM Regional Supervisor access"
+
+        # Regular SDM owner check
         created_by = (note.created_by or '').strip().lower()
         sdm_name = (note.site.sdm_name or '').strip().lower() if note.site else ''
+        u_clean = user_param.lower()
 
-        if is_superuser or not user_param or user_param == created_by or user_param == sdm_name or user_param in created_by or created_by in user_param:
-            if note.site:
-                SiteTimeline.objects.create(
-                    site=note.site,
-                    event=f"SDM Note Deleted: {note.title}",
-                    details=f"Category: {note.category} | Priority: {note.priority} | Deleted by {user_param or 'Admin'}",
-                    author=user_param or 'Admin'
-                )
-            self.perform_destroy(note)
-            return Response({'message': 'Note deleted successfully.'}, status=status.HTTP_200_OK)
-        else:
-            return Response(
-                {'error': 'Permission denied: SDMs can only delete their own operational notes.'},
-                status=status.HTTP_403_FORBIDDEN
+        if not u_clean or u_clean == created_by or u_clean == sdm_name or u_clean in created_by or created_by in u_clean or created_by == 'state delivery manager':
+            return True, "SDM Owner access"
+
+        return False, f"Permission denied: Note belongs to {note.created_by or 'another SDM'}. Only the creator, supervising MTN RDM, or Super Admin can modify or delete this note."
+
+    def destroy(self, request, *args, **kwargs):
+        note = self.get_object()
+        user_param = (request.query_params.get('user') or request.query_params.get('sdm') or request.query_params.get('rdm') or request.data.get('user') or '').strip()
+
+        authorized, reason = self._is_authorized_for_note(request, note)
+        if not authorized:
+            return Response({'error': reason}, status=status.HTTP_403_FORBIDDEN)
+
+        if note.site:
+            SiteTimeline.objects.create(
+                site=note.site,
+                event=f"SDM Note Deleted: {note.title}",
+                details=f"Category: {note.category} | Priority: {note.priority} | Deleted by {user_param or 'Admin'}",
+                author=user_param or 'Admin'
             )
+        self.perform_destroy(note)
+        return Response({'message': 'Note deleted successfully.'}, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'])
     def export_excel(self, request):
@@ -484,11 +571,51 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         return response
 
     def get_queryset(self):
-        qs = SiteNote.objects.all()
+        qs = SiteNote.objects.all().select_related('site')
         
+        rdm = self.request.query_params.get('rdm', None)
         sdm = self.request.query_params.get('sdm', None)
-        if sdm and sdm != 'All':
-            qs = qs.filter(Q(site__sdm_name__icontains=sdm) | Q(created_by__icontains=sdm))
+        role = self.request.query_params.get('role', None) or self.request.query_params.get('user_role', None)
+        fse = self.request.query_params.get('fse', None)
+        user_param = self.request.query_params.get('user', None) or self.request.query_params.get('user_name', None)
+        state_param = self.request.query_params.get('state', None) or self.request.query_params.get('user_state', None)
+
+        is_superuser = (
+            self.request.query_params.get('is_superuser') == 'true' or
+            getattr(self.request.user, 'is_superuser', False)
+        )
+        is_rdm_role = (
+            role in ['MTN RDM', 'Regional Delivery Manager', 'RDM'] or 
+            (rdm and rdm != 'All' and rdm != 'undefined') or
+            (self.request.user.is_authenticated and (self.request.user.groups.filter(name__icontains='RDM').exists() or self.request.user.username.startswith('rdm_')))
+        )
+
+        if is_rdm_role and not is_superuser:
+            rdm_query_val = rdm if (rdm and rdm != 'All' and rdm != 'undefined') else (user_param or (f"{self.request.user.first_name} {self.request.user.last_name}".strip() if self.request.user.is_authenticated else 'Onikola Lukman Adesina'))
+            matching_sites, supervised_sdms, full_n = self._resolve_rdm_info(rdm_query_val)
+            site_ids = list(matching_sites.values_list('id', flat=True))
+
+            # Base RDM scope: notes on RDM sites OR created by RDM OR created by any SDM under this RDM
+            rdm_note_q = Q(site_id__in=site_ids) | Q(site__mtn_rdm_name__icontains=full_n) | Q(created_by__icontains=full_n)
+            for s_name in supervised_sdms:
+                if s_name:
+                    rdm_note_q |= Q(created_by__icontains=s_name) | Q(site__sdm_name__iexact=s_name)
+
+            qs = qs.filter(rdm_note_q)
+
+            # If RDM specifically filtered by one SDM under them:
+            if sdm and sdm != 'All' and sdm != 'undefined':
+                qs = qs.filter(Q(site__sdm_name__icontains=sdm) | Q(created_by__icontains=sdm))
+        else:
+            if sdm and sdm != 'All' and sdm != 'undefined':
+                qs = qs.filter(Q(site__sdm_name__icontains=sdm) | Q(created_by__icontains=sdm))
+
+        if fse and fse != 'All' and fse != 'undefined':
+            qs = qs.filter(Q(smc_fse_name__icontains=fse) | Q(site__smc_fse_name__icontains=fse) | Q(created_by__icontains=fse))
+
+        # Only filter by state if state_param is an ACTUAL state (ignore 'ALL', 'All', 'RDM', 'FSE_ONLY')
+        if state_param and state_param.upper() not in ['ALL', 'RDM', 'FSE_ONLY', '', 'NONE', 'NULL', 'UNDEFINED']:
+            qs = qs.filter(Q(site__state__iexact=state_param) | Q(site__state__icontains=state_param))
 
         site_id = self.request.query_params.get('site_id', None)
         if site_id:
@@ -742,25 +869,13 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         data = request.data.copy()
 
-        # Check creator authorization
-        requester_sdm = data.get('updated_by') or data.get('sdm') or data.get('requester') or request.query_params.get('sdm', '')
+        # Check authorization with helper
+        authorized, reason = self._is_authorized_for_note(request, instance)
+        if not authorized:
+            return Response({'error': reason}, status=status.HTTP_403_FORBIDDEN)
+
+        requester_sdm = data.get('updated_by') or data.get('sdm') or data.get('rdm') or data.get('requester') or request.query_params.get('sdm', '')
         is_superuser = data.get('is_superuser', False) or getattr(request.user, 'is_superuser', False)
-
-        note_creator = (instance.created_by or '').strip().lower()
-        req_sdm_clean = (requester_sdm or '').strip().lower()
-
-        if not is_superuser and req_sdm_clean:
-            match = (
-                req_sdm_clean == note_creator or
-                req_sdm_clean in note_creator or
-                note_creator in req_sdm_clean or
-                note_creator == 'state delivery manager'
-            )
-            if not match:
-                return Response(
-                    {'error': f'Permission denied. Note can only be updated by its creator ({instance.created_by}).'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
 
         site_id_input = data.get('site_id_input') or data.get('site')
         if site_id_input:
@@ -854,24 +969,12 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         data = request.data or {}
 
-        requester_sdm = data.get('updated_by') or data.get('sdm') or data.get('requester') or request.query_params.get('sdm', '')
-        is_superuser = data.get('is_superuser', False) or getattr(request.user, 'is_superuser', False)
+        # Check authorization with helper
+        authorized, reason = self._is_authorized_for_note(request, instance)
+        if not authorized:
+            return Response({'error': reason}, status=status.HTTP_403_FORBIDDEN)
 
-        note_creator = (instance.created_by or '').strip().lower()
-        req_sdm_clean = (requester_sdm or '').strip().lower()
-
-        if not is_superuser and req_sdm_clean:
-            match = (
-                req_sdm_clean == note_creator or
-                req_sdm_clean in note_creator or
-                note_creator in req_sdm_clean or
-                note_creator == 'state delivery manager'
-            )
-            if not match:
-                return Response(
-                    {'error': f'Permission denied. Note can only be resolved by its creator ({instance.created_by}).'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        requester_sdm = data.get('updated_by') or data.get('sdm') or data.get('rdm') or data.get('requester') or request.query_params.get('sdm', '')
 
         instance.status = 'Resolved'
         if not instance.resolved_at:

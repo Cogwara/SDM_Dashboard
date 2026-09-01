@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Radio, Search, Bell, Bot, Layers, FileText, MessageSquare, BarChart3, 
-  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone, FileSpreadsheet, Network, PhoneCall, Wifi, WifiOff, Database, UserCheck, ShieldAlert, CheckSquare, Clock, Compass, Menu, X
+  Map, Maximize, Minimize, Sun, Moon, Sparkles, ChevronDown, User, LogOut, ShieldCheck, Smartphone, FileSpreadsheet, Network, PhoneCall, Wifi, WifiOff, Database, UserCheck, ShieldAlert, CheckSquare, Clock, Compass, Menu, X, Calendar, UserCog
 } from 'lucide-react';
 import { getPendingTotalCount } from '../mobileOfflineStorage';
 import { getSDMStateInfo } from '../utils/userUtils';
+import { getMediaUrl } from '../api';
 
 export default function Navbar({ 
   activeTab, 
@@ -15,14 +16,16 @@ export default function Navbar({
   currentTheme, 
   onThemeChange,
   currentUser,
-  onLogout
+  onLogout,
+  onToggleSidebar,
+  isSidebarOpen,
+  onOpenProfile
 }) {
   const [searchInput, setSearchInput] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
 
   const stateInfo = getSDMStateInfo(currentUser);
 
@@ -65,6 +68,8 @@ export default function Navbar({
   };
 
   const themes = [
+    { id: 'mtn', label: 'MTN Operations (Gold)', icon: Radio, color: 'text-amber-400' },
+    { id: 'mtn-dark', label: 'MTN Operations (Dark)', icon: Moon, color: 'text-amber-300' },
     { id: 'sky', label: 'Skyblueish (Default)', icon: Sparkles, color: 'text-cyan-400' },
     { id: 'dark', label: 'Dark Mode', icon: Moon, color: 'text-indigo-400' },
     { id: 'light', label: 'Light Mode', icon: Sun, color: 'text-amber-400' },
@@ -72,119 +77,199 @@ export default function Navbar({
 
   const currentThemeObj = themes.find(t => t.id === currentTheme) || themes[0];
   const ThemeIcon = currentThemeObj.icon;
-  const pendingCount = getPendingTotalCount();
+  const unreadCount = notifications ? notifications.filter(n => !n.is_read).length : 0;
+  const isMtnTheme = currentTheme === 'mtn' || currentTheme === 'mtn-dark';
 
-  const baseNavItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Layers },
-    { id: 'daily_availability', label: 'Daily Availability', icon: Radio },
-    { id: 'map', label: 'Live Geo Map', icon: Map },
-    { id: 'database', label: 'Site Database & Matrix', icon: Database },
-    { id: 'notes', label: 'SDM Operational Notes', icon: FileText },
+  // Primary top navbar quick tabs
+  const topTabs = [
+    { id: 'noc_hub', label: 'NOC Hub', icon: Radio, badge: 'MTN' },
+    { id: 'dashboard', label: 'Overview', icon: Layers },
+    { id: 'daily_availability', label: 'Daily Avail', icon: Calendar },
+    { id: 'map', label: 'Live Map', icon: Map },
+    { id: 'database', label: 'Site Matrix', icon: Database },
+    { id: 'notes', label: 'Field Notes', icon: FileText },
     { id: 'wo_tracker', label: 'WO Tracker', icon: CheckSquare },
-    { id: 'fiber_outages', label: 'Fiber Outages', icon: ShieldAlert },
-    { id: 'mobile', label: `📱 Field Mobile App ${pendingCount > 0 ? `(${pendingCount})` : ''}`, icon: Smartphone },
   ];
 
-  if (currentUser && currentUser.is_superuser) {
-    baseNavItems.push({ id: 'admin', label: 'SDM Admin Directory', icon: ShieldCheck });
-  }
-
-  const unreadCount = notifications ? notifications.filter(n => !n.is_read).length : 0;
-
   return (
-    <header className="sticky top-0 z-40 glass-panel border-b border-slate-800/80">
+    <header className={`sticky top-0 z-40 glass-panel border-b transition-all ${
+      isMtnTheme 
+        ? 'bg-[#FFCC00] border-black text-black shadow-md' 
+        : 'border-slate-800/80 bg-slate-950/80 backdrop-blur-xl'
+    }`}>
       <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
-          {/* Mobile Hamburger Toggle & Logo */}
+          {/* Hamburger Menu Toggle & Dashboard Branding */}
           <div className="flex items-center space-x-3">
             <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="p-2 rounded-xl text-slate-300 hover:text-white bg-slate-900/80 border border-slate-700/80 shadow-md transition-all flex items-center justify-center"
-              title="Toggle Navigation Menu"
+              onClick={onToggleSidebar}
+              className={`p-2.5 rounded-xl border shadow-md transition-all flex items-center justify-center cursor-pointer ${
+                isMtnTheme
+                  ? 'bg-black text-[#FFCC00] border-black hover:bg-slate-900'
+                  : 'text-slate-300 hover:text-white bg-slate-900/90 border-slate-700/80 hover:border-cyan-500/50'
+              }`}
+              title="Toggle Menu & Navigation Drawer"
             >
-              {isMobileMenuOpen ? <X className="w-5 h-5 text-cyan-400" /> : <Menu className="w-5 h-5 text-slate-300" />}
+              {isSidebarOpen ? (
+                <X className={`w-5 h-5 ${isMtnTheme ? 'text-[#FFCC00]' : 'text-cyan-400'}`} />
+              ) : (
+                <Menu className={`w-5 h-5 ${isMtnTheme ? 'text-[#FFCC00]' : 'text-slate-300'}`} />
+              )}
             </button>
 
-            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
-              <div className="p-2 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl shadow-lg shadow-cyan-500/20">
-                <Radio className="w-5 h-5 text-white animate-pulse" />
-              </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-extrabold text-base sm:text-lg tracking-wider text-white">
-                    {stateInfo.dashboardTitle}
-                  </span>
-                  <span className="px-2 py-0.5 text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-full">
-                    v3.0
-                  </span>
+            {isMtnTheme ? (
+              <div 
+                className="flex items-center space-x-2.5 cursor-pointer select-none" 
+                onClick={() => setActiveTab('noc_hub')}
+              >
+                <div className="px-2.5 py-1 bg-black text-[#FFCC00] font-black text-xs sm:text-sm rounded-full tracking-wider shadow-sm flex items-center justify-center border border-black">
+                  MTN
                 </div>
-                <p className="text-[11px] text-slate-400 hidden sm:block">
-                  {stateInfo.subtitle}
-                </p>
+                <div className="flex flex-col">
+                  <span className="font-extrabold text-sm text-black leading-tight">Home</span>
+                  <span className="text-[9px] font-bold text-slate-900/80 uppercase tracking-wider">NETWORK OPERATIONS</span>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div 
+                className="flex items-center space-x-3 cursor-pointer select-none" 
+                onClick={() => setActiveTab('dashboard')}
+              >
+                <div className="p-2 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl shadow-lg shadow-cyan-500/20 text-white">
+                  <Radio className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-black text-base sm:text-lg tracking-wide text-white">
+                      {stateInfo.dashboardTitle || 'FCT SDM'}
+                    </span>
+                    <span className="px-2 py-0.5 text-[9px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-full">
+                      v3.0
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 hidden md:block">
+                    {stateInfo.subtitle || 'SDM Field Operations Dashboard'}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
+          {/* Center Brand Title in MTN Theme */}
+          {isMtnTheme && (
+            <div className="font-black text-base text-black tracking-tight hidden lg:block">
+              Home Page
+            </div>
+          )}
+
+          {/* Quick Tabs in Top Header (Desktop) */}
+          <nav className="hidden xl:flex items-center space-x-1">
+            {topTabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    isActive
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-900 border border-transparent'
+                  }`}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
           {/* Quick Search */}
-          <form onSubmit={handleSearchSubmit} className="hidden md:flex items-center flex-1 max-w-md mx-6">
+          <form onSubmit={handleSearchSubmit} className="hidden md:flex items-center flex-1 max-w-xs mx-4">
             <div className="relative w-full">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Enter Site ID (e.g. FC2700)..."
+                placeholder="Lookup Site ID..."
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                className="w-full bg-slate-900/80 text-sm text-slate-200 placeholder-slate-500 pl-9 pr-4 py-2 rounded-xl border border-slate-700/60 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+                className="w-full bg-slate-900/90 text-xs text-slate-200 placeholder-slate-500 pl-9 pr-4 py-2 rounded-xl border border-slate-700/60 focus:outline-none focus:border-cyan-500 font-mono transition-all"
               />
             </div>
           </form>
 
-          {/* Right Controls & SDM User Profile */}
-          <div className="flex items-center space-x-3">
+          {/* Right Controls & Profile */}
+          <div className="flex items-center space-x-2.5">
             
-            {/* Live Online / Offline Network Status Pill */}
-            <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-bold transition-all">
+            {/* Live Online Status */}
+            <div className="hidden sm:flex items-center space-x-1.5 px-2 py-1 rounded-xl text-[11px] font-bold">
               {isOnline ? (
-                <span className="flex items-center gap-1.5 text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-lg shadow-sm" title="Connected to SDM Server">
+                <span className="flex items-center gap-1 text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-lg shadow-sm">
                   <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                  <span>Online</span>
+                  <span className="hidden lg:inline">ONLINE</span>
                 </span>
               ) : (
-                <span className="flex items-center gap-1.5 text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-lg shadow-sm" title="Working Offline - Actions will sync automatically when online">
-                  <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-ping" />
-                  <span>Offline ({pendingCount} pending)</span>
+                <span className="flex items-center gap-1 text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-lg shadow-sm">
+                  <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+                  <span>OFFLINE</span>
                 </span>
               )}
             </div>
 
-            {/* AI Ops Pill */}
+            {/* Notifications Bell */}
             <button
-              onClick={() => setActiveTab('ai')}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-gradient-to-r from-indigo-600/30 to-cyan-600/30 hover:from-indigo-600/50 hover:to-cyan-600/50 border border-cyan-500/40 text-cyan-300 text-xs font-medium rounded-xl transition-all shadow-md"
+              onClick={onOpenNotifications}
+              className="p-2 rounded-xl text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all relative cursor-pointer"
+              title="Notifications"
             >
-              <Bot className="w-4 h-4 text-cyan-400 animate-bounce" />
-              <span className="hidden sm:inline">AI Operations</span>
+              <Bell className="w-4 h-4 text-cyan-400" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center animate-pulse">
+                  {unreadCount}
+                </span>
+              )}
             </button>
 
-            {/* Theme Selector Dropdown */}
+            {/* Theme Selector & MTN Dark/Light Switch Pill */}
+            {isMtnTheme ? (
+              <button
+                onClick={() => onThemeChange(currentTheme === 'mtn' ? 'mtn-dark' : 'mtn')}
+                className="px-3 py-1.5 bg-black text-[#FFCC00] hover:bg-slate-900 border border-black rounded-full text-xs font-black flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                title="Toggle MTN Dark / Light Mode"
+              >
+                {currentTheme === 'mtn' ? (
+                  <>
+                    <Moon className="w-3.5 h-3.5 text-[#FFCC00] fill-[#FFCC00]" />
+                    <span>Dark</span>
+                  </>
+                ) : (
+                  <>
+                    <Sun className="w-3.5 h-3.5 text-[#FFCC00]" />
+                    <span>Light</span>
+                  </>
+                )}
+              </button>
+            ) : null}
+
+            {/* Theme Menu Dropdown */}
             <div className="relative">
               <button
                 onClick={() => setShowThemeMenu(!showThemeMenu)}
-                className="p-2 text-slate-200 bg-slate-900/80 hover:bg-slate-800/80 border border-slate-700 rounded-xl transition-all shadow-md flex items-center space-x-1.5"
-                title="Select Theme"
+                className={`p-2 rounded-xl border transition-all flex items-center gap-1 cursor-pointer ${
+                  isMtnTheme
+                    ? 'bg-black text-[#FFCC00] border-black hover:bg-slate-900'
+                    : 'text-slate-300 hover:text-white bg-slate-900 border-slate-800 hover:border-slate-700'
+                }`}
+                title="Change Theme"
               >
-                <ThemeIcon className={`w-4 h-4 ${currentThemeObj.color}`} />
-                <span className="hidden lg:inline text-xs font-semibold">{currentThemeObj.label.split(' ')[0]}</span>
-                <ChevronDown className="w-3 h-3 text-slate-400" />
+                <ThemeIcon className={`w-4 h-4 ${isMtnTheme ? 'text-[#FFCC00]' : currentThemeObj.color}`} />
               </button>
-
+              
               {showThemeMenu && (
-                <div className="absolute right-0 mt-2 w-48 glass-panel rounded-xl border border-slate-700 shadow-2xl z-50 py-1 space-y-1">
-                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Select Dashboard Theme</div>
+                <div className="absolute right-0 mt-2 w-44 rounded-2xl bg-slate-950 border border-slate-800 shadow-2xl p-1 z-50 animate-in fade-in duration-150">
                   {themes.map((t) => {
-                    const IconComp = t.icon;
-                    const isSelected = currentTheme === t.id;
+                    const TIcon = t.icon;
                     return (
                       <button
                         key={t.id}
@@ -192,11 +277,11 @@ export default function Navbar({
                           onThemeChange(t.id);
                           setShowThemeMenu(false);
                         }}
-                        className={`w-full flex items-center space-x-2.5 px-3 py-2 text-xs font-medium transition-all ${
-                          isSelected ? 'bg-cyan-500/20 text-cyan-300 font-bold' : 'text-slate-300 hover:bg-slate-800'
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+                          currentTheme === t.id ? 'bg-cyan-500/20 text-cyan-300 font-bold' : 'text-slate-300 hover:bg-slate-900'
                         }`}
                       >
-                        <IconComp className={`w-4 h-4 ${t.color}`} />
+                        <TIcon className={`w-4 h-4 ${t.color}`} />
                         <span>{t.label}</span>
                       </button>
                     );
@@ -205,225 +290,125 @@ export default function Navbar({
               )}
             </div>
 
-            {/* Fullscreen Toggle Button */}
+            {/* Fullscreen Toggle */}
             <button
               onClick={toggleFullscreen}
-              className="p-2 text-cyan-400 hover:text-white bg-slate-900/80 hover:bg-cyan-950/60 border border-cyan-500/30 rounded-xl transition-all shadow-md flex items-center space-x-1"
-              title={isFullscreen ? "Exit Fullscreen" : "Toggle Fullscreen Mode"}
+              className="p-2 rounded-xl text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all hidden sm:flex cursor-pointer"
+              title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
             >
-              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-              <span className="hidden xl:inline text-xs font-semibold px-1">{isFullscreen ? 'Exit Full' : 'Fullscreen'}</span>
+              {isFullscreen ? <Minimize className="w-4 h-4 text-cyan-400" /> : <Maximize className="w-4 h-4 text-slate-400" />}
             </button>
 
-            {/* Notifications Bell */}
-            <button
-              onClick={onOpenNotifications}
-              className="relative p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 rounded-xl transition-all"
-              title="Notifications"
-            >
-              <Bell className="w-5 h-5" />
-              {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white glow-badge-red">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
+            {/* User Profile Menu */}
+            <div className="relative">
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-2 p-1 rounded-xl bg-slate-900 border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer shadow-sm"
+                title="Account & Profile Menu"
+              >
+                <div className={`w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center font-bold text-xs border ${
+                  currentUser?.is_superuser
+                    ? 'border-amber-400/60 bg-amber-950 text-amber-300'
+                    : currentUser?.role === 'MTN RDM'
+                      ? 'border-indigo-400/60 bg-indigo-950 text-indigo-300'
+                      : 'border-cyan-400/60 bg-slate-800 text-cyan-300'
+                }`}>
+                  {currentUser?.avatar_url ? (
+                    <img
+                      src={getMediaUrl(currentUser.avatar_url)}
+                      alt={currentUser.full_name || 'User'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span>{currentUser?.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'S'}</span>
+                  )}
+                </div>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 pr-0.5" />
+              </button>
 
-            {/* Logged-in SDM User Profile Pill */}
-            {currentUser && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center space-x-2 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-cyan-500/40 rounded-xl transition-all shadow-md"
-                >
-                  <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow">
-                    {currentUser.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'S'}
-                  </div>
-                  <div className="hidden md:block text-left">
-                    <div className="text-xs font-bold text-white leading-none">{currentUser.full_name}</div>
-                    <div className="text-[9px] text-cyan-400 font-semibold">{currentUser.role || 'SDM Manager'}</div>
-                  </div>
-                  <ChevronDown className="w-3 h-3 text-slate-400" />
-                </button>
-
-                {showUserMenu && (
-                  <div className="absolute right-0 mt-2 w-64 glass-panel rounded-2xl border border-slate-700 shadow-2xl z-50 p-3 space-y-3">
-                    <div className="border-b border-slate-800 pb-2">
-                      <div className="text-xs font-extrabold text-white">{currentUser.full_name}</div>
-                      <div className="text-[11px] text-cyan-400 font-semibold">{currentUser.role}</div>
-                      <div className="text-[10px] text-slate-400 mt-1 font-mono">{currentUser.email}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">Phone: {currentUser.phone || '0800-000-000'}</div>
-                    </div>
-
-                    {currentUser.is_superuser && (
-                      <button
-                        onClick={() => {
-                          setShowUserMenu(false);
-                          setActiveTab('admin');
-                        }}
-                        className="w-full flex items-center justify-center space-x-2 px-3 py-1.5 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 text-xs font-bold rounded-xl transition-all"
-                      >
-                        <ShieldCheck className="w-4 h-4 text-cyan-400" />
-                        <span>SDM Admin Control</span>
-                      </button>
-                    )}
-
-                    <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1">
-                      <div className="flex items-center justify-between text-slate-300">
-                        <span>Assigned Sites:</span>
-                        <b className="text-cyan-300 font-mono">
-                          {currentUser.is_superuser 
-                            ? 'All Sites (1,044)' 
-                            : (currentUser.assigned_sites_count || 'Portfolio Sites')}
-                        </b>
+              {showUserMenu && (
+                <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-slate-950 border border-slate-800 shadow-2xl p-2 z-50 animate-in fade-in duration-150 space-y-1">
+                  <div 
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      if (onOpenProfile) onOpenProfile();
+                    }}
+                    className="p-2 border-b border-slate-800/80 hover:bg-slate-900/60 rounded-xl cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 border border-slate-700 bg-slate-800 flex items-center justify-center text-xs font-bold text-cyan-300">
+                        {currentUser?.avatar_url ? (
+                          <img
+                            src={getMediaUrl(currentUser.avatar_url)}
+                            alt={currentUser.full_name || 'User'}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span>{currentUser?.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'U'}</span>
+                        )}
                       </div>
-                      <div className="flex items-center justify-between text-slate-300">
-                        <span>Scope:</span>
-                        <b className="text-slate-200">{stateInfo.regionText}</b>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-xs text-white truncate">{currentUser?.full_name || 'SDM Engineer'}</div>
+                        <div className="text-[10px] text-cyan-400 font-semibold truncate">{currentUser?.role || 'State Delivery Manager'}</div>
                       </div>
                     </div>
+                  </div>
+                  
+                  <button
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      if (onOpenProfile) onOpenProfile();
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-cyan-950/40 hover:text-cyan-300 flex items-center gap-2 transition-all cursor-pointer"
+                  >
+                    <UserCog className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>My Profile & Account Details</span>
+                  </button>
 
+                  <button
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      setActiveTab('mobile');
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-900 flex items-center gap-2 transition-all cursor-pointer"
+                  >
+                    <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Field Mobile App View</span>
+                  </button>
+
+                  {currentUser?.is_superuser && (
+                    <button
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        setActiveTab('admin');
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-900 flex items-center gap-2 transition-all cursor-pointer"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>SDM User Admin</span>
+                    </button>
+                  )}
+
+                  <div className="pt-1 border-t border-slate-800/80">
                     <button
                       onClick={() => {
                         setShowUserMenu(false);
                         onLogout();
                       }}
-                      className="w-full flex items-center justify-center space-x-2 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 text-xs font-bold rounded-xl transition-all"
+                      className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 transition-all cursor-pointer"
                     >
-                      <LogOut className="w-4 h-4" />
-                      <span>Log Out of Account</span>
+                      <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Log Out Account</span>
                     </button>
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* Left Edge Auto-Hide Tabs Hint Callout */}
-            <div 
-              onClick={() => setActiveTab(activeTab)}
-              className="hidden xl:flex items-center space-x-1.5 px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-extrabold rounded-xl transition-all cursor-pointer shadow-md group"
-              title="Hover your cursor over the left edge of the screen to open navigation tabs"
-            >
-              <Compass className="w-4 h-4 text-cyan-400 animate-spin" style={{ animationDuration: '10s' }} />
-              <span className="font-mono text-[11px] group-hover:-translate-x-0.5 transition-transform">&larr; Pages & Tabs</span>
+                </div>
+              )}
             </div>
 
           </div>
 
         </div>
-
       </div>
-
-      {/* Mobile Hamburger Drawer Overlay */}
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-xl border-b border-slate-800 animate-fadeIn">
-          {/* Drawer Header */}
-          <div className="flex items-center justify-between p-4 border-b border-slate-800">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-gradient-to-tr from-cyan-600 to-indigo-600 rounded-xl shadow-lg">
-                <Radio className="w-6 h-6 text-white animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-white">{stateInfo.dashboardTitle}</h3>
-                <p className="text-[11px] text-cyan-400 font-semibold">{stateInfo.regionText}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setIsMobileMenuOpen(false)}
-              className="p-2 text-slate-400 hover:text-white bg-slate-900 rounded-xl border border-slate-800"
-            >
-              <X className="w-6 h-6 text-cyan-400" />
-            </button>
-          </div>
-
-          {/* Drawer Body */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Logged in User Profile Card */}
-            {currentUser ? (
-              <div className="glass-panel p-4 rounded-2xl border border-cyan-500/30 bg-slate-900/80 space-y-2">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white font-extrabold text-base shadow-md">
-                    {currentUser.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'S'}
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white leading-tight">{currentUser.full_name}</h4>
-                    <span className="inline-block text-[11px] font-semibold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded-md border border-cyan-500/30 mt-0.5">
-                      {currentUser.role || 'State Delivery Manager'}
-                    </span>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-800/80">
-                  <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
-                    <span className="text-slate-400 block text-[10px]">Scope Territory</span>
-                    <strong className="text-slate-200">{stateInfo.code || 'National'}</strong>
-                  </div>
-                  <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
-                    <span className="text-slate-400 block text-[10px]">Network Status</span>
-                    <strong className={isOnline ? 'text-emerald-400' : 'text-amber-400'}>
-                      {isOnline ? 'Online (Server)' : 'Offline'}
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-900/80 text-center">
-                <p className="text-xs text-slate-300 mb-3">You are not logged in to the SDM Directory.</p>
-                <button
-                  onClick={() => { setIsMobileMenuOpen(false); onLogout(); }}
-                  className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg"
-                >
-                  Log In to SDM Portal
-                </button>
-              </div>
-            )}
-
-            {/* Navigation Links */}
-            <div className="space-y-1">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 mb-2">Operational Navigation</div>
-              {baseNavItems.map((item) => {
-                const IconComp = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setIsMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-bold transition-all ${
-                      isActive
-                        ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-lg'
-                        : 'text-slate-300 hover:bg-slate-900 border border-transparent'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <IconComp className={`w-5 h-5 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-                      <span>{item.label}</span>
-                    </div>
-                    {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Log Out Action */}
-            {currentUser && (
-              <div className="pt-4 border-t border-slate-800">
-                <button
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onLogout();
-                  }}
-                  className="w-full py-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl border border-rose-500/40 shadow-lg flex items-center justify-center space-x-2 transition-all"
-                >
-                  <LogOut className="w-4 h-4 text-rose-400" />
-                  <span>Log Out of Account</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </header>
   );
 }
