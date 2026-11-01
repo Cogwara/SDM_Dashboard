@@ -109,10 +109,10 @@ export default function WSDHomeWorkspace({ currentUser, onNavigate, onRefreshDat
   };
 
   const handleResetBase = async () => {
-    if (!window.confirm('Reset WSD database back to base WSD July 2026 V5.1 dataset?')) return;
+    if (!window.confirm('Reset WSD database back to base WSD October 2026 v1.0 dataset?')) return;
 
     setUploading(true);
-    setUploadProgress('Resetting database to base WSD July 2026 V5.1...');
+    setUploadProgress('Resetting database to base WSD October 2026 v1.0...');
     setErrorMsg('');
     setUploadSuccessMsg('');
 
@@ -121,7 +121,7 @@ export default function WSDHomeWorkspace({ currentUser, onNavigate, onRefreshDat
       const res = await resetBaseWSD(uploaderName);
 
       if (res && res.success) {
-        setUploadSuccessMsg(`Database reset to base WSD July 2026 V5.1 (${res.site_count.toLocaleString()} sites).`);
+        setUploadSuccessMsg(`Database reset to base WSD October 2026 v1.0 (${res.site_count.toLocaleString()} sites).`);
         await loadStatus();
         if (onRefreshData) onRefreshData();
       } else {
@@ -163,7 +163,7 @@ export default function WSDHomeWorkspace({ currentUser, onNavigate, onRefreshDat
             </h1>
 
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
-              The system is initialized with <strong className="text-cyan-300 font-mono">WSD July 2026 V5.1.xlsb</strong> as the base database. 
+              The system is initialized with <strong className="text-cyan-300 font-mono">WSD October 2026 v1.0.xlsx</strong> as the base database. 
               Please upload your own updated Regional WSD spreadsheet below to customize the live operational database for your state territory (<span className="text-cyan-400 font-bold">{stateInfo.stateName}</span>). All site tracking, diagnostics, notes, and analytics will dynamically adapt to your uploaded dataset.
             </p>
 
@@ -178,7 +178,7 @@ export default function WSDHomeWorkspace({ currentUser, onNavigate, onRefreshDat
               </div>
               <div className="flex items-center gap-1.5">
                 <Database className="w-4 h-4 text-cyan-400" />
-                <span>Active File: <strong className="text-cyan-300 font-mono">{wsdStatus?.active_filename || 'WSD July 2026 V5.1.xlsb'}</strong></span>
+                <span>Active File: <strong className="text-cyan-300 font-mono">{wsdStatus?.active_filename || 'WSD October  2026 v1.0.xlsx'}</strong></span>
               </div>
             </div>
           </div>
@@ -400,7 +400,7 @@ export default function WSDHomeWorkspace({ currentUser, onNavigate, onRefreshDat
 
                 <div className="text-sm font-black text-white font-mono flex items-center gap-2 truncate">
                   <FileSpreadsheet className="w-4 h-4 text-cyan-400 shrink-0" />
-                  <span className="truncate">{wsdStatus?.active_filename || 'WSD July 2026 V5.1.xlsb'}</span>
+                  <span className="truncate">{wsdStatus?.active_filename || 'WSD October  2026 v1.0.xlsx'}</span>
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">

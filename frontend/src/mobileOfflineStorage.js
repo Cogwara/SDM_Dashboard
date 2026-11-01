@@ -8,7 +8,8 @@ const LAST_SYNC_KEY = 'sdm_last_sync_time';
 
 export const getPendingNotes = () => {
   try {
-    return JSON.parse(localStorage.getItem(PENDING_NOTES_KEY) || '[]');
+    const parsed = JSON.parse(localStorage.getItem(PENDING_NOTES_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -16,7 +17,8 @@ export const getPendingNotes = () => {
 
 export const getPendingWhatsApp = () => {
   try {
-    return JSON.parse(localStorage.getItem(PENDING_WHATSAPP_KEY) || '[]');
+    const parsed = JSON.parse(localStorage.getItem(PENDING_WHATSAPP_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -24,7 +26,8 @@ export const getPendingWhatsApp = () => {
 
 export const getPendingFseAudits = () => {
   try {
-    return JSON.parse(localStorage.getItem(PENDING_FSE_AUDITS_KEY) || '[]');
+    const parsed = JSON.parse(localStorage.getItem(PENDING_FSE_AUDITS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -32,7 +35,8 @@ export const getPendingFseAudits = () => {
 
 export const getCachedSites = () => {
   try {
-    return JSON.parse(localStorage.getItem(CACHED_SITES_KEY) || '[]');
+    const parsed = JSON.parse(localStorage.getItem(CACHED_SITES_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -40,9 +44,41 @@ export const getCachedSites = () => {
 
 export const saveCachedSites = (sites) => {
   try {
-    localStorage.setItem(CACHED_SITES_KEY, JSON.stringify(sites || []));
+    const list = Array.isArray(sites) ? sites : [];
+    const compact = list.slice(0, 1500).map((s) => ({
+      id: s.id,
+      ihs_site_id: s.ihs_site_id || s.site_id,
+      mtn_id: s.mtn_id,
+      operational_status: s.operational_status || s.site_status || (s.is_down ? 'Down' : 'Operational'),
+      is_down: Boolean(s.is_down || s.operational_status === 'Down' || s.site_status === 'Down'),
+      is_critical: Boolean(s.is_critical || s.priority === 'P1'),
+      priority: s.priority || s.site_priority || 'P2',
+      site_address: s.site_address,
+      cluster_name: s.cluster_name || s.cluster,
+      hvc_cluster: s.hvc_cluster,
+      lga: s.lga,
+      state: s.state,
+      region: s.region,
+      tower_co: s.tower_co || s.raw_data?.['Tower Co'] || 'IHS',
+      smc: s.smc || s.raw_data?.['SMC'] || 'IHS',
+      sdm_name: s.sdm_name || s.sdm || s.raw_data?.['SDM NAME'],
+      sdm_phone: s.sdm_phone,
+      smc_fse_name: s.smc_fse_name || s.fse || s.raw_data?.['FSE NAME'],
+      smc_fse_phone: s.smc_fse_phone || s.fse_phone || s.raw_data?.['FSE CONTACT NO.'],
+      efs_name: s.efs_name,
+      efs_phone: s.efs_phone,
+      rto_name: s.rto_name || s.rto,
+      rto_phone: s.rto_phone,
+      mtn_rdm_name: s.mtn_rdm_name || s.rdm,
+      power_solution: s.power_solution || s.power_solution_type || s.raw_data?.['Power Solution'],
+      dg_capacity: s.dg_capacity || s.dg_rating || s.raw_data?.['DG CAP'],
+      latitude: s.latitude,
+      longitude: s.longitude,
+      notes_count: s.notes_count || s.open_notes_count || 0
+    }));
+    localStorage.setItem(CACHED_SITES_KEY, JSON.stringify(compact));
   } catch (e) {
-    console.error('Failed to cache sites locally:', e);
+    console.warn('Failed to cache sites locally:', e);
   }
 };
 

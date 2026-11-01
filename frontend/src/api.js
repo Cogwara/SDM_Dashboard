@@ -15,23 +15,59 @@ const checkIsCapacitorNative = () => {
   );
 };
 
-const DEFAULT_MOBILE_SERVER_URL = 'https://during-duke-susan-binary.trycloudflare.com';
+export const DEFAULT_MOBILE_SERVER_URL = 'https://ice-powerseller-clerk-where.trycloudflare.com';
+export const FALLBACK_TUNNEL_URL = 'https://obligations-ecommerce-gospel-nhs.trycloudflare.com';
+
+const KNOWN_STALE_TUNNELS = [
+  'warm-tennis-touch-kansas.trycloudflare.com',
+  'graduate-summaries-joy-tenant.trycloudflare.com',
+];
+
+const isStaleCloudflareTunnel = (url) => {
+  if (!url || !url.includes('.trycloudflare.com')) return false;
+  return KNOWN_STALE_TUNNELS.some((stale) => url.includes(stale));
+};
+
+const isInvalidRemoteOverride = (url, isRemoteContext) => {
+  if (!url) return false;
+  if (isStaleCloudflareTunnel(url)) return true;
+  if (isRemoteContext) {
+    const clean = cleanHost(url);
+    if (
+      clean === 'localhost' ||
+      clean.startsWith('localhost:') ||
+      clean.startsWith('127.0.0.1') ||
+      clean.startsWith('192.168.') ||
+      clean.startsWith('10.') ||
+      clean.endsWith('.vercel.app')
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const getBaseUrl = () => {
+  const nativeApp = checkIsCapacitorNative();
+  const currentHost = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
+  const isVercel = currentHost.endsWith('.vercel.app');
+  const isCloudflareWeb = currentHost.endsWith('.trycloudflare.com');
+  const isRemoteContext = nativeApp || isVercel || isCloudflareWeb;
+
   let savedIp = localStorage.getItem('fct_sdm_server_ip');
-  if (savedIp && savedIp.includes('brighton-hours-strengthen-grown.trycloudflare.com')) {
+  if (savedIp && isInvalidRemoteOverride(savedIp, isRemoteContext)) {
     savedIp = null;
     localStorage.removeItem('fct_sdm_server_ip');
   }
-  const nativeApp = checkIsCapacitorNative();
   
   if (typeof window !== 'undefined') {
-    const currentHost = window.location.hostname || 'localhost';
-
-    // If running inside Capacitor APK on mobile device, default to Cloudflare Tunnel URL
-    if (nativeApp) {
+    // If running inside Capacitor APK on mobile device or hosted on Vercel, default to Cloudflare Tunnel URL
+    if (nativeApp || isVercel) {
       const rawHost = (savedIp && savedIp.trim()) ? savedIp.trim() : DEFAULT_MOBILE_SERVER_URL;
       const cleanH = cleanHost(rawHost);
+      if (cleanH.includes('.vercel.app')) {
+        return `${DEFAULT_MOBILE_SERVER_URL}/api/v1`;
+      }
       if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
         const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
         return `${formatted.replace(/\/$/, '')}/api/v1`;
@@ -44,6 +80,9 @@ const getBaseUrl = () => {
     if (savedIp && savedIp.trim() && savedIp.trim() !== currentHost && savedIp.trim() !== 'localhost') {
       const rawHost = savedIp.trim();
       const cleanH = cleanHost(rawHost);
+      if (cleanH.includes('.vercel.app')) {
+        return `${DEFAULT_MOBILE_SERVER_URL}/api/v1`;
+      }
       if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
         const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
         return `${formatted.replace(/\/$/, '')}/api/v1`;
@@ -60,24 +99,53 @@ const getBaseUrl = () => {
 
 export const getMediaUrl = (fileUrl) => {
   if (!fileUrl) return '';
+  if (typeof fileUrl !== 'string') return '';
+  if (fileUrl.startsWith('data:') || fileUrl.startsWith('blob:')) return fileUrl;
   if (typeof window === 'undefined') return fileUrl;
 
-  let mediaPath = fileUrl;
-  if (fileUrl.includes('/media/')) {
-    mediaPath = '/media/' + fileUrl.split('/media/')[1];
-  } else if (!mediaPath.startsWith('/')) {
+  let mediaPath = fileUrl.trim();
+  if (mediaPath.includes('/media/')) {
+    mediaPath = '/media/' + mediaPath.split('/media/')[1];
+  } else if (mediaPath.startsWith('media/')) {
     mediaPath = '/' + mediaPath;
+  } else if (
+    mediaPath.startsWith('attachments/') ||
+    mediaPath.startsWith('avatars/') ||
+    mediaPath.startsWith('downloads/')
+  ) {
+    mediaPath = '/media/' + mediaPath;
+  } else if (!mediaPath.startsWith('/')) {
+    mediaPath = '/media/' + mediaPath;
   }
 
   const nativeApp = checkIsCapacitorNative();
-  const savedIp = localStorage.getItem('fct_sdm_server_ip');
+  const currentHost = window.location.hostname || 'localhost';
+  const isVercel = currentHost.endsWith('.vercel.app');
+  const isCloudflareWeb = currentHost.endsWith('.trycloudflare.com');
+  const isRemoteContext = nativeApp || isVercel || isCloudflareWeb;
 
-  if (!nativeApp && (!savedIp || !savedIp.includes('.trycloudflare.com'))) {
-    return `${window.location.origin}${mediaPath}`;
+  let savedIp = localStorage.getItem('fct_sdm_server_ip');
+  if (savedIp && isInvalidRemoteOverride(savedIp, isRemoteContext)) {
+    savedIp = null;
+    localStorage.removeItem('fct_sdm_server_ip');
+  }
+
+  // In standard web browsers (local Nginx, Vercel with /media/ rewrite, or Cloudflare web tunnel),
+  // same-origin /media/... works seamlessly and avoids Mixed Content / CORP blocks.
+  if (!nativeApp && window.location.protocol.startsWith('http')) {
+    if (isVercel) {
+      return `${window.location.origin}${mediaPath}`;
+    }
+    if (!savedIp || savedIp.trim() === currentHost) {
+      return `${window.location.origin}${mediaPath}`;
+    }
   }
 
   const rawHost = (savedIp && savedIp.trim()) ? savedIp.trim() : DEFAULT_MOBILE_SERVER_URL;
   const cleanH = cleanHost(rawHost);
+  if (cleanH.includes('.vercel.app')) {
+    return `${DEFAULT_MOBILE_SERVER_URL}${mediaPath}`;
+  }
   if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
     const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
     return `${formatted.replace(/\/$/, '')}${mediaPath}`;
@@ -133,7 +201,9 @@ export const setCustomServerIp = (ip) => {
 
   if (ip && ip.trim()) {
     const trimmed = ip.trim();
-    if (!nativeApp && (trimmed === '192.168.1.120' || trimmed === 'localhost' || trimmed === '127.0.0.1' || trimmed === currentHost)) {
+    if (isStaleCloudflareTunnel(trimmed)) {
+      localStorage.setItem('fct_sdm_server_ip', DEFAULT_MOBILE_SERVER_URL);
+    } else if (!nativeApp && (trimmed === '192.168.1.120' || trimmed === 'localhost' || trimmed === '127.0.0.1' || trimmed === currentHost)) {
       localStorage.removeItem('fct_sdm_server_ip');
     } else {
       localStorage.setItem('fct_sdm_server_ip', trimmed);
@@ -292,6 +362,22 @@ export const fetchSites = async (params = {}) => {
   return res.data;
 };
 
+export const fetchMapSites = async (params = {}) => {
+  try {
+    const res = await api.get('/sites/map_sites/', { params });
+    if (Array.isArray(res.data)) {
+      return res.data;
+    }
+    if (res.data && res.data.results) {
+      return res.data.results;
+    }
+    return res.data || [];
+  } catch (err) {
+    const fallback = await fetchSites(params);
+    return fallback.results || fallback || [];
+  }
+};
+
 export const lookupSite = async (siteId) => {
   const res = await api.get('/sites/lookup/', { params: { site_id: siteId } });
   return res.data;
@@ -300,6 +386,51 @@ export const lookupSite = async (siteId) => {
 export const fetchFilterOptions = async (params = {}) => {
   const res = await api.get('/sites/filter_options/', { params });
   return res.data;
+};
+
+export const geocodeLocation = async (query, stateCode = '') => {
+  if (!query || !query.trim()) return [];
+  const cleanQ = query.trim();
+
+  // 1. Try backend geocode endpoint
+  try {
+    const res = await api.get('/sites/geocode/', {
+      params: { q: cleanQ, state: stateCode },
+      timeout: 8000
+    });
+    if (res.data && Array.isArray(res.data.results) && res.data.results.length > 0) {
+      return res.data.results;
+    }
+  } catch (err) {
+    console.warn('Backend geocode unavailable or timed out, trying direct OSM fallback...', err);
+  }
+
+  // 2. Direct browser fallback to OpenStreetMap Nominatim
+  try {
+    const viewbox = (!stateCode || stateCode.toUpperCase().includes('FCT') || stateCode.toUpperCase().includes('ABUJA'))
+      ? '&viewbox=6.75,9.40,7.80,8.25'
+      : '';
+    const encoded = encodeURIComponent(cleanQ);
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encoded}&countrycodes=ng${viewbox}&limit=6&addressdetails=1`;
+    const response = await axios.get(url, {
+      headers: { 'Accept': 'application/json' },
+      timeout: 5000
+    });
+    if (Array.isArray(response.data)) {
+      return response.data.map(item => ({
+        type: 'street_or_area',
+        title: item.name || (item.display_name ? item.display_name.split(',')[0] : cleanQ),
+        display_name: item.display_name,
+        lat: parseFloat(item.lat),
+        lng: parseFloat(item.lon),
+        category: item.type || item.class || 'place'
+      })).filter(x => !isNaN(x.lat) && !isNaN(x.lng));
+    }
+  } catch (fallbackErr) {
+    console.error('Nominatim geocode fallback failed:', fallbackErr);
+  }
+
+  return [];
 };
 
 // Notes
@@ -392,7 +523,7 @@ export const markAllNotificationsRead = async (params = {}) => {
 export const checkServerHealth = async () => {
   try {
     const res = await api.get('/dashboard/stats/', { timeout: 8000 });
-    return res.status === 200;
+    return res.status === 200 && res.data && typeof res.data === 'object' && ('total_sites' in res.data);
   } catch (err) {
     console.warn('Server health check error:', err);
     return false;
@@ -438,6 +569,25 @@ export const exportAvailabilityExcel = async (params = {}) => {
     params,
     responseType: 'blob'
   });
+  return res.data;
+};
+
+// WSD Master Dataset API Helpers
+export const fetchWSDStatus = async () => {
+  const res = await api.get('/wsd/status/');
+  return res.data;
+};
+
+export const uploadWSDFile = async (formData) => {
+  const res = await api.post('/wsd/upload/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000
+  });
+  return res.data;
+};
+
+export const resetBaseWSD = async (uploaderName) => {
+  const res = await api.post('/wsd/reset_base/', { uploaded_by: uploaderName });
   return res.data;
 };
 

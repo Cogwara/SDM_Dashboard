@@ -5,7 +5,7 @@ import {
   ChevronRight, Radio, Layers, Server, Download, Sparkles, TrendingUp, Archive,
   Clock, CalendarDays, CalendarRange, Sliders, LayoutGrid, List, Eye, TrendingDown, Info, X,
   FileText, Printer, Copy, MapPin, Check, Share2, Wrench, Map,
-  ClipboardList, CheckCheck, ArrowUpDown, MessageSquare, Plus, ExternalLink, RotateCcw
+  ClipboardList, CheckCheck, ArrowUpDown, MessageSquare, Plus, ExternalLink, RotateCcw, ChevronDown
 } from 'lucide-react';
 import { 
   fetchAvailabilityStats, fetchAvailabilityRecords, fetchAvailabilityArchives, uploadAvailabilityFile, resetBaseAvailability, exportAvailabilityExcel, fetchNotes, exportNotesExcel 
@@ -64,6 +64,19 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingBad, setIsExportingBad] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const [chartViewMode, setChartViewMode] = useState('area'); // 'area', 'candle', 'bar'
   const [uploadMsg, setUploadMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -692,6 +705,66 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
     }
   };
 
+  const handleExportBadSites = async (options = {}) => {
+    setIsExportingBad(true);
+    setShowExportMenu(false);
+    try {
+      const sdmParam = currentUser && !currentUser.is_superuser ? (currentUser.full_name || currentUser.username) : undefined;
+      let backendDateMode = dateMode;
+      if (dateMode === 'week') backendDateMode = selectedWeek || 'week';
+      else if (dateMode === 'day') backendDateMode = 'day';
+      else if (dateMode === 'month') backendDateMode = 'month';
+      else if (dateMode === 'all') backendDateMode = 'all';
+      else if (dateMode === 'custom') backendDateMode = 'custom';
+
+      const exportParams = {
+        sdm: sdmParam,
+        is_superuser: currentUser?.is_superuser ? 'true' : 'false',
+        user_state: stateInfo?.code,
+        state: selectedState,
+        territory: selectedTerritory,
+        lga: selectedLga,
+        tech: selectedTech,
+        tower_co: selectedTowerCo,
+        vendor: selectedVendor,
+        status: selectedStatus,
+        sort_by: sortBy || 'worst',
+        search: searchQuery,
+        site_ids: multiSiteParsedList.length > 0 ? multiSiteParsedList.join(',') : undefined,
+        only_bad: 'true',
+        critical_only: options.critical_only ? 'true' : undefined,
+        limit: options.limit || undefined,
+        sla_filter: options.critical_only ? 'critical_under_95' : 'degraded_under_98_5',
+        min_avail: minAvailInput,
+        max_avail: maxAvailInput,
+        date_mode: backendDateMode,
+        selected_date: selectedDateInput,
+        selected_month: selectedMonth,
+        start_date: startDateInput,
+        end_date: endDateInput
+      };
+
+      const blob = await exportAvailabilityExcel(exportParams);
+
+      const url = window.URL.createObjectURL(new Blob([blob]));
+      const link = document.createElement('a');
+      link.href = url;
+      const labelStr = (stats?.date_range || 'Network_Report').replace(/[^a-zA-Z0-9]/g, '_');
+      const prefix = options.critical_only 
+        ? 'Critical_Outage_Sites' 
+        : (options.limit === 15 ? 'Top_15_Worst_Sites' : 'Bad_Degraded_Sites');
+      link.setAttribute('download', `${prefix}_Daily_Availability_${labelStr}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+    } catch (e) {
+      console.error('Failed to export Bad Sites Excel report:', e);
+      alert('Error generating Bad Sites Excel export file. Please try again.');
+    } finally {
+      setIsExportingBad(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-12">
       
@@ -740,6 +813,85 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
             >
               <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
             </button>
+
+            {/* Export Bad / Degraded Sites Dropdown Action */}
+            <div className="relative" ref={exportMenuRef}>
+              <div className="flex items-center">
+                <button
+                  onClick={() => handleExportBadSites()}
+                  disabled={isExportingBad || isExporting}
+                  className="px-4 py-3 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-black rounded-l-2xl border border-red-500/40 border-r-0 transition-all flex items-center gap-2 shadow-lg shadow-red-950/40 hover:scale-[1.02] active:scale-95"
+                  title="Export bad performing and degraded sites (< 98.5% SLA) to Excel"
+                >
+                  <ShieldAlert className={`w-4 h-4 text-red-400 ${isExportingBad ? 'animate-bounce' : ''}`} />
+                  <span>{isExportingBad ? 'Exporting Bad Sites...' : 'Export Bad Sites (<98.5%)'}</span>
+                  {stats?.sla_breached_count !== undefined && (
+                    <span className="px-2 py-0.5 rounded-full bg-red-500/30 text-red-200 text-[10px] font-mono font-extrabold border border-red-500/40">
+                      {stats.sla_breached_count}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowExportMenu(!showExportMenu)}
+                  disabled={isExportingBad || isExporting}
+                  className="px-2.5 py-3 bg-red-500/30 hover:bg-red-500/40 text-red-300 rounded-r-2xl border border-red-500/40 transition-all flex items-center justify-center shadow-lg shadow-red-950/40 hover:bg-red-500/50"
+                  title="More Bad Sites Export Options"
+                >
+                  <ChevronDown className="w-3.5 h-3.5 text-red-300" />
+                </button>
+              </div>
+
+              {/* Dropdown Menu for Bad Sites Export Options */}
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl z-50 p-2 space-y-1 animate-fade-in backdrop-blur-xl">
+                  <div className="px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-800">
+                    Bad Sites Export Options
+                  </div>
+                  <button
+                    onClick={() => handleExportBadSites()}
+                    className="w-full text-left px-3 py-2 text-xs font-bold text-amber-300 hover:bg-amber-500/20 rounded-xl transition-all flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                      All Degraded Sites (&lt; 98.5%)
+                    </span>
+                    <span className="font-mono font-extrabold text-[10px] text-amber-300">{stats?.sla_breached_count || 0}</span>
+                  </button>
+                  <button
+                    onClick={() => handleExportBadSites({ critical_only: true })}
+                    className="w-full text-left px-3 py-2 text-xs font-bold text-red-300 hover:bg-red-500/20 rounded-xl transition-all flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                      Critical Outages Only (&lt; 95.0%)
+                    </span>
+                    <span className="font-mono font-extrabold text-[10px] text-red-400">{stats?.critical_breach_count || 0}</span>
+                  </button>
+                  <button
+                    onClick={() => handleExportBadSites({ limit: 15 })}
+                    className="w-full text-left px-3 py-2 text-xs font-bold text-cyan-300 hover:bg-cyan-500/20 rounded-xl transition-all flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+                      Top 15 Worst Outage Sites
+                    </span>
+                    <span className="font-mono font-extrabold text-[10px] text-cyan-300">15</span>
+                  </button>
+                  <div className="border-t border-slate-800 pt-1">
+                    <button
+                      onClick={() => { setShowExportMenu(false); handleExportExcel(); }}
+                      className="w-full text-left px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 rounded-xl transition-all flex items-center justify-between"
+                    >
+                      <span className="flex items-center gap-2">
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                        Full Network Report (All Sites)
+                      </span>
+                      <span className="font-mono font-extrabold text-[10px] text-emerald-300">{stats?.total_elements || 0}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <button
               onClick={handleExportExcel}
@@ -962,24 +1114,54 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
           <span className="text-[10px] text-emerald-400/80 font-medium block">Meeting Target Threshold</span>
         </div>
 
-        <div className="glass-panel p-5 rounded-2xl border border-amber-500/30 bg-amber-950/20 space-y-1">
+        <div 
+          onClick={() => { setSlaFilter('degraded_under_98'); setMinAvailInput(''); setMaxAvailInput(''); setPage(1); }}
+          className="glass-panel p-5 rounded-2xl border border-amber-500/30 bg-amber-950/20 space-y-1 cursor-pointer hover:border-amber-400/60 hover:bg-amber-950/30 transition-all group"
+          title="Click to filter by Degraded Sites (<98.5%)"
+        >
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300">SLA Degraded (&lt; 98.5%)</span>
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <AlertTriangle className="w-4 h-4 text-amber-400 group-hover:animate-bounce" />
           </div>
-          <div className="text-2xl font-black text-amber-300 font-mono">
-            {stats?.sla_breached_count !== undefined ? stats.sla_breached_count.toLocaleString() : '---'}
+          <div className="flex items-baseline justify-between">
+            <div className="text-2xl font-black text-amber-300 font-mono">
+              {stats?.sla_breached_count !== undefined ? stats.sla_breached_count.toLocaleString() : '---'}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleExportBadSites(); }}
+              disabled={isExportingBad}
+              className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold rounded-lg border border-amber-500/40 flex items-center gap-1 transition-all shadow-sm"
+              title="Export all degraded sites to Excel"
+            >
+              <Download className="w-3 h-3 text-amber-400" />
+              <span>Export</span>
+            </button>
           </div>
           <span className="text-[10px] text-amber-400/80 font-medium block">Requiring Engineering Action</span>
         </div>
 
-        <div className="glass-panel p-5 rounded-2xl border border-red-500/30 bg-red-950/20 space-y-1">
+        <div 
+          onClick={() => { setSlaFilter('critical_under_95'); setMinAvailInput(''); setMaxAvailInput(''); setPage(1); }}
+          className="glass-panel p-5 rounded-2xl border border-red-500/30 bg-red-950/20 space-y-1 cursor-pointer hover:border-red-400/60 hover:bg-red-950/30 transition-all group"
+          title="Click to filter by Critical Breach Sites (<95%)"
+        >
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-red-300">Critical Breach (&lt; 95%)</span>
-            <ShieldAlert className="w-4 h-4 text-red-400" />
+            <ShieldAlert className="w-4 h-4 text-red-400 group-hover:animate-pulse" />
           </div>
-          <div className="text-2xl font-black text-red-400 font-mono">
-            {stats?.critical_breach_count !== undefined ? stats.critical_breach_count.toLocaleString() : '---'}
+          <div className="flex items-baseline justify-between">
+            <div className="text-2xl font-black text-red-400 font-mono">
+              {stats?.critical_breach_count !== undefined ? stats.critical_breach_count.toLocaleString() : '---'}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleExportBadSites({ critical_only: true }); }}
+              disabled={isExportingBad}
+              className="px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[10px] font-bold rounded-lg border border-red-500/40 flex items-center gap-1 transition-all shadow-sm"
+              title="Export critical outage sites to Excel"
+            >
+              <Download className="w-3 h-3 text-red-400" />
+              <span>Export</span>
+            </button>
           </div>
           <span className="text-[10px] text-red-400/80 font-medium block">Severe Outage Impact</span>
         </div>
@@ -2048,30 +2230,42 @@ export default function DailyAvailabilityCenter({ currentUser, onSelectSite, ini
               </p>
             </div>
 
-            <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded-xl border border-slate-700">
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setWorstViewMode('cards')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition-all ${
-                  worstViewMode === 'cards'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
+                onClick={() => handleExportBadSites()}
+                disabled={isExportingBad}
+                className="px-3.5 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-black rounded-xl border border-red-500/40 transition-all flex items-center gap-1.5 shadow-md shadow-red-950/30 hover:scale-105 active:scale-95 cursor-pointer"
+                title="Export degraded and bad performing sites to Excel"
               >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>Site Cards UI</span>
+                <FileSpreadsheet className={`w-3.5 h-3.5 text-red-400 ${isExportingBad ? 'animate-bounce' : ''}`} />
+                <span>{isExportingBad ? 'Exporting...' : 'Export Bad Sites'}</span>
               </button>
 
-              <button
-                onClick={() => setWorstViewMode('table')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition-all ${
-                  worstViewMode === 'table'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <List className="w-3.5 h-3.5" />
-                <span>Table View</span>
-              </button>
+              <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded-xl border border-slate-700">
+                <button
+                  onClick={() => setWorstViewMode('cards')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                    worstViewMode === 'cards'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>Site Cards UI</span>
+                </button>
+
+                <button
+                  onClick={() => setWorstViewMode('table')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition-all ${
+                    worstViewMode === 'table'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <List className="w-3.5 h-3.5" />
+                  <span>Table View</span>
+                </button>
+              </div>
             </div>
           </div>
 

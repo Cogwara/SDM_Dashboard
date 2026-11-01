@@ -96,12 +96,10 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
 
             if 'sqlite' in connection.vendor:
                 with connection.cursor() as cursor:
-                    cursor.execute("PRAGMA busy_timeout = 30000;")
-                    cursor.execute("PRAGMA journal_mode = DELETE;")
+                    cursor.execute("PRAGMA busy_timeout = 60000;")
 
             with transaction.atomic():
                 existing_log = DailyAvailabilityUploadLog.objects.filter(filename=clean_filename).first()
-                DailyAvailabilityUploadLog.objects.all().update(is_active=False, is_archived=True)
 
                 if existing_log:
                     DailyAvailabilityRecord.objects.filter(upload_log=existing_log).delete()
@@ -112,8 +110,6 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                     log.date_range = date_range_str
                     log.start_date = start_date
                     log.end_date = end_date
-                    log.is_active = True
-                    log.is_archived = False
                     log.save()
                 else:
                     log = DailyAvailabilityUploadLog.objects.create(
@@ -124,7 +120,7 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
                         month_str=month_str,
                         start_date=start_date,
                         end_date=end_date,
-                        is_active=True,
+                        is_active=False,
                         is_archived=False,
                         is_base=is_base
                     )
@@ -268,8 +264,12 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
 
                 tech_counts[sheet_name.upper()] = sheet_created
 
-            log.records_count = total_created
-            log.save()
+            with transaction.atomic():
+                DailyAvailabilityUploadLog.objects.exclude(id=log.id).update(is_active=False, is_archived=True)
+                log.records_count = total_created
+                log.is_active = True
+                log.is_archived = False
+                log.save()
 
             return {
                 'success': True,

@@ -1,5 +1,8 @@
 import time
 import re
+import json
+import urllib.request
+import urllib.parse
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -20,6 +23,32 @@ from .kml_importer import parse_and_import_kml
 FAILED_LOGIN_ATTEMPTS = {}
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
+
+# High-speed In-Memory API Response & Lookup Cache
+_API_CACHE = {}
+_PI_WEIGHT_CACHE = {'ts': 0, 'data': None}
+_BASE_MAP_SITES_CACHE = {'ts': 0, 'by_id': None}
+
+def get_cached_response(key, ttl=120):
+    entry = _API_CACHE.get(key)
+    if entry and (time.time() - entry[0]) < ttl:
+        return entry[1]
+    return None
+
+def set_cached_response(key, data):
+    if len(_API_CACHE) > 300:
+        now = time.time()
+        expired = [k for k, v in list(_API_CACHE.items()) if now - v[0] > 180]
+        for k in expired:
+            _API_CACHE.pop(k, None)
+        if len(_API_CACHE) > 300:
+            _API_CACHE.clear()
+    _API_CACHE[key] = (time.time(), data)
+
+def invalidate_api_cache():
+    _API_CACHE.clear()
+    _BASE_MAP_SITES_CACHE['ts'] = 0
+    _BASE_MAP_SITES_CACHE['by_id'] = None
 
 def is_account_locked(client_ip, username):
     key = f"{client_ip}:{username.lower()}"
@@ -146,14 +175,19 @@ def scope_queryset_by_user(qs, request, site_id_field='ihs_site_id', state_field
         clean_st = explicit_state.strip().upper()
         if clean_st.startswith('RT') and len(clean_st) > 2:
             clean_st = clean_st[2:]
-        return qs.filter(**{f'{state_field}__iexact': clean_st})
+        if clean_st in ('FC', 'FCT', 'ABUJA'):
+            return qs.filter(**{f'{state_field}__in': ['FCT', 'RTFCT', 'FC', 'ABUJA']})
+        return qs.filter(Q(**{f'{state_field}__iexact': clean_st}) | Q(**{f'{state_field}__iexact': 'RT' + clean_st}))
 
     matched_states = []
     if user_state and user_state != 'ALL' and user_state != 'All':
         clean_st = user_state.strip().upper()
         if clean_st.startswith('RT') and len(clean_st) > 2:
             clean_st = clean_st[2:]
-        matched_states.append(clean_st)
+        if clean_st in ('FC', 'FCT', 'ABUJA'):
+            matched_states.extend(['FCT', 'RTFCT', 'FC', 'ABUJA'])
+        else:
+            matched_states.extend([clean_st, 'RT' + clean_st])
 
     if sdm_param and sdm_param != 'All':
         sdm_states_raw = Site.objects.filter(
@@ -164,11 +198,15 @@ def scope_queryset_by_user(qs, request, site_id_field='ihs_site_id', state_field
             clean_st = st.strip().upper()
             if clean_st.startswith('RT') and len(clean_st) > 2:
                 clean_st = clean_st[2:]
-            if clean_st and clean_st not in matched_states:
-                matched_states.append(clean_st)
+            if clean_st in ('FC', 'FCT', 'ABUJA'):
+                for fct_alias in ['FCT', 'RTFCT', 'FC', 'ABUJA']:
+                    if fct_alias not in matched_states:
+                        matched_states.append(fct_alias)
+            elif clean_st and clean_st not in matched_states:
+                matched_states.extend([clean_st, 'RT' + clean_st])
 
     if matched_states:
-        return qs.filter(**{f'{state_field}__in': matched_states})
+        return qs.filter(**{f'{state_field}__in': list(set(matched_states))})
 
     return qs
 
@@ -196,6 +234,12 @@ class SiteViewSet(viewsets.ModelViewSet):
                 Q(state__icontains=q) |
                 Q(sdm_name__icontains=q) |
                 Q(smc_fse_name__icontains=q) |
+                Q(smc_fse_phone__icontains=q) |
+                Q(efs_name__icontains=q) |
+                Q(efs_phone__icontains=q) |
+                Q(rto_name__icontains=q) |
+                Q(rto_phone__icontains=q) |
+                Q(smc__icontains=q) |
                 Q(mtn_rdm_name__icontains=q) |
                 Q(operational_status__icontains=q) |
                 Q(power_solution__icontains=q)
@@ -234,14 +278,131 @@ class SiteViewSet(viewsets.ModelViewSet):
         if cluster and cluster != 'All' and exclude_param != 'cluster':
             qs = qs.filter(cluster_name__iexact=cluster)
 
+        region = self.request.query_params.get('region', None)
+        if region and region != 'All' and exclude_param != 'region':
+            qs = qs.filter(region__iexact=region)
+
         lga = self.request.query_params.get('lga', None)
         if lga and lga != 'All' and exclude_param != 'lga':
             qs = qs.filter(lga__iexact=lga)
+
+        matrix_only = self.request.query_params.get('matrix_only', None) or self.request.query_params.get('ihs_matrix', None)
+        if matrix_only and matrix_only.lower() in ['true', '1', 'yes']:
+            qs = qs.filter(raw_data__has_key='Tenant Region')
 
         return qs
 
     def get_queryset(self):
         return self.get_filtered_queryset().order_by('ihs_site_id')
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            if len(page) <= 250:
+                page_ids = [s.id for s in page]
+                notes_map = dict(
+                    SiteNote.objects.filter(site_id__in=page_ids)
+                    .values_list('site_id')
+                    .annotate(c=Count('id'))
+                )
+                wa_map = dict(
+                    WhatsAppMessage.objects.filter(site_id__in=page_ids)
+                    .values_list('site_id')
+                    .annotate(c=Count('id'))
+                )
+                for s in page:
+                    s.notes_count = notes_map.get(s.id, 0)
+                    s.whatsapp_count = wa_map.get(s.id, 0)
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def map_sites(self, request):
+        cache_key = f"map_sites:{request.get_full_path()}:{getattr(request.user, 'id', 0)}"
+        cached = get_cached_response(cache_key, ttl=180)
+        if cached is not None:
+            return Response(cached)
+
+        now = time.time()
+        if not _BASE_MAP_SITES_CACHE['by_id'] or (now - _BASE_MAP_SITES_CACHE['ts']) > 300:
+            fields = [
+                'id', 'ihs_site_id', 'mtn_id', 'cluster_name', 'site_address',
+                'latitude', 'longitude', 'operational_status', 'priority',
+                'is_down', 'is_critical', 'lga', 'state', 'smc_fse_name',
+                'smc_fse_phone', 'sdm_name', 'sdm_phone', 'efs_name',
+                'efs_phone', 'rto_name', 'rto_phone', 'smc', 'raw_data'
+            ]
+            all_sites = list(Site.objects.all().order_by('ihs_site_id').values(*fields))
+            cluster_terr_map = {}
+            for s in all_sites:
+                db_raw = s.get('raw_data') or {}
+                t = (
+                    db_raw.get('TERRITORY') or 
+                    db_raw.get('Territory') or 
+                    db_raw.get('territory') or 
+                    db_raw.get('AREA NAME') or 
+                    db_raw.get('Area Name')
+                )
+                c = s.get('cluster_name')
+                if t and c and str(c).strip() and str(c).strip() not in cluster_terr_map:
+                    cluster_terr_map[str(c).strip()] = str(t).strip()
+
+            by_id = {}
+            for s in all_sites:
+                db_raw = s.pop('raw_data', None) or {}
+                territory = (
+                    db_raw.get('TERRITORY') or 
+                    db_raw.get('Territory') or 
+                    db_raw.get('territory') or 
+                    db_raw.get('AREA NAME') or 
+                    db_raw.get('Area Name')
+                )
+                if not territory and s.get('cluster_name') and str(s['cluster_name']).strip() in cluster_terr_map:
+                    territory = cluster_terr_map[str(s['cluster_name']).strip()]
+
+                clean_terr = str(territory).strip() if (territory and str(territory).strip() not in ['0', 'None', 'null', '-', 'nan', 'NAN']) else ''
+
+                tower_co = (
+                    db_raw.get('Tower Co') or 
+                    db_raw.get('TowerCo') or 
+                    db_raw.get('TOWER CO') or 
+                    db_raw.get('OEM') or 
+                    s.get('smc') or 
+                    'IHS Tower'
+                )
+                clean_tower_co = str(tower_co).strip() if tower_co else 'IHS Tower'
+
+                s['territory'] = clean_terr
+                s['tower_co'] = clean_tower_co
+
+                s['raw_data'] = {
+                    'Site Name': db_raw.get('Site Name') or s.get('cluster_name') or '',
+                    'Site Cluster': db_raw.get('Site Cluster') or s.get('cluster_name') or '',
+                    'Tech': db_raw.get('Tech') or '2G/3G/4G',
+                    'Tower Co': clean_tower_co,
+                    'TERRITORY': clean_terr,
+                    'Territory': clean_terr,
+                    'AREA NAME': db_raw.get('AREA NAME') or clean_terr,
+                    'LGA': s.get('lga') or db_raw.get('LGA') or '',
+                    'Lat': s.get('latitude'),
+                    'Long': s.get('longitude'),
+                    'SMC FSE': s.get('smc_fse_name') or db_raw.get('FSE NAME') or '',
+                }
+                by_id[s['id']] = s
+
+            _BASE_MAP_SITES_CACHE['by_id'] = by_id
+            _BASE_MAP_SITES_CACHE['ts'] = now
+
+        by_id = _BASE_MAP_SITES_CACHE['by_id']
+        qs = self.get_filtered_queryset()
+        matching_ids = list(qs.order_by('ihs_site_id').values_list('id', flat=True))
+        sites = [by_id[sid] for sid in matching_ids if sid in by_id]
+        set_cached_response(cache_key, sites)
+        return Response(sites)
 
     @action(detail=False, methods=['get'])
     def lookup(self, request):
@@ -261,22 +422,166 @@ class SiteViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def filter_options(self, request):
+        cache_key = f"filter_options:{request.get_full_path()}:{getattr(request.user, 'id', 0)}"
+        cached = get_cached_response(cache_key, ttl=180)
+        if cached is not None:
+            return Response(cached)
+
         def get_distinct(field_name, custom_qs):
             return list(custom_qs.values_list(field_name, flat=True).distinct().exclude(**{f"{field_name}": ''}))
 
         qs_state = self.get_filtered_queryset(exclude_param='state')
+        qs_region = self.get_filtered_queryset(exclude_param='region')
         qs_lga = self.get_filtered_queryset(exclude_param='lga')
         qs_sdm = self.get_filtered_queryset(exclude_param='sdm')
         qs_fse = self.get_filtered_queryset(exclude_param='fse')
         qs_rdm = self.get_filtered_queryset(exclude_param='rdm')
 
-        return Response({
+        res_data = {
             'states': sorted([s for s in get_distinct('state', qs_state) if s]),
+            'regions': sorted([r for r in get_distinct('region', qs_region) if r]),
             'lgas': sorted([l for l in get_distinct('lga', qs_lga) if l]),
             'sdm_names': sorted([s for s in get_distinct('sdm_name', qs_sdm) if s]),
             'fse_names': sorted([f for f in get_distinct('smc_fse_name', qs_fse) if f]),
             'rdm_names': sorted([r for r in get_distinct('mtn_rdm_name', qs_rdm) if r]),
-        })
+        }
+        set_cached_response(cache_key, res_data)
+        return Response(res_data)
+
+    @staticmethod
+    def _parse_coordinate_query(query):
+        if not query:
+            return None
+        q = str(query).strip()
+
+        # 1. Labeled format: lat: 9.0765, lng: 7.3986
+        m = re.search(r'(?:lat(?:itude)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?))\s*[,;\s]\s*(?:l(?:ng|on|ongitude)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?))', q, re.I)
+        if m:
+            try:
+                lat, lng = float(m.group(1)), float(m.group(2))
+                if -90 <= lat <= 90 and -180 <= lng <= 180:
+                    return lat, lng
+            except ValueError:
+                pass
+
+        # 2. DMS: 9°4'35.4"N 7°23'55.0"E
+        dms_matches = re.findall(r'([0-9.]+)\s*°\s*([0-9.]+)?\s*[\'′]?\s*([0-9.]+)?\s*[\"″]?\s*([NSEW])', q, re.I)
+        if len(dms_matches) == 2:
+            try:
+                parts = []
+                for m_match in dms_matches:
+                    deg = float(m_match[0])
+                    mins = float(m_match[1]) if m_match[1] else 0.0
+                    sec = float(m_match[2]) if m_match[2] else 0.0
+                    direction = m_match[3].upper()
+                    val = deg + mins / 60.0 + sec / 3600.0
+                    if direction in ['S', 'W']:
+                        val = -val
+                    parts.append((val, direction))
+
+                if parts[0][1] in ['N', 'S'] and parts[1][1] in ['E', 'W']:
+                    lat, lng = parts[0][0], parts[1][0]
+                elif parts[0][1] in ['E', 'W'] and parts[1][1] in ['N', 'S']:
+                    lng, lat = parts[0][0], parts[1][0]
+                else:
+                    lat, lng = parts[0][0], parts[1][0]
+
+                if -90 <= lat <= 90 and -180 <= lng <= 180:
+                    return lat, lng
+            except Exception:
+                pass
+
+        # 3. Simple Decimal: '9.0765, 7.3986' or '9.0765 7.3986' or '[9.0765, 7.3986]'
+        clean_q = re.sub(r'[()[\]{}]', '', q).strip()
+        m2 = re.match(r'^([+-]?\d+(?:\.\d+)?)\s*[,;\s/]\s*([+-]?\d+(?:\.\d+)?)$', clean_q)
+        if m2:
+            try:
+                lat, lng = float(m2.group(1)), float(m2.group(2))
+                if -90 <= lat <= 90 and -180 <= lng <= 180:
+                    return lat, lng
+            except ValueError:
+                pass
+
+        return None
+
+    @action(detail=False, methods=['get'])
+    def geocode(self, request):
+        query = request.query_params.get('q', '').strip()
+        if not query:
+            return Response({'results': []})
+
+        # 1. Check if query is a coordinate (decimal, DMS, labeled)
+        coords = self._parse_coordinate_query(query)
+        if coords:
+            lat, lng = coords
+            return Response({
+                'results': [{
+                    'type': 'coordinate',
+                    'title': f'Coordinates ({lat:.5f}, {lng:.5f})',
+                    'display_name': f'Target Coordinates: {lat:.6f}, {lng:.6f}',
+                    'lat': lat,
+                    'lng': lng,
+                    'category': 'coordinate'
+                }]
+            })
+
+        user_state = request.query_params.get('state', '').strip()
+
+        # 2. Query OpenStreetMap Nominatim for streets, areas, districts, landmarks
+        osm_results = []
+        try:
+            viewbox_param = "&viewbox=6.75,9.40,7.80,8.25" if (not user_state or 'FCT' in user_state.upper() or 'ABUJA' in user_state.upper()) else ""
+            encoded_q = urllib.parse.quote(query)
+            url = f"https://nominatim.openstreetmap.org/search?format=json&q={encoded_q}&countrycodes=ng{viewbox_param}&limit=6&addressdetails=1"
+            req = urllib.request.Request(url, headers={'User-Agent': 'SDMDashboard/1.0'})
+            with urllib.request.urlopen(req, timeout=7) as response:
+                osm_data = json.loads(response.read().decode('utf-8'))
+                for item in osm_data:
+                    lat = float(item.get('lat', 0))
+                    lon = float(item.get('lon', 0))
+                    if lat and lon:
+                        osm_results.append({
+                            'type': 'street_or_area',
+                            'title': item.get('name') or (item.get('display_name', '').split(',')[0]),
+                            'display_name': item.get('display_name'),
+                            'lat': lat,
+                            'lng': lon,
+                            'category': item.get('type') or item.get('class') or 'place'
+                        })
+        except Exception as e:
+            pass
+
+        # 3. Match against local telecom sites database (Site Address, Cluster, LGA)
+        db_results = []
+        try:
+            site_qs = Site.objects.all()
+            if user_state and user_state.upper() != 'ALL':
+                site_qs = site_qs.filter(state__icontains=user_state)
+
+            matched_sites = site_qs.filter(
+                Q(site_address__icontains=query) |
+                Q(cluster_name__icontains=query) |
+                Q(lga__icontains=query) |
+                Q(ihs_site_id__iexact=query)
+            ).exclude(latitude__isnull=True).exclude(longitude__isnull=True)[:4]
+
+            for s in matched_sites:
+                if s.latitude and s.longitude:
+                    db_results.append({
+                        'type': 'site_location',
+                        'title': s.cluster_name or s.site_address or s.ihs_site_id,
+                        'display_name': f"{s.ihs_site_id} - {s.cluster_name or s.site_address or ''} ({s.lga or s.state or ''})",
+                        'lat': float(s.latitude),
+                        'lng': float(s.longitude),
+                        'site_id': s.ihs_site_id,
+                        'category': 'telecom_site'
+                    })
+        except Exception:
+            pass
+
+        # Deduplicate & prioritize results
+        combined = osm_results + db_results
+        return Response({'results': combined})
 
 
 class UserProfileView(APIView):
@@ -533,17 +838,32 @@ class SDMLoginView(APIView):
             }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         norm_username = username_or_name.lower().replace(' ', '_')
-        user = authenticate(username=norm_username, password=password)
+        user = authenticate(username=norm_username, password=password) or authenticate(username=username_or_name, password=password)
 
         if not user:
-            # Fallback check
-            user = User.objects.filter(
-                Q(username__iexact=norm_username) | 
+            # Fallback check across username, full name parts, email, and known aliases
+            name_parts = [p for p in username_or_name.replace('_', ' ').split() if p]
+            cand_q = (
+                Q(username__iexact=norm_username) |
+                Q(username__iexact=username_or_name) |
                 Q(first_name__icontains=username_or_name) |
+                Q(last_name__icontains=username_or_name) |
+                Q(email__iexact=username_or_name) |
                 Q(email__icontains=norm_username)
-            ).first()
-            if user and not user.check_password(password):
-                user = None
+            )
+            if len(name_parts) >= 2:
+                cand_q |= (
+                    (Q(first_name__icontains=name_parts[0]) & Q(last_name__icontains=name_parts[-1])) |
+                    (Q(first_name__icontains=name_parts[-1]) & Q(last_name__icontains=name_parts[0]))
+                )
+            if norm_username in ('chris_ogwara', 'christian_ogwara', 'ogwara_christian', 'chris', 'mrchrys'):
+                cand_q |= Q(username__in=['mrchrys', 'chrys'])
+
+            candidates = list(User.objects.filter(cand_q).distinct())
+            for cand in candidates:
+                if cand.check_password(password):
+                    user = cand
+                    break
 
         if not user:
             record_failed_attempt(client_ip, username_or_name)
@@ -1009,6 +1329,11 @@ class SyncFSEAccountsView(APIView):
 
 class DashboardStatsView(APIView):
     def get(self, request):
+        cache_key = f"dashboard_stats:{request.get_full_path()}:{getattr(request.user, 'id', 0)}"
+        cached = get_cached_response(cache_key, ttl=45)
+        if cached is not None:
+            return Response(cached)
+
         user_role = request.query_params.get('user_role', '') or request.query_params.get('role', '')
         rdm = request.query_params.get('rdm', '').strip()
         sdm = request.query_params.get('sdm', '').strip()
@@ -1072,7 +1397,7 @@ class DashboardStatsView(APIView):
         
         tnl_links_count = TNLLink.objects.count()
 
-        return Response({
+        res_data = {
             'total_sites': total_sites,
             'sites_down': sites_down,
             'critical_sites': critical_sites,
@@ -1089,7 +1414,9 @@ class DashboardStatsView(APIView):
             'huawei_fiber_links_count': huawei_fiber_links_count,
             'huawei_fiber_total_km': huawei_fiber_total_km,
             'tnl_links_count': tnl_links_count,
-        })
+        }
+        set_cached_response(cache_key, res_data)
+        return Response(res_data)
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
@@ -1669,14 +1996,17 @@ def resolve_target_dates(request):
         active_log = DailyAvailabilityUploadLog.objects.filter(is_active=True).first() or DailyAvailabilityUploadLog.objects.order_by('-uploaded_at').first()
 
     month_label = active_log.month_str if active_log else "August 2026"
-    
-    sample_rec = None
-    if active_log:
-        sample_rec = DailyAvailabilityRecord.objects.filter(upload_log=active_log).exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
-    if not sample_rec:
-        sample_rec = DailyAvailabilityRecord.objects.exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
 
-    all_dates = sorted(list(sample_rec.daily_scores.keys())) if (sample_rec and sample_rec.daily_scores) else []
+    log_cache_key = f"log_dates:{active_log.id if active_log else 0}"
+    all_dates = get_cached_response(log_cache_key, ttl=600)
+    if all_dates is None:
+        sample_rec = None
+        if active_log:
+            sample_rec = DailyAvailabilityRecord.objects.filter(upload_log=active_log).order_by('upload_log_id').only('daily_scores').first()
+        if not sample_rec:
+            sample_rec = DailyAvailabilityRecord.objects.order_by('-id').only('daily_scores').first()
+        all_dates = sorted(list(sample_rec.daily_scores.keys())) if (sample_rec and sample_rec.daily_scores) else []
+        set_cached_response(log_cache_key, all_dates)
 
     if date_mode in ['single_date', 'day']:
         if selected_date and selected_date in all_dates:
@@ -1756,11 +2086,18 @@ def get_availability_queryset(request):
 
     state = request.query_params.get('state', None)
     if state and state != 'All':
-        qs = qs.filter(state__iexact=state.strip())
+        clean_st = state.strip().upper()
+        if clean_st.startswith('RT') and len(clean_st) > 2:
+            clean_st = clean_st[2:]
+        if clean_st in ('FC', 'FCT', 'ABUJA'):
+            qs = qs.filter(state__in=['FCT', 'RTFCT', 'FC', 'ABUJA', 'Abuja', 'fct'])
+        else:
+            qs = qs.filter(state__in=[clean_st, 'RT' + clean_st, state.strip(), state.strip().title(), state.strip().lower()])
 
     tech = request.query_params.get('tech', None)
     if tech and tech != 'All':
-        qs = qs.filter(tech__iexact=tech.strip())
+        t_clean = tech.strip().upper()
+        qs = qs.filter(tech__in=[t_clean, tech.strip(), tech.strip().lower()])
 
     tower_co = request.query_params.get('tower_co', None)
     if tower_co and tower_co != 'All':
@@ -1881,6 +2218,15 @@ def get_availability_queryset(request):
             qs = qs.filter(Q(site_id__icontains=fse_param) | Q(element_name__icontains=fse_param))
 
     sla_filter = request.query_params.get('sla_filter', None)
+    only_bad = request.query_params.get('only_bad', 'false').lower() in ['true', '1', 'yes'] or \
+               request.query_params.get('bad_only', 'false').lower() in ['true', '1', 'yes']
+    critical_only = request.query_params.get('critical_only', 'false').lower() in ['true', '1', 'yes']
+
+    if critical_only and not sla_filter:
+        sla_filter = 'critical_under_95'
+    elif only_bad and not sla_filter:
+        sla_filter = 'degraded_under_98_5'
+
     min_avail = request.query_params.get('min_avail', None)
     max_avail = request.query_params.get('max_avail', None)
     date_mode = request.query_params.get('date_mode', 'all')
@@ -1891,11 +2237,11 @@ def get_availability_queryset(request):
     if date_mode == 'single_date' and selected_date:
         if sla_filter == 'critical_under_95':
             qs = qs.filter(**{f'daily_scores__{selected_date}__lt': 95.0})
-        elif sla_filter == 'degraded_under_98' or sla_filter == 'degraded_under_98_5':
+        elif sla_filter in ['degraded_under_98', 'degraded_under_98_5']:
             qs = qs.filter(**{f'daily_scores__{selected_date}__lt': 98.5})
-        elif sla_filter == 'warning_95_98' or sla_filter == 'warning_95_98_5':
+        elif sla_filter in ['warning_95_98', 'warning_95_98_5']:
             qs = qs.filter(**{f'daily_scores__{selected_date}__gte': 95.0, f'daily_scores__{selected_date}__lt': 98.5})
-        elif sla_filter == 'high_98_100' or sla_filter == 'high_98_5_100':
+        elif sla_filter in ['high_98_100', 'high_98_5_100']:
             qs = qs.filter(**{f'daily_scores__{selected_date}__gte': 98.5, f'daily_scores__{selected_date}__lt': 100.0})
         elif sla_filter == 'perfect_100':
             qs = qs.filter(**{f'daily_scores__{selected_date}__gte': 100.0})
@@ -1912,16 +2258,17 @@ def get_availability_queryset(request):
             except ValueError:
                 pass
     else:
-        if sla_filter == 'critical_under_95':
-            qs = qs.filter(avg_availability__lt=95.0)
-        elif sla_filter == 'degraded_under_98' or sla_filter == 'degraded_under_98_5':
-            qs = qs.filter(avg_availability__lt=98.5)
-        elif sla_filter == 'warning_95_98' or sla_filter == 'warning_95_98_5':
-            qs = qs.filter(avg_availability__gte=95.0, avg_availability__lt=98.5)
-        elif sla_filter == 'high_98_100' or sla_filter == 'high_98_5_100':
-            qs = qs.filter(avg_availability__gte=98.5, avg_availability__lt=100.0)
-        elif sla_filter == 'perfect_100':
-            qs = qs.filter(avg_availability__gte=100.0)
+        if date_mode not in ['week', 'custom']:
+            if sla_filter == 'critical_under_95':
+                qs = qs.filter(avg_availability__lt=95.0)
+            elif sla_filter in ['degraded_under_98', 'degraded_under_98_5']:
+                qs = qs.filter(avg_availability__lt=98.5)
+            elif sla_filter in ['warning_95_98', 'warning_95_98_5']:
+                qs = qs.filter(avg_availability__gte=95.0, avg_availability__lt=98.5)
+            elif sla_filter in ['high_98_100', 'high_98_5_100']:
+                qs = qs.filter(avg_availability__gte=98.5, avg_availability__lt=100.0)
+            elif sla_filter == 'perfect_100':
+                qs = qs.filter(avg_availability__gte=100.0)
 
         if min_avail is not None and min_avail != '':
             try:
@@ -1982,19 +2329,46 @@ class DailyAvailabilityUploadView(APIView):
         )
 
         if result.get('success'):
+            invalidate_api_cache()
             return Response(result, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
 
+def get_pi_weight_cache():
+    now = time.time()
+    if _PI_WEIGHT_CACHE['data'] is not None and (now - _PI_WEIGHT_CACHE['ts']) < 600:
+        return _PI_WEIGHT_CACHE['data']
+    pi_cache = {}
+    for p in PIWeightageRecord.objects.values('tech', 'element_id', 'site_id', 'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'):
+        pi_cache[(p['tech'], p['element_id'])] = p
+        if (p['tech'], p['site_id']) not in pi_cache:
+            pi_cache[(p['tech'], p['site_id'])] = p
+    _PI_WEIGHT_CACHE['data'] = pi_cache
+    _PI_WEIGHT_CACHE['ts'] = now
+    return pi_cache
+
+
 class DailyAvailabilityArchivesView(APIView):
     def get(self, request):
-        logs = DailyAvailabilityUploadLog.objects.filter(records__isnull=False).distinct().order_by('-uploaded_at')
+        cache_key = "avail_archives_list"
+        cached = get_cached_response(cache_key, ttl=120)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        logs = list(DailyAvailabilityUploadLog.objects.all().order_by('-uploaded_at'))
         archive_list = []
+        active_log = None
         for log in logs:
-            actual_count = log.records.count()
+            actual_count = log.records_count or 0
+            if actual_count == 0:
+                actual_count = log.records.count()
+                if actual_count > 0:
+                    DailyAvailabilityUploadLog.objects.filter(id=log.id).update(records_count=actual_count)
             if actual_count == 0:
                 continue
+            if log.is_active and active_log is None:
+                active_log = log
             archive_list.append({
                 'id': log.id,
                 'filename': log.filename,
@@ -2009,20 +2383,28 @@ class DailyAvailabilityArchivesView(APIView):
                 'is_archived': log.is_archived,
                 'is_base': log.is_base
             })
-        
-        active_log = logs.filter(is_active=True).first() or (logs.first() if logs.exists() else None)
+
+        if not active_log and logs:
+            active_log = logs[0]
         active_month = active_log.month_str if active_log else 'August 2026'
 
-        return Response({
+        res_data = {
             'active_month': active_month,
             'active_filename': active_log.filename if active_log else None,
             'active_archive_id': active_log.id if active_log else None,
             'archives': archive_list
-        }, status=status.HTTP_200_OK)
+        }
+        set_cached_response(cache_key, res_data)
+        return Response(res_data, status=status.HTTP_200_OK)
 
 
 class DailyAvailabilityStatsView(APIView):
     def get(self, request):
+        cache_key = f"avail_stats:{request.get_full_path()}:{getattr(request.user, 'id', 0)}"
+        cached = get_cached_response(cache_key, ttl=180)
+        if cached is not None:
+            return Response(cached)
+
         upload_log_id = request.query_params.get('upload_log_id', None)
         selected_log = None
         if upload_log_id and upload_log_id not in ['All', 'active', '']:
@@ -2035,32 +2417,49 @@ class DailyAvailabilityStatsView(APIView):
 
         qs, is_superuser, (target_dates, date_label) = get_availability_queryset(request)
 
+        # Avoid loading huge daily_scores JSONB across 58,965 rows when viewing full period ('all')
+        is_full_period = request.query_params.get('date_mode', 'all') in ('all', '', None)
+        need_row_daily_scores = bool(target_dates and not is_full_period)
+
+        value_fields = [
+            'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory', 'tower_co', 'vendor', 'status',
+            'avg_availability', 'latest_availability',
+            'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'
+        ]
+        if need_row_daily_scores:
+            value_fields.append('daily_scores')
+
+        all_records = list(qs.values(*value_fields))
+        total_elements = len(all_records)
+
         if is_superuser:
-            all_states = list(DailyAvailabilityRecord.objects.values_list('state', flat=True).distinct())
+            all_states = list(DailyAvailabilityRecord.objects.filter(upload_log=selected_log).order_by().values_list('state', flat=True).distinct()) if selected_log else [r.get('state') for r in all_records]
         else:
-            all_states = list(qs.values_list('state', flat=True).distinct())
+            all_states = [r.get('state') for r in all_records]
 
         unique_states = sorted(list(set([s.strip().upper() for s in all_states if s])))
-
-        unique_territories = sorted(list(set([t.strip().upper() for t in qs.values_list('territory', flat=True).distinct() if t])))
-        unique_lgas = sorted(list(set([l.strip().upper() for l in qs.values_list('lga', flat=True).distinct() if l])))[:150]
-        unique_tower_cos = sorted(list(set([t.strip().upper() for t in qs.values_list('tower_co', flat=True).distinct() if t])))
-        unique_vendors = sorted(list(set([v.strip().upper() for v in qs.values_list('vendor', flat=True).distinct() if v])))
-        unique_statuses = sorted(list(set([s.strip().title() for s in qs.values_list('status', flat=True).distinct() if s])))
+        unique_territories = sorted(list(set([r['territory'].strip().upper() for r in all_records if r.get('territory')])))
+        unique_lgas = sorted(list(set([r['lga'].strip().upper() for r in all_records if r.get('lga')])))[:150]
+        unique_tower_cos = sorted(list(set([r['tower_co'].strip().upper() for r in all_records if r.get('tower_co')])))
+        unique_vendors = sorted(list(set([r['vendor'].strip().upper() for r in all_records if r.get('vendor')])))
+        unique_statuses = sorted(list(set([r['status'].strip().title() for r in all_records if r.get('status')])))
 
         if is_superuser:
-            available_fses = sorted(list(set([f.strip() for f in Site.objects.values_list('smc_fse_name', flat=True) if f and f.strip()])))
+            available_fses = sorted(list(set([f.strip() for f in Site.objects.order_by().values_list('smc_fse_name', flat=True).distinct() if f and f.strip()])))
         else:
-            available_fses = sorted(list(set([f.strip() for f in Site.objects.filter(state__in=unique_states).values_list('smc_fse_name', flat=True) if f and f.strip()])))
+            available_fses = sorted(list(set([f.strip() for f in Site.objects.filter(state__in=unique_states).order_by().values_list('smc_fse_name', flat=True).distinct() if f and f.strip()])))
 
-        sample_rec = None
-        if selected_log:
-            sample_rec = DailyAvailabilityRecord.objects.filter(upload_log=selected_log).exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
-        if not sample_rec:
-            sample_rec = DailyAvailabilityRecord.objects.exclude(daily_scores={}).exclude(daily_scores=None).only('daily_scores').first()
-        all_detected_dates = sorted(list(sample_rec.daily_scores.keys())) if (sample_rec and sample_rec.daily_scores) else []
+        log_cache_key = f"log_dates:{selected_log.id if selected_log else 0}"
+        all_detected_dates = get_cached_response(log_cache_key, ttl=600)
+        if all_detected_dates is None:
+            sample_rec = None
+            if selected_log:
+                sample_rec = DailyAvailabilityRecord.objects.filter(upload_log=selected_log).order_by('upload_log_id').only('daily_scores').first()
+            if not sample_rec:
+                sample_rec = DailyAvailabilityRecord.objects.order_by('-id').only('daily_scores').first()
+            all_detected_dates = sorted(list(sample_rec.daily_scores.keys())) if (sample_rec and sample_rec.daily_scores) else []
+            set_cached_response(log_cache_key, all_detected_dates)
 
-        total_elements = qs.count()
         if total_elements == 0:
             return Response({
                 'active_filename': selected_log.filename if selected_log else '2026-08-19.xlsb',
@@ -2090,18 +2489,7 @@ class DailyAvailabilityStatsView(APIView):
                 'worst_sites': []
             })
 
-        all_records = list(qs.values(
-            'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory', 'tower_co', 'vendor', 'status',
-            'avg_availability', 'latest_availability', 'daily_scores',
-            'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'
-        ))
-
-        # Build in-memory PI weight lookup map from PIWeightageRecord
-        pi_cache = {}
-        for p in PIWeightageRecord.objects.values('tech', 'element_id', 'site_id', 'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'):
-            pi_cache[(p['tech'], p['element_id'])] = p
-            if (p['tech'], p['site_id']) not in pi_cache:
-                pi_cache[(p['tech'], p['site_id'])] = p
+        pi_cache = get_pi_weight_cache()
 
         all_period_vals = []
         weighted_sum = 0.0
@@ -2110,16 +2498,21 @@ class DailyAvailabilityStatsView(APIView):
         tech_data = {}
         processed = []
         for r in all_records:
-            scores_dict = r.get('daily_scores') or {}
-            if target_dates and isinstance(scores_dict, dict):
-                scores = [float(scores_dict[d]) for d in target_dates if d in scores_dict and scores_dict[d] is not None]
-                period_val = round(sum(scores) / len(scores), 2) if scores else round(r['avg_availability'] or 100.0, 2)
-                latest_val = round(float(scores_dict[target_dates[-1]]), 2) if (target_dates and target_dates[-1] in scores_dict and scores_dict[target_dates[-1]] is not None) else round(r['latest_availability'] or 100.0, 2)
-                filtered_scores = {d: scores_dict[d] for d in target_dates if d in scores_dict}
+            if need_row_daily_scores:
+                scores_dict = r.get('daily_scores') or {}
+                if isinstance(scores_dict, dict):
+                    scores = [float(scores_dict[d]) for d in target_dates if d in scores_dict and scores_dict[d] is not None]
+                    period_val = round(sum(scores) / len(scores), 2) if scores else round(r['avg_availability'] or 100.0, 2)
+                    latest_val = round(float(scores_dict[target_dates[-1]]), 2) if (target_dates and target_dates[-1] in scores_dict and scores_dict[target_dates[-1]] is not None) else round(r['latest_availability'] or 100.0, 2)
+                    filtered_scores = {d: scores_dict[d] for d in target_dates if d in scores_dict}
+                else:
+                    period_val = round(r['avg_availability'] or 100.0, 2)
+                    latest_val = round(r['latest_availability'] or 100.0, 2)
+                    filtered_scores = {}
             else:
                 period_val = round(r['avg_availability'] or 100.0, 2)
                 latest_val = round(r['latest_availability'] or 100.0, 2)
-                filtered_scores = scores_dict
+                filtered_scores = {}
 
             t = r.get('tech') or '2G'
             elem = (r.get('element_name') or '').strip().upper()
@@ -2218,15 +2611,31 @@ class DailyAvailabilityStatsView(APIView):
         ]
         eligible_worst.sort(key=lambda x: x['period_availability'])
         worst_sites = eligible_worst[:15]
+        if not need_row_daily_scores and worst_sites:
+            worst_ids = [w['id'] for w in worst_sites]
+            worst_scores_map = dict(
+                DailyAvailabilityRecord.objects.filter(id__in=worst_ids).values_list('id', 'daily_scores')
+            )
+            for w in worst_sites:
+                w['daily_scores'] = worst_scores_map.get(w['id']) or {}
 
         # Daily timeline based on target_dates with PI weighted daily curve
-        timeline_dates = target_dates if target_dates else (all_detected_dates[-30:] if len(all_detected_dates) >= 30 else all_detected_dates)
+        timeline_dates = target_dates if (target_dates and len(target_dates) <= 31) else (all_detected_dates[-30:] if len(all_detected_dates) >= 30 else all_detected_dates)
         daily_values = {d: [] for d in timeline_dates}
         daily_weights = {d: [] for d in timeline_dates}
 
-        for r in processed[:2000]:
+        if need_row_daily_scores:
+            timeline_sample = processed[:1500]
+        else:
+            sample_rows = list(qs.values('daily_scores', 'pi_national')[:400])
+            timeline_sample = [
+                {'daily_scores': sr.get('daily_scores'), 'pi_weight': float(sr.get('pi_national') or 0.00005)}
+                for sr in sample_rows
+            ]
+
+        for r in timeline_sample:
             scores = r.get('daily_scores')
-            pw = r.get('pi_weight', 0.00005)
+            pw = r.get('pi_weight', 0.00005) or 0.00005
             if isinstance(scores, dict):
                 for d_str in timeline_dates:
                     v = scores.get(d_str)
@@ -2263,7 +2672,7 @@ class DailyAvailabilityStatsView(APIView):
                 'close': close_d
             })
 
-        return Response({
+        res_data = {
             'active_filename': selected_log.filename if selected_log else '2026-08-19.xlsb',
             'uploaded_by': selected_log.uploaded_by if selected_log else 'System Base Seeder',
             'uploaded_at': selected_log.uploaded_at.isoformat() if selected_log else None,
@@ -2295,25 +2704,70 @@ class DailyAvailabilityStatsView(APIView):
             'lga_breakdown': lga_breakdown,
             'timeline': timeline,
             'worst_sites': worst_sites
-        })
+        }
+        set_cached_response(cache_key, res_data)
+        return Response(res_data)
 
 
 class DailyAvailabilityListView(APIView):
     def get(self, request):
+        cache_key = f"avail_list:{request.get_full_path()}:{getattr(request.user, 'id', 0)}"
+        cached = get_cached_response(cache_key, ttl=120)
+        if cached is not None:
+            return Response(cached)
+
         qs, _, (target_dates, date_label) = get_availability_queryset(request)
+        sort_by = request.query_params.get('sort_by', 'worst')
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 25))
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+
+        pi_cache = get_pi_weight_cache()
+        is_full_period = request.query_params.get('date_mode', 'all') in ('all', '', None)
+
+        # Fast SQL-paginated path when using default full-period availability & standard sort
+        if is_full_period and sort_by not in ('pi_weight', 'weight', 'pi_worst'):
+            total_count = qs.count()
+            page_records = list(qs[start_idx:end_idx].values(
+                'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory',
+                'tower_co', 'vendor', 'status', 'avg_availability', 'latest_availability', 'daily_scores',
+                'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'
+            ))
+            paged_results = []
+            for r in page_records:
+                period_val = round(r['avg_availability'] or 100.0, 2)
+                latest_val = round(r['latest_availability'] or 100.0, 2)
+                t = r.get('tech') or '2G'
+                elem = (r.get('element_name') or '').strip().upper()
+                sid = (r.get('site_id') or '').strip().upper()
+                pi_rec = pi_cache.get((t, elem)) or pi_cache.get((t, sid)) or {}
+
+                r['pi_national'] = float(r.get('pi_national') or pi_rec.get('pi_national') or 0.0)
+                r['pi_state'] = float(r.get('pi_state') or pi_rec.get('pi_state') or 0.0)
+                r['pi_territory'] = float(r.get('pi_territory') or pi_rec.get('pi_territory') or 0.0)
+                r['configured_capacity'] = float(r.get('configured_capacity') or pi_rec.get('configured_capacity') or 0.0)
+                r['period_availability'] = period_val
+                r['period_label'] = date_label
+                r['avg_availability'] = period_val
+                r['latest_availability'] = latest_val
+                r['daily_scores'] = r.get('daily_scores') or {}
+                paged_results.append(r)
+
+            res_data = {
+                'count': total_count,
+                'next': f"?page={page+1}" if end_idx < total_count else None,
+                'previous': f"?page={page-1}" if page > 1 else None,
+                'results': paged_results
+            }
+            set_cached_response(cache_key, res_data)
+            return Response(res_data)
 
         records = list(qs.values(
             'id', 'site_id', 'tech', 'element_name', 'state', 'region', 'lga', 'territory',
             'tower_co', 'vendor', 'status', 'avg_availability', 'latest_availability', 'daily_scores',
             'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'
         ))
-
-        # Build in-memory PI weight lookup map from PIWeightageRecord
-        pi_cache = {}
-        for p in PIWeightageRecord.objects.values('tech', 'element_id', 'site_id', 'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'):
-            pi_cache[(p['tech'], p['element_id'])] = p
-            if (p['tech'], p['site_id']) not in pi_cache:
-                pi_cache[(p['tech'], p['site_id'])] = p
 
         sla_filter = request.query_params.get('sla_filter', None)
         min_avail = request.query_params.get('min_avail', None)
@@ -2377,7 +2831,6 @@ class DailyAvailabilityListView(APIView):
 
             processed.append(r)
 
-        sort_by = request.query_params.get('sort_by', 'worst')
         if sort_by == 'best':
             processed.sort(key=lambda x: x['period_availability'], reverse=True)
         elif sort_by == 'pi_weight' or sort_by == 'weight':
@@ -2396,19 +2849,17 @@ class DailyAvailabilityListView(APIView):
         else: # worst
             processed.sort(key=lambda x: x['period_availability'])
 
-        page = int(request.query_params.get('page', 1))
-        page_size = int(request.query_params.get('page_size', 25))
         total_count = len(processed)
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
         paged_results = processed[start_idx:end_idx]
 
-        return Response({
+        res_data = {
             'count': total_count,
             'next': f"?page={page+1}" if end_idx < total_count else None,
             'previous': f"?page={page-1}" if page > 1 else None,
             'results': paged_results
-        })
+        }
+        set_cached_response(cache_key, res_data)
+        return Response(res_data)
 
 
 class ResetBaseAvailabilityView(APIView):
@@ -2432,6 +2883,7 @@ class ResetBaseAvailabilityView(APIView):
             is_base=True
         )
         if result.get('success'):
+            invalidate_api_cache()
             return Response(result, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
@@ -2440,119 +2892,456 @@ class ResetBaseAvailabilityView(APIView):
 class DailyAvailabilityExportView(APIView):
     def get(self, request):
         import datetime
+        import re
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.utils import get_column_letter
         from django.http import HttpResponse
 
-        qs, _, (target_dates, date_label) = get_availability_queryset(request)
-        records = list(qs)
+        only_bad = request.query_params.get('only_bad', 'false').lower() in ['true', '1', 'yes'] or \
+                   request.query_params.get('bad_only', 'false').lower() in ['true', '1', 'yes']
+        critical_only = request.query_params.get('critical_only', 'false').lower() in ['true', '1', 'yes']
+        sla_filter = request.query_params.get('sla_filter', None)
+        limit_param = request.query_params.get('limit', None)
+        try:
+            limit = int(limit_param) if limit_param else None
+        except (ValueError, TypeError):
+            limit = None
+
+        if critical_only:
+            only_bad = True
+        if sla_filter in ['critical_under_95', 'degraded_under_98', 'degraded_under_98_5']:
+            only_bad = True
+
+        qs, is_superuser, (target_dates, date_label) = get_availability_queryset(request)
+        raw_records = list(qs)
+
+        # Build site FSE lookup map for fast operational dispatch
+        site_lookup = {
+            s['ihs_site_id'].strip().upper(): s
+            for s in Site.objects.values('ihs_site_id', 'smc_fse_name', 'smc_fse_phone', 'cluster_name')
+            if s['ihs_site_id']
+        }
+
+        # Build PI weight lookup map
+        pi_cache = {}
+        for p in PIWeightageRecord.objects.values('tech', 'element_id', 'site_id', 'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'):
+            pi_cache[(p['tech'], p['element_id'])] = p
+            if (p['tech'], p['site_id']) not in pi_cache:
+                pi_cache[(p['tech'], p['site_id'])] = p
+
+        processed = []
+        for r in raw_records:
+            scores_dict = r.daily_scores if isinstance(r.daily_scores, dict) else {}
+            scores = []
+            day_score_map = {}
+            if target_dates:
+                for d in target_dates:
+                    v = scores_dict.get(d)
+                    if v is not None:
+                        try:
+                            fv = float(v)
+                            scores.append(fv)
+                            day_score_map[d] = fv
+                        except (ValueError, TypeError):
+                            day_score_map[d] = None
+                    else:
+                        day_score_map[d] = None
+                period_val = round(sum(scores) / len(scores), 2) if scores else round(r.avg_availability or 100.0, 2)
+                latest_val = round(scores[-1], 2) if scores else round(r.latest_availability or 100.0, 2)
+            else:
+                period_val = round(r.avg_availability or 100.0, 2)
+                latest_val = round(r.latest_availability or 100.0, 2)
+
+            # Worst day calculation
+            worst_day_str = "N/A"
+            if scores and target_dates:
+                valid_days = [(d, day_score_map[d]) for d in target_dates if day_score_map.get(d) is not None]
+                if valid_days:
+                    min_d, min_s = min(valid_days, key=lambda x: x[1])
+                    worst_day_str = f"{min_d} ({min_s}%)"
+
+            outage_days_cnt = sum(1 for s in scores if s < 98.5)
+            critical_days_cnt = sum(1 for s in scores if s < 95.0)
+
+            t = r.tech or '2G'
+            elem = (r.element_name or '').strip().upper()
+            sid = (r.site_id or '').strip().upper()
+            pi_rec = pi_cache.get((t, elem)) or pi_cache.get((t, sid)) or {}
+            pi_w = float(r.pi_national or pi_rec.get('pi_national') or 0.0)
+            if pi_w <= 0.0:
+                pi_w = float(r.pi_state or pi_rec.get('pi_state') or 0.0) or float(r.pi_territory or pi_rec.get('pi_territory') or 0.0) or 0.00005
+
+            site_info = site_lookup.get(sid, {})
+            fse_name = site_info.get('smc_fse_name') or ''
+            fse_phone = site_info.get('smc_fse_phone') or ''
+            cluster = site_info.get('cluster_name') or ''
+
+            is_crit = period_val < 95.0
+            is_deg = period_val < 98.5
+            sla_status = "🔴 CRITICAL OUTAGE" if is_crit else ("⚠️ DEGRADED" if is_deg else "🟢 COMPLIANT")
+
+            processed.append({
+                'record': r,
+                'site_id': r.site_id,
+                'tech': r.tech,
+                'element_name': r.element_name or '',
+                'state': r.state,
+                'territory': r.territory or '',
+                'lga': r.lga,
+                'cluster': cluster,
+                'fse_name': fse_name,
+                'fse_phone': fse_phone,
+                'tower_co': r.tower_co,
+                'vendor': r.vendor,
+                'status': r.status,
+                'period_availability': period_val,
+                'avg_availability': round(r.avg_availability or 100.0, 2),
+                'latest_availability': latest_val,
+                'worst_day': worst_day_str,
+                'outage_days': outage_days_cnt,
+                'critical_days': critical_days_cnt,
+                'sla_status': sla_status,
+                'is_critical': is_crit,
+                'is_degraded': is_deg,
+                'pi_weight': pi_w,
+                'day_score_map': day_score_map
+            })
+
+        # Calculate summary metrics across all processed in scope
+        total_scope_count = len(processed)
+        all_period_vals = [p['period_availability'] for p in processed]
+        overall_scope_avg = round(sum(all_period_vals) / len(all_period_vals), 2) if all_period_vals else 100.0
+        all_degraded = [p for p in processed if p['is_degraded']]
+        all_critical = [p for p in processed if p['is_critical']]
+        all_warning = [p for p in processed if p['is_degraded'] and not p['is_critical']]
+        all_compliant = [p for p in processed if not p['is_degraded']]
+
+        # Filter active records for primary export
+        if critical_only or sla_filter == 'critical_under_95':
+            export_records = all_critical
+        elif only_bad or sla_filter in ['degraded_under_98', 'degraded_under_98_5']:
+            export_records = all_degraded
+        else:
+            export_records = processed
+
+        # Sort order
+        sort_by = request.query_params.get('sort_by', 'worst' if only_bad else 'site_id')
+        if sort_by == 'best':
+            export_records.sort(key=lambda x: x['period_availability'], reverse=True)
+        elif sort_by == 'pi_worst':
+            export_records.sort(key=lambda x: (100.0 - x['period_availability']) * x['pi_weight'], reverse=True)
+        elif sort_by == 'site_id':
+            export_records.sort(key=lambda x: str(x['site_id']))
+        elif sort_by == 'state':
+            export_records.sort(key=lambda x: (str(x['state']), str(x['site_id'])))
+        elif sort_by == 'lga':
+            export_records.sort(key=lambda x: (str(x['lga']), str(x['site_id'])))
+        else:  # worst
+            export_records.sort(key=lambda x: x['period_availability'])
+
+        if limit and limit > 0:
+            export_records = export_records[:limit]
+
+        # Always sort degraded list by worst availability first
+        all_degraded_sorted = sorted(all_degraded, key=lambda x: x['period_availability'])
 
         wb = Workbook()
         ws_summary = wb.active
         ws_summary.title = "Executive Summary"
-        ws_matrix = wb.create_sheet(title="Element Availability Matrix")
 
-        title_font = Font(name='Segoe UI', size=16, bold=True, color='FFFFFF')
-        header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
-        bold_font = Font(name='Segoe UI', size=11, bold=True, color='0F172A')
+        # Fonts & Styles
+        title_font = Font(name='Segoe UI', size=14, bold=True, color='FFFFFF')
+        header_font = Font(name='Segoe UI', size=10, bold=True, color='FFFFFF')
+        bold_font = Font(name='Segoe UI', size=10, bold=True, color='0F172A')
         normal_font = Font(name='Segoe UI', size=10, color='334155')
-        mono_font = Font(name='Consolas', size=10, bold=True, color='0284C7')
+        mono_font = Font(name='Consolas', size=10, bold=True, color='0369A1')
 
         title_fill = PatternFill(start_color='0F172A', end_color='0F172A', fill_type='solid')
         header_fill = PatternFill(start_color='1E293B', end_color='1E293B', fill_type='solid')
+        subheader_fill = PatternFill(start_color='334155', end_color='334155', fill_type='solid')
+
+        # Status fills & fonts
+        crit_fill = PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid')
+        crit_font = Font(name='Segoe UI', size=10, bold=True, color='991B1B')
+
+        deg_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
+        deg_font = Font(name='Segoe UI', size=10, bold=True, color='92400E')
+
+        comp_fill = PatternFill(start_color='DCFCE7', end_color='DCFCE7', fill_type='solid')
+        comp_font = Font(name='Segoe UI', size=10, bold=True, color='166534')
+
+        na_fill = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')
+        na_font = Font(name='Segoe UI', size=10, color='94A3B8')
 
         thin_border = Border(
-            left=Side(style='thin', color='E2E8F0'),
-            right=Side(style='thin', color='E2E8F0'),
-            top=Side(style='thin', color='E2E8F0'),
-            bottom=Side(style='thin', color='E2E8F0')
+            left=Side(style='thin', color='CBD5E1'),
+            right=Side(style='thin', color='CBD5E1'),
+            top=Side(style='thin', color='CBD5E1'),
+            bottom=Side(style='thin', color='CBD5E1')
         )
 
-        ws_summary.merge_cells('A1:E2')
-        cell = ws_summary['A1']
-        cell.value = "DAILY NETWORK AVAILABILITY COMMAND CENTER REPORT"
-        cell.font = title_font
-        cell.fill = title_fill
-        cell.alignment = Alignment(horizontal='center', vertical='center')
+        # -------------------------------------------------------------
+        # 1. EXECUTIVE SUMMARY SHEET
+        # -------------------------------------------------------------
+        ws_summary.merge_cells('A1:F2')
+        top_cell = ws_summary['A1']
+        if critical_only:
+            top_cell.value = "DAILY AVAILABILITY EXCEPTION REPORT: CRITICAL OUTAGE SITES (<95%)"
+        elif only_bad:
+            top_cell.value = "DAILY AVAILABILITY EXCEPTION REPORT: BAD & DEGRADED SITES (<98.5%)"
+        else:
+            top_cell.value = "DAILY NETWORK AVAILABILITY COMMAND CENTER EXECUTIVE REPORT"
+        top_cell.font = title_font
+        top_cell.fill = title_fill
+        top_cell.alignment = Alignment(horizontal='center', vertical='center')
 
         ws_summary.append([])
-        ws_summary.append(["KPI METRIC", "VALUE"])
-        for col in ['A', 'B']:
-            ws_summary[f'{col}4'].font = header_font
-            ws_summary[f'{col}4'].fill = header_fill
-
-        total_elements = len(records)
-        overall_avg = round(sum(r.avg_availability for r in records) / total_elements, 2) if total_elements > 0 else 100.0
-        sla_compliant = sum(1 for r in records if r.avg_availability >= 98.0)
-        sla_degraded = sum(1 for r in records if r.avg_availability < 98.0)
-        critical_outages = sum(1 for r in records if r.avg_availability < 95.0)
-
-        kpis = [
-            ("Report Period / Scope", date_label),
-            ("Monitored Network Elements", total_elements),
-            ("Overall Average Availability", f"{overall_avg}%"),
-            ("SLA Compliant Elements (>= 98%)", sla_compliant),
-            ("Degraded Elements (< 98%)", sla_degraded),
-            ("Critical Outage Elements (< 95%)", critical_outages),
-        ]
-
-        for label, val in kpis:
-            ws_summary.append([label, val])
-            row = ws_summary.max_row
-            ws_summary[f'A{row}'].font = bold_font
-            ws_summary[f'B{row}'].font = normal_font
-            ws_summary[f'A{row}'].border = thin_border
-            ws_summary[f'B{row}'].border = thin_border
-
-        matrix_headers = ["SITE ID", "TECH", "STATE", "TERRITORY", "LGA", "TOWER CO", "VENDOR", "STATUS", "PERIOD AVAIL %", "MONTH AVG %", "LATEST DAY %", "SLA STATUS"]
-        ws_matrix.append(matrix_headers)
-        for col_num in range(1, len(matrix_headers) + 1):
-            c = ws_matrix.cell(row=1, column=col_num)
+        ws_summary.append(["KPI METRIC", "VALUE", "CLASSIFICATION / CONTEXT"])
+        summary_row = ws_summary.max_row
+        for col in ['A', 'B', 'C']:
+            c = ws_summary[f'{col}{summary_row}']
             c.font = header_font
             c.fill = header_fill
-            c.alignment = Alignment(horizontal='center', vertical='center')
 
-        for r in records:
-            if target_dates and isinstance(r.daily_scores, dict):
-                scores = [float(r.daily_scores[d]) for d in target_dates if d in r.daily_scores and r.daily_scores[d] is not None]
-                period_val = round(sum(scores) / len(scores), 2) if scores else round(r.avg_availability, 2)
-            else:
-                period_val = round(r.avg_availability, 2)
+        bad_vals = [p['period_availability'] for p in all_degraded]
+        avg_bad_avail = round(sum(bad_vals) / len(bad_vals), 2) if bad_vals else 100.0
 
-            sla_status = "🟢 COMPLIANT" if period_val >= 98.0 else ("🔴 CRITICAL OUTAGE" if period_val < 95.0 else "⚠️ DEGRADED")
+        # Find most impacted LGA
+        lga_counts = {}
+        for p in all_degraded:
+            l = (p.get('lga') or 'Unknown').strip().upper()
+            lga_counts[l] = lga_counts.get(l, 0) + 1
+        most_impacted_lga = max(lga_counts.items(), key=lambda x: x[1])[0] if lga_counts else 'None'
+        lga_impact_cnt = lga_counts.get(most_impacted_lga, 0)
 
-            row_data = [
-                r.site_id,
-                r.tech,
-                r.state,
-                r.territory or '',
-                r.lga,
-                r.tower_co,
-                r.vendor,
-                r.status,
-                f"{period_val}%",
-                f"{round(r.avg_availability, 2)}%",
-                f"{round(r.latest_availability, 2)}%",
-                sla_status
+        # Worst site
+        worst_site = all_degraded_sorted[0] if all_degraded_sorted else None
+        worst_str = f"{worst_site['site_id']} ({worst_site['tech']}) - {worst_site['period_availability']}% [{worst_site['lga']}]" if worst_site else 'None'
+
+        kpis = [
+            ("Report Period / Scope", date_label, "Monitored time window"),
+            ("Export Filter Scope", "Bad / Degraded Sites Only (< 98.5%)" if only_bad else "Full Network Portfolio", "Selected export mode"),
+            ("Total Monitored Elements", total_scope_count, "All elements meeting geographic/operational filter"),
+            ("Degraded Elements Breaching SLA (< 98.5%)", len(all_degraded), f"{round(len(all_degraded)/total_scope_count*100, 1) if total_scope_count else 0}% of scope requiring engineering intervention"),
+            ("Critical Outage Elements (< 95.0%)", len(all_critical), f"{round(len(all_critical)/total_scope_count*100, 1) if total_scope_count else 0}% severe priority outages"),
+            ("Warning Degraded Elements (95.0% - 98.49%)", len(all_warning), "Sub-optimal elements approaching outage"),
+            ("SLA Compliant Elements (>= 98.5%)", len(all_compliant), f"{round(len(all_compliant)/total_scope_count*100, 1) if total_scope_count else 100}% meeting contractual target"),
+            ("Average Availability of Degraded Elements", f"{avg_bad_avail}%", "Mean availability of affected elements"),
+            ("Overall Average Availability (All Scope)", f"{overall_scope_avg}%", "MTN Network Health Benchmark"),
+            ("Most Impacted LGA", f"{most_impacted_lga} ({lga_impact_cnt} degraded elements)", "Geographic priority hotspot"),
+            ("Worst Impacted Site", worst_str, "Lowest availability recorded in period"),
+            ("Report Generated At", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Timestamp of export generation")
+        ]
+
+        for label, val, desc in kpis:
+            ws_summary.append([label, val, desc])
+            r_idx = ws_summary.max_row
+            ws_summary[f'A{r_idx}'].font = bold_font
+            ws_summary[f'B{r_idx}'].font = Font(name='Segoe UI', size=10, bold=True, color='0F172A')
+            ws_summary[f'C{r_idx}'].font = normal_font
+            for c_idx in range(1, 4):
+                ws_summary.cell(row=r_idx, column=c_idx).border = thin_border
+
+        # Helper function to populate matrix sheets
+        def populate_matrix_sheet(ws, items, sheet_title_text):
+            # Display target dates (up to 31 dates)
+            use_dates = target_dates[:31] if target_dates else []
+
+            base_headers = [
+                "RANK", "SITE ID", "TECH", "STATE", "TERRITORY", "LGA", "CLUSTER",
+                "SMC FSE", "FSE PHONE", "TOWER CO", "VENDOR", "STATUS",
+                "PERIOD AVAIL %", "MONTH AVG %", "LATEST DAY %", "WORST DAY",
+                "OUTAGE DAYS", "SLA STATUS"
             ]
-            ws_matrix.append(row_data)
-            curr_row = ws_matrix.max_row
-            ws_matrix[f'A{curr_row}'].font = mono_font
+            full_headers = base_headers + [f"DAY {d}" for d in use_dates]
+            ws.append(full_headers)
 
-            for col_idx in range(1, len(matrix_headers) + 1):
-                ws_matrix.cell(row=curr_row, column=col_idx).border = thin_border
+            # Style header row
+            for col_num in range(1, len(full_headers) + 1):
+                c = ws.cell(row=1, column=col_num)
+                c.font = header_font
+                c.fill = header_fill
+                c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-        for ws in [ws_summary, ws_matrix]:
+            ws.row_dimensions[1].height = 26
+
+            for idx, item in enumerate(items, 1):
+                pval = item['period_availability']
+                mval = item['avg_availability']
+                lval = item['latest_availability']
+
+                row_data = [
+                    idx,
+                    item['site_id'],
+                    item['tech'],
+                    item['state'],
+                    item['territory'] or '',
+                    item['lga'],
+                    item['cluster'] or '',
+                    item['fse_name'] or 'Unassigned',
+                    item['fse_phone'] or '',
+                    item['tower_co'] or '',
+                    item['vendor'] or '',
+                    item['status'] or '',
+                    f"{pval}%",
+                    f"{mval}%",
+                    f"{lval}%",
+                    item['worst_day'],
+                    item['outage_days'],
+                    item['sla_status']
+                ]
+
+                # Append daily score values
+                for d in use_dates:
+                    score = item['day_score_map'].get(d)
+                    row_data.append(f"{score}%" if score is not None else "N/A")
+
+                ws.append(row_data)
+                curr_row = ws.max_row
+
+                # Fonts & cell styling
+                ws[f'A{curr_row}'].font = bold_font
+                ws[f'A{curr_row}'].alignment = Alignment(horizontal='center')
+                ws[f'B{curr_row}'].font = mono_font
+
+                # Period Avail cell color
+                p_cell = ws[f'M{curr_row}']
+                p_cell.font = Font(name='Segoe UI', size=10, bold=True)
+                p_cell.alignment = Alignment(horizontal='center')
+                if pval < 95.0:
+                    p_cell.fill = crit_fill
+                    p_cell.font = crit_font
+                elif pval < 98.5:
+                    p_cell.fill = deg_fill
+                    p_cell.font = deg_font
+                else:
+                    p_cell.fill = comp_fill
+                    p_cell.font = comp_font
+
+                # SLA status cell color
+                status_cell = ws[f'R{curr_row}']
+                status_cell.alignment = Alignment(horizontal='center')
+                if item['is_critical']:
+                    status_cell.fill = crit_fill
+                    status_cell.font = crit_font
+                elif item['is_degraded']:
+                    status_cell.fill = deg_fill
+                    status_cell.font = deg_font
+                else:
+                    status_cell.fill = comp_fill
+                    status_cell.font = comp_font
+
+                # Color daily score cells
+                for d_idx, d in enumerate(use_dates):
+                    c_num = len(base_headers) + 1 + d_idx
+                    day_c = ws.cell(row=curr_row, column=c_num)
+                    day_c.alignment = Alignment(horizontal='center')
+                    score = item['day_score_map'].get(d)
+                    if score is not None:
+                        if score < 95.0:
+                            day_c.fill = crit_fill
+                            day_c.font = crit_font
+                        elif score < 98.5:
+                            day_c.fill = deg_fill
+                            day_c.font = deg_font
+                        else:
+                            day_c.fill = comp_fill
+                            day_c.font = comp_font
+                    else:
+                        day_c.fill = na_fill
+                        day_c.font = na_font
+
+                for c_num in range(1, len(full_headers) + 1):
+                    ws.cell(row=curr_row, column=c_num).border = thin_border
+
+            # Freeze headers & enable auto-filter
+            ws.freeze_panes = 'A2'
+            if len(items) > 0:
+                last_col_letter = get_column_letter(len(full_headers))
+                ws.auto_filter.ref = f"A1:{last_col_letter}{len(items) + 1}"
+
+            # Auto column widths
             for col in ws.columns:
+                max_len = max(len(str(cell.value or '')) for cell in col[:150])
+                col_letter = get_column_letter(col[0].column)
+                ws.column_dimensions[col_letter].width = max(max_len + 3, 11)
+
+        # -------------------------------------------------------------
+        # 2. MATRIX SHEET(S)
+        # -------------------------------------------------------------
+        if only_bad:
+            # Dedicated Bad Sites report
+            matrix_title = "Critical Outages (<95%)" if critical_only else "Degraded Sites (<98.5%)"
+            ws_matrix = wb.create_sheet(title=matrix_title)
+            populate_matrix_sheet(ws_matrix, export_records, matrix_title)
+
+            # Sheet 3: LGA & Vendor Outage Breakdown
+            ws_breakdown = wb.create_sheet(title="LGA & Vendor Breakdown")
+            ws_breakdown.append(["LGA", "DEGRADED SITES COUNT", "CRITICAL COUNT (<95%)", "LOWEST AVAILABILITY SITE", "LOWEST AVAIL %"])
+            for col in ['A', 'B', 'C', 'D', 'E']:
+                ws_breakdown[f'{col}1'].font = header_font
+                ws_breakdown[f'{col}1'].fill = header_fill
+                ws_breakdown[f'{col}1'].alignment = Alignment(horizontal='center')
+
+            lga_stats = {}
+            for p in export_records:
+                lg = (p.get('lga') or 'Unknown').strip().upper()
+                if lg not in lga_stats:
+                    lga_stats[lg] = {'count': 0, 'critical': 0, 'worst_site': p['site_id'], 'min_avail': p['period_availability']}
+                lga_stats[lg]['count'] += 1
+                if p['is_critical']:
+                    lga_stats[lg]['critical'] += 1
+                if p['period_availability'] < lga_stats[lg]['min_avail']:
+                    lga_stats[lg]['min_avail'] = p['period_availability']
+                    lga_stats[lg]['worst_site'] = p['site_id']
+
+            for lg_name, l_data in sorted(lga_stats.items(), key=lambda x: x[1]['count'], reverse=True):
+                ws_breakdown.append([
+                    lg_name,
+                    l_data['count'],
+                    l_data['critical'],
+                    l_data['worst_site'],
+                    f"{l_data['min_avail']}%"
+                ])
+                r_idx = ws_breakdown.max_row
+                ws_breakdown[f'A{r_idx}'].font = bold_font
+                for col_idx in range(1, 6):
+                    ws_breakdown.cell(row=r_idx, column=col_idx).border = thin_border
+
+            ws_breakdown.freeze_panes = 'A2'
+            for col in ws_breakdown.columns:
                 max_len = max(len(str(cell.value or '')) for cell in col)
                 col_letter = get_column_letter(col[0].column)
-                ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+                ws_breakdown.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+        else:
+            # Full Report: Include Degraded Sites tab (sorted worst first) AND All Elements tab!
+            ws_bad = wb.create_sheet(title="Degraded Sites (<98.5%)")
+            populate_matrix_sheet(ws_bad, all_degraded_sorted, "Degraded Sites (<98.5%)")
+
+            ws_all = wb.create_sheet(title="All Elements Matrix")
+            populate_matrix_sheet(ws_all, export_records, "All Elements Matrix")
+
+        # Column widths for Summary sheet
+        for col in ws_summary.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws_summary.column_dimensions[col_letter].width = max(max_len + 4, 18)
+
+        # Output filename
+        clean_period = re.sub(r'[^a-zA-Z0-9_\-]', '_', date_label or 'Period')
+        if critical_only:
+            filename = f"Critical_Outage_Sites_{clean_period}_{datetime.date.today()}.xlsx"
+        elif only_bad:
+            filename = f"Bad_Degraded_Sites_{clean_period}_{datetime.date.today()}.xlsx"
+        else:
+            filename = f"Daily_Network_Availability_Report_{clean_period}_{datetime.date.today()}.xlsx"
 
         response = HttpResponse(
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        response['Content-Disposition'] = f'attachment; filename="Daily_Network_Availability_Report_{datetime.date.today()}.xlsx"'
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
         wb.save(response)
         return response
 
@@ -2791,58 +3580,91 @@ class IdentifyHubSitesView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-_wsd_april_2026_cache = None
+_wsd_cache = None
 
-def get_wsd_april_2026_cache():
+def get_wsd_cache():
     import os
-    global _wsd_april_2026_cache
-    if _wsd_april_2026_cache is not None:
-        return _wsd_april_2026_cache
+    from django.conf import settings
+    global _wsd_cache
+    if _wsd_cache is not None:
+        return _wsd_cache
 
-    path = '/home/mrchrys/SDM/working site distribution/Huawei/WSD APRIL  2026 v 3.4-ABUJA REGION.xlsb'
+    candidates = [
+        '/home/mrchrys/SDM/working site distribution/Huawei/WSD October  2026 v1.0.xlsx',
+        '/app/data/WSD October  2026 v1.0.xlsx',
+        os.path.join(settings.BASE_DIR, 'data', 'WSD October  2026 v1.0.xlsx'),
+        '/home/mrchrys/SDM/working site distribution/Huawei/WSD APRIL  2026 v 3.4-ABUJA REGION.xlsb',
+        '/app/data/WSD July 2026 V5.1.xlsb',
+        os.path.join(settings.BASE_DIR, 'data', 'WSD July 2026 V5.1.xlsb'),
+    ]
+    path = None
+    for c in candidates:
+        if os.path.exists(c):
+            path = c
+            break
+
     wsd_map = {}
-
-    if os.path.exists(path):
+    if path and os.path.exists(path):
         try:
             import pyxlsb
             with pyxlsb.open_workbook(path) as wb:
-                if 'WSD' in wb.sheets:
-                    with wb.get_sheet('WSD') as sheet:
-                        for idx, row in enumerate(sheet.rows()):
-                            if idx == 0: continue
-                            vals = [c.v for c in row]
-                            site_id = str(vals[0] or '').strip().upper()
-                            if not site_id: continue
+                sheet_name = 'WSD' if 'WSD' in wb.sheets else wb.sheets[0]
+                with wb.get_sheet(sheet_name) as sheet:
+                    col_map = {}
+                    for idx, row in enumerate(sheet.rows()):
+                        if idx == 0:
+                            col_map = {str(c.v).strip(): i for i, c in enumerate(row) if c.v is not None}
+                            continue
+                        vals = [c.v for c in row]
 
-                            fse_phone = str(vals[58] or '').replace('.0', '').strip()
-                            if fse_phone and not fse_phone.startswith('0') and len(fse_phone) == 10:
-                                fse_phone = '0' + fse_phone
+                        def get_v(name, fallback=None):
+                            if name in col_map:
+                                idx_c = col_map[name]
+                                return vals[idx_c] if idx_c < len(vals) else None
+                            return fallback
 
-                            sdm_phone = str(vals[62] or '').replace('.0', '').strip()
-                            if sdm_phone and not sdm_phone.startswith('0') and len(sdm_phone) == 10:
-                                sdm_phone = '0' + sdm_phone
+                        site_id = str(get_v('SiteID', '') or '').strip().upper()
+                        if not site_id or site_id == 'NAN':
+                            continue
 
-                            wsd_map[site_id] = {
-                                'site_id': site_id,
-                                'site_name': str(vals[29] or '').strip(),
-                                'state': str(vals[14] or '').strip().upper(),
-                                'lga': str(vals[19] or '').strip(),
-                                'cluster': str(vals[5] or '').strip(),
-                                'tower_co': str(vals[30] or '').strip(),
-                                'vendor': str(vals[28] or '').strip(),
-                                'fse_name': str(vals[56] or '').strip(),
-                                'fse_phone': fse_phone,
-                                'sdm_name': str(vals[60] or '').strip(),
-                                'sdm_phone': sdm_phone,
-                                'classification': str(vals[42] or '').strip(),
-                                'downstream_count': int(vals[43] or 0) if vals[43] is not None else 0,
-                                'vvip': str(vals[44] or '').strip()
-                            }
+                        fse_phone = str(get_v('FSE CONTACT NO.', '') or '').replace('.0', '').strip()
+                        if fse_phone and not fse_phone.startswith('0') and not fse_phone.startswith('+') and len(fse_phone) == 10:
+                            fse_phone = '0' + fse_phone
+
+                        sdm_phone = str(get_v('SDM CONTACT NO.', get_v('SDM CONTACT NO. ', '')) or '').replace('.0', '').strip()
+                        if sdm_phone and not sdm_phone.startswith('0') and not sdm_phone.startswith('+') and len(sdm_phone) == 10:
+                            sdm_phone = '0' + sdm_phone
+
+                        downstream_val = get_v('Count of Direct site dependecies', 0)
+                        try:
+                            downstream_cnt = int(downstream_val or 0)
+                        except (ValueError, TypeError):
+                            downstream_cnt = 0
+
+                        wsd_map[site_id] = {
+                            'site_id': site_id,
+                            'site_name': str(get_v('Site Name', '') or '').strip(),
+                            'state': str(get_v('STATE', '') or '').strip().upper(),
+                            'lga': str(get_v('LGA', '') or '').strip(),
+                            'cluster': str(get_v('Site Cluster', '') or '').strip(),
+                            'tower_co': str(get_v('Tower Co', '') or '').strip(),
+                            'vendor': str(get_v('OEM', '') or '').strip(),
+                            'fse_name': str(get_v('FSE NAME', '') or '').strip(),
+                            'fse_phone': fse_phone,
+                            'sdm_name': str(get_v('SDM NAME', '') or '').strip(),
+                            'sdm_phone': sdm_phone,
+                            'classification': str(get_v('Site Classifications (Hub/Terminal)', '') or '').strip(),
+                            'downstream_count': downstream_cnt,
+                            'vvip': str(get_v('VVIP', '') or '').strip()
+                        }
         except Exception as e:
-            print("Error loading WSD APRIL 2026 xlsb:", e)
+            print(f"Error loading WSD cache from {path}:", e)
 
-    _wsd_april_2026_cache = wsd_map
-    return _wsd_april_2026_cache
+    _wsd_cache = wsd_map
+    return _wsd_cache
+
+get_wsd_april_2026_cache = get_wsd_cache
+
 
 
 class SiteToFSELookupView(APIView):
@@ -3104,6 +3926,7 @@ class HourlyAvailabilityUploadView(APIView):
         )
 
         if result.get('success'):
+            invalidate_api_cache()
             return Response(result, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
@@ -3393,15 +4216,15 @@ class ResetHourlyBaseAvailabilityView(APIView):
 
 
 # -------------------------------------------------------------
-# 📡 4G LTE KML CELL SECTORS & COVERAGE VIEWS
+# 📡 4G LTE KML/KMZ CELL SECTORS & COVERAGE VIEWS
 # -------------------------------------------------------------
 
-DEFAULT_KML_BASE_PATH = '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml/ABUJA REGION KML 07292026 (4G).kml'
+DEFAULT_KML_BASE_PATH = '/app/data/kml/ABJ WK31 PRB.kmz'
 
 class SiteCellSectorsView(APIView):
     """
     Returns all 4G LTE cell sectors for a given Site ID
-    Includes antenna azimuths, PCIs, TACs, Cell IDs, and polygon coverage coordinates.
+    Includes antenna azimuths, PCIs, TACs, Cell IDs, layers, PRB metrics, and polygon coverage coordinates.
     """
     def get(self, request, site_id):
         clean_id = site_id.strip()
@@ -3421,7 +4244,7 @@ class SiteCellSectorsView(APIView):
 
 class CellSectorListView(APIView):
     """
-    Query cell sectors across the network by Site ID, PCI, TAC, Cell Name, Search Query, or Map Bounding Box.
+    Query cell sectors across the network by Site ID, Layer, State, PCI, TAC, Cell Name, Search Query, or Map Bounding Box.
     """
     def get(self, request):
         qs = CellSector.objects.all()
@@ -3435,6 +4258,14 @@ class CellSectorListView(APIView):
         site_id = request.query_params.get('site_id')
         if site_id:
             qs = qs.filter(site_id__icontains=site_id.strip())
+
+        layer = request.query_params.get('layer')
+        if layer and layer.upper() != 'ALL':
+            qs = qs.filter(layer__iexact=layer.strip())
+
+        state_param = request.query_params.get('state')
+        if state_param and state_param.upper() != 'ALL':
+            qs = qs.filter(state__iexact=state_param.strip())
 
         pci = request.query_params.get('pci')
         if pci:
@@ -3462,6 +4293,7 @@ class CellSectorListView(APIView):
                 qs = qs.filter(
                     Q(site_id__icontains=s) |
                     Q(cell_name__icontains=s) |
+                    Q(layer__icontains=s) |
                     Q(pci=num_s) |
                     Q(tac=num_s) |
                     Q(cell_id=num_s)
@@ -3469,7 +4301,8 @@ class CellSectorListView(APIView):
             except ValueError:
                 qs = qs.filter(
                     Q(site_id__icontains=s) |
-                    Q(cell_name__icontains=s)
+                    Q(cell_name__icontains=s) |
+                    Q(layer__icontains=s)
                 )
 
         # Bounding box filter for map viewport optimization: bbox=min_lat,min_lng,max_lat,max_lng
@@ -3507,9 +4340,10 @@ class CellSectorListView(APIView):
 
 class KmlStatsView(APIView):
     """
-    Returns high-level statistics and metadata about the imported 4G LTE KML coverage dataset.
+    Returns high-level statistics and metadata about the imported 4G LTE KML/KMZ coverage dataset.
     """
     def get(self, request):
+        from django.db.models import Avg
         total_sectors = CellSector.objects.count()
         unique_sites = CellSector.objects.values('site_id').distinct().count()
         matched_sites = CellSector.objects.filter(site_ref__isnull=False).values('site_id').distinct().count()
@@ -3518,16 +4352,25 @@ class KmlStatsView(APIView):
 
         top_pcis = list(CellSector.objects.exclude(pci__isnull=True).values('pci').annotate(count=Count('id')).order_by('-count')[:10])
         top_tacs = list(CellSector.objects.exclude(tac__isnull=True).values('tac').annotate(count=Count('id')).order_by('-count')[:10])
+        layers = list(CellSector.objects.exclude(layer__isnull=True).exclude(layer='').values('layer').annotate(count=Count('id')).order_by('-count'))
+        states = list(CellSector.objects.exclude(state__isnull=True).exclude(state='').values('state').annotate(count=Count('id')).order_by('-count'))
+        avg_prb_val = CellSector.objects.exclude(prb_utilization__isnull=True).aggregate(avg=Avg('prb_utilization'))['avg']
+
+        first_sector = CellSector.objects.first()
+        dataset_name = first_sector.source_kml if first_sector else 'ABJ WK31 PRB.kmz'
 
         return Response({
-            'dataset_name': 'ABUJA REGION KML 07292026 (4G)',
+            'dataset_name': dataset_name,
             'tech': '4G LTE',
-            'region': 'Abuja Region (FCT, Niger, Nasarawa, Kogi, Plateau, Kaduna)',
+            'region': 'Abuja Region (FCT, Niger, Nasarawa, Kogi, Plateau, Kaduna, Benue, Bauchi, Taraba)',
             'total_sectors': total_sectors,
             'unique_sites': unique_sites,
             'matched_sites_in_db': matched_sites,
             'unique_pcis': unique_pcis,
             'unique_tacs': unique_tacs,
+            'layers': layers,
+            'states': states,
+            'avg_prb_utilization': round(avg_prb_val, 2) if avg_prb_val else None,
             'top_pcis': top_pcis,
             'top_tacs': top_tacs,
             'is_integrated': total_sectors > 0
@@ -3536,14 +4379,14 @@ class KmlStatsView(APIView):
 
 class KmlImportView(APIView):
     """
-    API endpoint to trigger KML re-ingestion or upload a new KML file.
+    API endpoint to trigger KML/KMZ re-ingestion or upload a new file.
     """
     def post(self, request):
         kml_file = request.FILES.get('file')
         region = request.data.get('region', 'Abuja Region')
 
         if kml_file:
-            save_dir = '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml'
+            save_dir = '/app/data/kml' if os.path.exists('/app/data/kml') else '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml'
             os.makedirs(save_dir, exist_ok=True)
             save_path = os.path.join(save_dir, kml_file.name)
             with open(save_path, 'wb+') as dest:
@@ -3551,15 +4394,76 @@ class KmlImportView(APIView):
                     dest.write(chunk)
             kml_path = save_path
         else:
-            kml_path = DEFAULT_KML_BASE_PATH
-            if not os.path.exists(kml_path):
-                alt_path = '/home/mrchrys/Downloads/WhatSie/ABUJA REGION KML 07292026 (4G).kml'
-                if os.path.exists(alt_path):
-                    kml_path = alt_path
+            candidates = [
+                DEFAULT_KML_BASE_PATH,
+                '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml/ABJ WK31 PRB.kmz',
+                '/home/mrchrys/Downloads/WhatSie/ABJ WK31 PRB.kmz',
+                '/app/data/kml/ABUJA REGION KML 07292026 (4G).kml',
+                '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml/ABUJA REGION KML 07292026 (4G).kml'
+            ]
+            kml_path = None
+            for cand in candidates:
+                if os.path.exists(cand):
+                    kml_path = cand
+                    break
 
-        if not os.path.exists(kml_path):
-            return Response({'error': f'KML file not found at {kml_path}'}, status=status.HTTP_404_NOT_FOUND)
+        if not kml_path or not os.path.exists(kml_path):
+            return Response({'error': f'KML/KMZ file not found at {DEFAULT_KML_BASE_PATH}'}, status=status.HTTP_404_NOT_FOUND)
 
         res = parse_and_import_kml(kml_path, region_name=region)
         return Response(res, status=status.HTTP_200_OK)
+
+
+class WSDStatusView(APIView):
+    def get(self, request):
+        from .models import WSDUploadLog
+        from .wsd_importer import get_base_wsd_path
+        latest_log = WSDUploadLog.objects.filter(is_active=True).first() or WSDUploadLog.objects.last()
+        base_path = get_base_wsd_path()
+        filename = latest_log.filename if latest_log else os.path.basename(base_path)
+        
+        down_count = Site.objects.filter(is_down=True).count()
+        critical_count = Site.objects.filter(is_critical=True).count()
+        states_count = Site.objects.exclude(state__isnull=True).exclude(state='').values('state').distinct().count()
+        site_count = Site.objects.count()
+
+        return Response({
+            'active_filename': filename,
+            'is_base': latest_log.is_base if latest_log else True,
+            'uploaded_by': latest_log.uploaded_by if latest_log else 'System Base Seeder',
+            'uploaded_at': latest_log.uploaded_at.isoformat() if latest_log else None,
+            'site_count': site_count,
+            'down_count': down_count,
+            'critical_count': critical_count,
+            'states_count': states_count
+        }, status=status.HTTP_200_OK)
+
+
+class WSDUploadView(APIView):
+    def post(self, request):
+        from .wsd_importer import process_wsd_file
+        f = request.FILES.get('file')
+        if not f:
+            return Response({'error': 'No file uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
+        uploaded_by = request.data.get('uploaded_by', request.user.get_full_name() or request.user.username or 'SDM Operations')
+        result = process_wsd_file(f, filename=f.name, uploaded_by=uploaded_by, is_base=False)
+        if result.get('success'):
+            global _wsd_cache
+            _wsd_cache = None
+            return Response(result, status=status.HTTP_200_OK)
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+
+class WSDResetBaseView(APIView):
+    def post(self, request):
+        from .wsd_importer import process_wsd_file, get_base_wsd_path
+        base_path = get_base_wsd_path()
+        uploaded_by = request.data.get('uploaded_by', 'System Administrator')
+        result = process_wsd_file(base_path, filename=os.path.basename(base_path), uploaded_by=uploaded_by, is_base=True)
+        if result.get('success'):
+            global _wsd_cache
+            _wsd_cache = None
+            return Response(result, status=status.HTTP_200_OK)
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
 

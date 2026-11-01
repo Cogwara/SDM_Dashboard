@@ -11,13 +11,28 @@ from notes.models import SiteNote, SiteAttachment, SiteTimeline
 from whatsapp.models import WhatsAppMessage
 
 def run_fc_merger_and_sdm_update():
-    f2 = r"/home/mrchrys/SDM/working site distribution/Huawei/WSD APRIL  2026 v 3.4-ABUJA REGION.xlsb"
+    candidates = [
+        r"/home/mrchrys/SDM/working site distribution/Huawei/WSD October  2026 v1.0.xlsx",
+        r"/app/data/WSD October  2026 v1.0.xlsx",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "WSD October  2026 v1.0.xlsx"),
+        r"/home/mrchrys/SDM/working site distribution/Huawei/WSD APRIL  2026 v 3.4-ABUJA REGION.xlsb",
+    ]
+    f2 = None
+    for c in candidates:
+        if os.path.exists(c):
+            f2 = c
+            break
+
     print(f"Reading File 2 for SDM names and FC site mapping: {f2}")
     
     sdm_map = {}
-    if os.path.exists(f2):
+    if f2 and os.path.exists(f2):
         try:
-            df2 = pd.read_excel(f2, engine='pyxlsb', sheet_name='WSD')
+            engine = 'pyxlsb' if f2.lower().endswith('.xlsb') else None
+            try:
+                df2 = pd.read_excel(f2, engine=engine, sheet_name='WSD')
+            except Exception:
+                df2 = pd.read_excel(f2, engine='pyxlsb', sheet_name='WSD')
             print(f"File 2 total rows read: {len(df2)}")
             for idx, row in df2.iterrows():
                 site_id_raw = str(row.get('SiteID', '')).strip().upper()

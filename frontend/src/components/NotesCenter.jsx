@@ -21,6 +21,7 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [sdmFilter, setSdmFilter] = useState('All');
+  const [onlyWithPhotos, setOnlyWithPhotos] = useState(false);
   const [availableSdms, setAvailableSdms] = useState([]);
   
   // Date Filtering State
@@ -34,7 +35,7 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, categoryFilter, priorityFilter, statusFilter, sdmFilter, dateFilter, startDate, endDate]);
+  }, [search, categoryFilter, priorityFilter, statusFilter, sdmFilter, onlyWithPhotos, dateFilter, startDate, endDate]);
 
   // Load available supervised SDMs for RDM / Superadmin filter
   useEffect(() => {
@@ -113,7 +114,7 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
         date_filter: dateFilter !== 'All' ? dateFilter : undefined,
         start_date: dateFilter === 'custom' && startDate ? startDate : undefined,
         end_date: dateFilter === 'custom' && endDate ? endDate : undefined,
-        page_size: 25000
+        page_size: 1500
       });
       const resultsList = data.results || data || [];
       setNotes(resultsList);
@@ -126,15 +127,27 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
   };
 
   useEffect(() => {
-    loadNotes();
+    const timer = setTimeout(() => {
+      loadNotes();
+    }, search ? 200 : 0);
+    return () => clearTimeout(timer);
   }, [search, categoryFilter, priorityFilter, statusFilter, sdmFilter, dateFilter, startDate, endDate, userSdmName, isSuperuser, currentUser]);
 
-  const totalPages = Math.ceil(notes.length / pageSize) || 1;
+  const filteredNotesList = React.useMemo(() => {
+    if (!onlyWithPhotos) return notes;
+    return notes.filter((n) => Array.isArray(n.attachments) && n.attachments.length > 0);
+  }, [notes, onlyWithPhotos]);
+
+  const notesWithPhotosCount = React.useMemo(() => {
+    return notes.filter((n) => Array.isArray(n.attachments) && n.attachments.length > 0).length;
+  }, [notes]);
+
+  const totalPages = Math.ceil(filteredNotesList.length / pageSize) || 1;
 
   const paginatedNotes = React.useMemo(() => {
     const startIndex = (currentPage - 1) * pageSize;
-    return notes.slice(startIndex, startIndex + pageSize);
-  }, [notes, currentPage, pageSize]);
+    return filteredNotesList.slice(startIndex, startIndex + pageSize);
+  }, [filteredNotesList, currentPage, pageSize]);
 
   const isCreatorOfNote = (note) => {
     // MTN RDM and Superadmin have full supervisor rights to Edit & Delete SDM notes in their region!
@@ -501,6 +514,21 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
             <option value="Escalated">Escalated</option>
           </select>
         </div>
+
+        {/* With Photos Filter Button */}
+        <button
+          type="button"
+          onClick={() => setOnlyWithPhotos(!onlyWithPhotos)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+            onlyWithPhotos
+              ? 'bg-[#FFCC00] text-black border-amber-300 shadow'
+              : 'bg-slate-900 text-cyan-300 border-cyan-500/40 hover:bg-cyan-950/40'
+          }`}
+          title="Filter notes that have attached site inspection photos"
+        >
+          <Camera className="w-3.5 h-3.5" />
+          <span>With Photos ({notesWithPhotosCount})</span>
+        </button>
 
       </div>
 
@@ -931,7 +959,7 @@ export default function NotesCenter({ onSelectSite, onNavigateToAvailability, cu
                     <span className="text-[11px] font-semibold text-slate-400">Previously Attached Photos ({editingNote.attachments.length}):</span>
                     <div className="flex flex-wrap gap-2">
                       {editingNote.attachments.map((att) => (
-                        <img key={att.id} src={att.file} alt={att.file_name} className="w-12 h-12 object-cover rounded-lg border border-slate-700" title={att.file_name} />
+                        <img key={att.id} src={getMediaUrl(att.file)} alt={att.file_name} className="w-12 h-12 object-cover rounded-lg border border-slate-700" title={att.file_name} />
                       ))}
                     </div>
                   </div>

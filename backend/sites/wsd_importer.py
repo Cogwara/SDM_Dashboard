@@ -3,9 +3,13 @@ import tempfile
 import pandas as pd
 from django.db import transaction, connection
 from .models import Site, WSDUploadLog
+from .executive_directory import STATE_EXECUTIVE_MAP, DEFAULT_EXEC
 
 def get_base_wsd_path():
     candidates = [
+        "/home/mrchrys/SDM/working site distribution/Huawei/WSD October  2026 v1.0.xlsx",
+        "/app/data/WSD October  2026 v1.0.xlsx",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "WSD October  2026 v1.0.xlsx"),
         "/home/mrchrys/SDM/working site distribution/Huawei/WSD APRIL  2026 v 3.4-ABUJA REGION.xlsb",
         "/app/data/WSD July 2026 V5.1.xlsb",
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "WSD July 2026 V5.1.xlsb"),
@@ -24,13 +28,22 @@ def clean_str(val):
     if s.endswith('.0'): s = s[:-2]
     return '' if s.lower() == 'nan' else s
 
+def clean_phone(val):
+    if pd.isnull(val): return ''
+    s = str(val).strip()
+    if s.endswith('.0'): s = s[:-2]
+    if s.lower() == 'nan': return ''
+    if s and not s.startswith('0') and not s.startswith('+') and len(s) == 10:
+        s = '0' + s
+    return s
+
 def clean_float(val):
     try:
         return float(val) if pd.notnull(val) else None
     except Exception:
         return None
 
-def process_wsd_file(file_source, filename="WSD July 2026 V5.1.xlsb", uploaded_by="System Administrator", is_base=False):
+def process_wsd_file(file_source, filename="WSD October  2026 v1.0.xlsx", uploaded_by="System Administrator", is_base=False):
     """
     Parses a WSD Excel/XLSB file and updates the Site database.
     file_source: can be a file path string or Django UploadedFile / BytesIO object.
@@ -51,10 +64,13 @@ def process_wsd_file(file_source, filename="WSD July 2026 V5.1.xlsb", uploaded_b
             return {'success': False, 'error': f"File path not found: {file_to_read}"}
 
         engine = 'pyxlsb' if filename.lower().endswith('.xlsb') or file_to_read.lower().endswith('.xlsb') else None
+        try:
+            excel_file = pd.ExcelFile(file_to_read, engine=engine)
+        except Exception:
+            excel_file = pd.ExcelFile(file_to_read, engine='pyxlsb')
+            engine = 'pyxlsb'
 
-        excel_file = pd.ExcelFile(file_to_read, engine=engine)
         sheet_names = excel_file.sheet_names
-        
         target_sheet = 'WSD' if 'WSD' in sheet_names else sheet_names[0]
 
         df = pd.read_excel(file_to_read, engine=engine, sheet_name=target_sheet)
@@ -77,7 +93,7 @@ def process_wsd_file(file_source, filename="WSD July 2026 V5.1.xlsb", uploaded_b
                         raw_specs[str(col).strip()] = val_str
 
             op_status = clean_str(row.get('STATUS (Working, Halted)', 'Working')) or clean_str(row.get('Physical Status', 'Operational')) or 'Operational'
-            priority = clean_str(row.get('Site priority', '')) or clean_str(row.get('I.H.S Site priority', ''))
+            priority = clean_str(row.get('Site priority', '')) or clean_str(row.get('I.H.S Site Priority', '')) or clean_str(row.get('I.H.S Site priority', ''))
 
             is_down = 'halted' in op_status.lower() or 'down' in op_status.lower()
             is_crit = priority.upper() in ['P1', 'CRITICAL', 'PRIORITY 1']
@@ -103,27 +119,27 @@ def process_wsd_file(file_source, filename="WSD July 2026 V5.1.xlsb", uploaded_b
                 
                 # Contacts
                 'efs_name': clean_str(row.get('Project MANAGER', '')),
-                'efs_phone': clean_str(row.get('Project MANAGER CONTACT', '')),
+                'efs_phone': clean_phone(row.get('Project MANAGER CONTACT', '')),
                 'rto_name': clean_str(row.get('RPM(MS SITE)', '')) or clean_str(row.get('RPM(RT SITE)', '')),
-                'rto_phone': clean_str(row.get('RPM(MS SITE) CONTACT', '')) or clean_str(row.get('RPM(RT SITE) CONTACT', '')),
+                'rto_phone': clean_phone(row.get('RPM(MS SITE) CONTACT', '')) or clean_phone(row.get('RPM(RT SITE) CONTACT', '')),
                 'smc': clean_str(row.get('Tower Co', '')),
                 'sub_sbc': clean_str(row.get('Tower Co SBC 1', '')),
                 'cluster_name': clean_str(row.get('Site Cluster', '')),
                 'smc_fse_name': clean_str(row.get('FSE NAME', '')),
-                'smc_fse_phone': clean_str(row.get('FSE CONTACT NO.', '')),
+                'smc_fse_phone': clean_phone(row.get('FSE CONTACT NO.', '')),
                 'smc_rto_name': clean_str(row.get('Switch Engineer', '')),
                 'smc_rto_phone': '',
                 'smc_hoo_name': clean_str(row.get('GM', '')),
-                'smc_hoo_phone': clean_str(row.get('GM Number', '')),
+                'smc_hoo_phone': clean_phone(row.get('GM Number', '')),
                 
                 'sdm_name': clean_str(row.get('SDM NAME', '')),
-                'sdm_phone': clean_str(row.get('SDM CONTACT NO. ', '')),
+                'sdm_phone': clean_phone(row.get('SDM CONTACT NO.', '')) or clean_phone(row.get('SDM CONTACT NO. ', '')),
                 'mtn_rdm_name': clean_str(row.get('MTN RDM NAME', '')),
-                'mtn_rdm_phone': clean_str(row.get('MTN RDM CONTACT NO.', '')),
+                'mtn_rdm_phone': clean_phone(row.get('MTN RDM CONTACT NO.', '')),
                 'mtn_fse_name': clean_str(row.get('MTN FSE NAME', '')),
-                'mtn_fse_phone': clean_str(row.get('MTN FSE CONTACT NO.', '')),
+                'mtn_fse_phone': clean_phone(row.get('MTN FSE CONTACT NO.', '')),
                 'mtn_rtm_name': clean_str(row.get('MTN RTM', '')),
-                'mtn_rtm_phone': clean_str(row.get('MTN RTM NUMBER', '')),
+                'mtn_rtm_phone': clean_phone(row.get('MTN RTM NUMBER', '')),
                 
                 # Location
                 'site_address': clean_str(row.get('Site Name', '')),
@@ -174,9 +190,54 @@ def process_wsd_file(file_source, filename="WSD July 2026 V5.1.xlsb", uploaded_b
                     if k != 'ihs_site_id':
                         if k in ('sdm_name', 'sdm_phone') and obj.sdm_name and str(obj.sdm_name).strip():
                             continue  # Leave existing SDM part as it is
-                        setattr(obj, k, v)
+                        if k == 'raw_data':
+                            # Preserve existing matrix and executive contacts
+                            merged_raw = dict(obj.raw_data or {})
+                            merged_raw.update(v)
+                            st = (obj.state or data.get('state') or 'FCT').strip().upper()
+                            cfg = STATE_EXECUTIVE_MAP.get(st, DEFAULT_EXEC)
+                            if not merged_raw.get('Head, Field Service'):
+                                merged_raw['Head, Field Service'] = cfg['head'][0]
+                                merged_raw['Head, Field Service Phone'] = cfg['head'][1]
+                                merged_raw['Head, Field Service Email'] = cfg['head'][2]
+                            if not merged_raw.get('Customer Experience Manager'):
+                                merged_raw['Customer Experience Manager'] = cfg['cem'][0]
+                                merged_raw['Customer Experience Manager Phone'] = cfg['cem'][1]
+                                merged_raw['Customer Experience Manager Email'] = cfg['cem'][2]
+                            if not merged_raw.get('RTO Name'):
+                                current_rto = obj.rto_name or merged_raw.get('RPM(MS SITE)') or merged_raw.get('RPM(RT SITE)') or cfg['rto'][0]
+                                merged_raw['RTO Name'] = current_rto
+                                merged_raw['RTO Phone'] = obj.rto_phone or merged_raw.get('RPM(MS SITE) CONTACT') or merged_raw.get('RPM(RT SITE) CONTACT') or cfg['rto'][1]
+                                merged_raw['RTO Email'] = merged_raw.get('RTO Email') or cfg['rto'][2]
+                            setattr(obj, 'raw_data', merged_raw)
+                        elif k in ('rto_name', 'rto_phone') and not v and getattr(obj, k):
+                            continue
+                        else:
+                            setattr(obj, k, v)
+                if not obj.rto_name:
+                    obj.rto_name = obj.raw_data.get('RTO Name') or obj.raw_data.get('RPM(MS SITE)')
+                    obj.rto_phone = obj.raw_data.get('RTO Phone') or obj.raw_data.get('RPM(MS SITE) CONTACT')
                 to_update.append(obj)
             else:
+                st = (data.get('state') or 'FCT').strip().upper()
+                cfg = STATE_EXECUTIVE_MAP.get(st, DEFAULT_EXEC)
+                raw = dict(data.get('raw_data') or {})
+                if not raw.get('Head, Field Service'):
+                    raw['Head, Field Service'] = cfg['head'][0]
+                    raw['Head, Field Service Phone'] = cfg['head'][1]
+                    raw['Head, Field Service Email'] = cfg['head'][2]
+                if not raw.get('Customer Experience Manager'):
+                    raw['Customer Experience Manager'] = cfg['cem'][0]
+                    raw['Customer Experience Manager Phone'] = cfg['cem'][1]
+                    raw['Customer Experience Manager Email'] = cfg['cem'][2]
+                if not raw.get('RTO Name'):
+                    raw['RTO Name'] = data.get('rto_name') or cfg['rto'][0]
+                    raw['RTO Phone'] = data.get('rto_phone') or cfg['rto'][1]
+                    raw['RTO Email'] = cfg['rto'][2]
+                if not data.get('rto_name'):
+                    data['rto_name'] = raw['RTO Name']
+                    data['rto_phone'] = raw['RTO Phone']
+                data['raw_data'] = raw
                 to_create.append(Site(**data))
 
         # Ensure sqlite timeout & WAL journal mode if sqlite engine

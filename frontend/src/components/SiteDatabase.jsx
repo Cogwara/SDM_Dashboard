@@ -63,10 +63,9 @@ export default function SiteDatabase({
     }
   }, [initialSearch, initialStatus, initialPriority, userName, isSdm, isFse, isRdm]);
 
-  // Load cascading filter options dynamically
+  // Load cascading filter options dynamically (without re-scanning on every search keystroke)
   useEffect(() => {
     fetchFilterOptions({
-      search,
       status: status !== 'All' ? status : undefined,
       priority: priority !== 'All' ? priority : undefined,
       state: stateFilter !== 'All' ? stateFilter : undefined,
@@ -77,7 +76,7 @@ export default function SiteDatabase({
     })
       .then(res => setOptions(res))
       .catch(err => console.error(err));
-  }, [search, status, priority, stateFilter, lgaFilter, sdmFilter, fseFilter, rdmFilter]);
+  }, [status, priority, stateFilter, lgaFilter, sdmFilter, fseFilter, rdmFilter]);
 
   // Load site records matching active filters
   const loadSitesData = async () => {
@@ -105,7 +104,10 @@ export default function SiteDatabase({
   };
 
   useEffect(() => {
-    loadSitesData();
+    const timer = setTimeout(() => {
+      loadSitesData();
+    }, search ? 200 : 0);
+    return () => clearTimeout(timer);
   }, [search, status, priority, stateFilter, lgaFilter, sdmFilter, fseFilter, rdmFilter, page]);
 
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
@@ -327,9 +329,100 @@ export default function SiteDatabase({
 
       </div>
 
-      {/* Main Unified Database Table (IHS Matrix + Site Data) */}
+      {/* Main Unified Database (Mobile Cards + Desktop Table) */}
       <div className="glass-panel rounded-2xl overflow-hidden border border-slate-800 shadow-xl">
-        <div className="overflow-x-auto w-full">
+        {/* Mobile Cards View (< md) */}
+        <div className="md:hidden p-3 space-y-3">
+          {loading ? (
+            <div className="p-10 text-center text-slate-400 text-xs">
+              <Radio className="w-6 h-6 text-cyan-400 animate-spin mx-auto mb-2" />
+              Fetching site inventory & IHS Matrix records...
+            </div>
+          ) : sites.length > 0 ? (
+            sites.map((s) => {
+              const raw = s.raw_data || {};
+              const siteId = s.ihs_site_id || s.mtn_id || 'UNKNOWN';
+              const altId = s.mtn_id && s.mtn_id !== siteId ? s.mtn_id : (s.ihs_site_id !== siteId ? s.ihs_site_id : '');
+              const fseName = s.smc_fse_name || raw['FSE NAME'] || 'Unassigned';
+              const fsePhone = s.smc_fse_phone || raw['FSE CONTACT NO.'] || '';
+
+              return (
+                <div key={s.id || siteId} className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2.5 text-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <button onClick={() => onSelectSite(siteId)} className="font-mono font-black text-sm text-cyan-300 text-left">
+                        {siteId} {altId ? <span className="text-[10px] text-slate-400">({altId})</span> : null}
+                      </button>
+                      <div className="text-emerald-300 font-bold text-[11px] mt-0.5">
+                        {s.cluster_name || raw['Cluster Name(SMC)'] || s.hvc_cluster || 'N/A'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                        s.is_down ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-300'
+                      }`}>
+                        {s.operational_status || 'Operational'}
+                      </span>
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-800 text-amber-300">
+                        {s.priority || 'P2'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80 text-[11px]">
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase font-bold">SMC FSE</span>
+                      <span className="font-bold text-purple-200 block truncate">{fseName}</span>
+                      {fsePhone && <a href={`tel:${fsePhone}`} className="text-emerald-400 font-mono text-[10px]">{fsePhone}</a>}
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase font-bold">EFS (IHS Matrix)</span>
+                      <span className="font-bold text-white block truncate">{s.efs_name || '-'}</span>
+                      {s.efs_phone && <a href={`tel:${s.efs_phone}`} className="text-cyan-300 font-mono text-[10px]">{s.efs_phone}</a>}
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase font-bold">SDM Manager</span>
+                      <span className="font-semibold text-cyan-300 block truncate">{s.sdm_name || raw['SDM NAME'] || 'SDM'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[9px] uppercase font-bold">Power & DG</span>
+                      <span className="font-semibold text-slate-200 block truncate">
+                        {s.power_solution || raw['Power Solution'] || '-'} {(s.dg_capacity || raw['DG CAP']) ? `(${s.dg_capacity || raw['DG CAP']})` : ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-1.5 pt-1">
+                    <button
+                      onClick={() => setQuickSpecSite(s)}
+                      className="flex-1 py-1.5 bg-slate-800 text-cyan-300 font-bold rounded-xl border border-slate-700 flex items-center justify-center gap-1"
+                    >
+                      <Database className="w-3 h-3" /> Specs
+                    </button>
+                    <button
+                      onClick={() => onNavigateToAvailability ? onNavigateToAvailability(siteId) : onSelectSite(siteId)}
+                      className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-300 font-bold rounded-xl border border-emerald-500/40 flex items-center justify-center gap-1"
+                    >
+                      <Activity className="w-3 h-3" /> SLA
+                    </button>
+                    <button
+                      onClick={() => onSelectSite(siteId)}
+                      className="flex-1 py-1.5 bg-cyan-600/30 text-cyan-200 font-bold rounded-xl border border-cyan-500/40 flex items-center justify-center gap-1"
+                    >
+                      <Eye className="w-3 h-3" /> Profile
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="p-8 text-center text-slate-500 text-xs">
+              No sites found matching your search parameters.
+            </div>
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto w-full">
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-slate-900 text-cyan-300 font-bold border-b border-slate-800">
               <tr>

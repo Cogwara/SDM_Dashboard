@@ -10,12 +10,19 @@ export default function SDMLoginModal({ onLoginSuccess }) {
     window.location.protocol === 'file:'
   );
 
-  const defaultIp = 'https://during-duke-susan-binary.trycloudflare.com';
+  const defaultIp = 'https://ice-powerseller-clerk-where.trycloudflare.com';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [serverIp, setServerIp] = useState(() => localStorage.getItem('fct_sdm_server_ip') || defaultIp);
+  const [serverIp, setServerIp] = useState(() => {
+    const saved = localStorage.getItem('fct_sdm_server_ip');
+    if (saved && (saved.includes('warm-tennis-touch-kansas.trycloudflare.com') || saved.includes('graduate-summaries-joy-tenant.trycloudflare.com'))) {
+      localStorage.removeItem('fct_sdm_server_ip');
+      return defaultIp;
+    }
+    return saved || defaultIp;
+  });
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -67,10 +74,25 @@ export default function SDMLoginModal({ onLoginSuccess }) {
       onLoginSuccess(res.user, res.token);
     } catch (err) {
       console.error(err);
-      if (err.response) {
-        setError(err.response.data?.error || err.response.data?.detail || 'Invalid username or password. Please check your credentials.');
+      const status = err.response?.status;
+      if (status === 401 || status === 400 || status === 429) {
+        setError(err.response?.data?.error || err.response?.data?.detail || 'Invalid username or password. Please check your credentials.');
       } else {
-        setError(`Authentication failed. Unable to reach server at ${activeUrl}. Please verify your network connection.`);
+        // Fallback retry against primary tunnel if current endpoint returned 405/502/530 or network error
+        try {
+          setServerIp(defaultIp);
+          setCustomServerIp(defaultIp);
+          const retryRes = await loginSDM(username.trim(), password.trim());
+          onLoginSuccess(retryRes.user, retryRes.token);
+          return;
+        } catch (retryErr) {
+          const retryStatus = retryErr.response?.status;
+          if (retryStatus === 401 || retryStatus === 400 || retryStatus === 429) {
+            setError(retryErr.response?.data?.error || retryErr.response?.data?.detail || 'Invalid username or password. Please check your credentials.');
+          } else {
+            setError(`Authentication failed. Unable to reach server at ${activeUrl}. Please verify your network connection.`);
+          }
+        }
       }
     } finally {
       setLoading(false);
@@ -78,12 +100,12 @@ export default function SDMLoginModal({ onLoginSuccess }) {
   };
 
   return (
-    <div className="min-h-screen w-full bg-slate-950 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(14,165,233,0.15),rgba(255,255,255,0))] p-4 sm:p-6 flex items-center justify-center overflow-y-auto">
+    <div className="min-h-screen w-full bg-slate-950 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(14,165,233,0.15),rgba(255,255,255,0))] p-3 sm:p-6 flex items-center justify-center overflow-y-auto">
       
-      <div className="bg-slate-900/90 backdrop-blur-2xl max-w-5xl w-full rounded-3xl border border-cyan-500/30 shadow-[0_0_50px_rgba(6,182,212,0.12)] overflow-hidden grid grid-cols-1 md:grid-cols-12 my-6 transition-all duration-300">
+      <div className="bg-slate-900/90 backdrop-blur-2xl max-w-5xl w-full rounded-3xl border border-cyan-500/30 shadow-[0_0_50px_rgba(6,182,212,0.12)] overflow-hidden grid grid-cols-1 md:grid-cols-12 my-2 sm:my-6 transition-all duration-300">
 
-        {/* Left Column: Brand & Security Overview */}
-        <div className="md:col-span-5 bg-gradient-to-b from-slate-900 via-slate-950 to-cyan-950/80 p-6 sm:p-8 flex flex-col justify-between border-b md:border-b-0 md:border-r border-slate-800/80 relative overflow-hidden">
+        {/* Left Column: Brand & Security Overview (Order 2 on mobile so Sign In form is immediately accessible) */}
+        <div className="order-2 md:order-1 md:col-span-5 bg-gradient-to-b from-slate-900 via-slate-950 to-cyan-950/80 p-5 sm:p-8 flex flex-col justify-between border-t md:border-t-0 md:border-r border-slate-800/80 relative overflow-hidden">
           
           {/* Subtle Ambient Glow Effect */}
           <div className="absolute -top-24 -left-24 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
@@ -137,25 +159,27 @@ export default function SDMLoginModal({ onLoginSuccess }) {
               ))}
             </div>
 
-            {/* Android APK Download Card */}
-            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
-                <span className="flex items-center gap-1.5">
-                  <Smartphone className="w-4 h-4 text-cyan-400" /> Android APK App
-                </span>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Mobile Build</span>
+            {/* Android APK Download Card (Hidden inside native mobile app) */}
+            {!isMobileNative && (
+              <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
+                  <span className="flex items-center gap-1.5">
+                    <Smartphone className="w-4 h-4 text-cyan-400" /> Android APK App
+                  </span>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Mobile Build</span>
+                </div>
+                <a
+                  href="https://ice-powerseller-clerk-where.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
+                  download="FCT_SDM_Mobile_v3.apk"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center space-x-2 transition-all hover:scale-[1.02] active:scale-95"
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-200" />
+                  <span>Download Mobile App (.APK)</span>
+                </a>
               </div>
-              <a
-                href="https://during-duke-susan-binary.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
-                download="FCT_SDM_Mobile_v3.apk"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center space-x-2 transition-all hover:scale-[1.02] active:scale-95"
-              >
-                <Download className="w-3.5 h-3.5 text-cyan-200" />
-                <span>Download Mobile App (.APK)</span>
-              </a>
-            </div>
+            )}
           </div>
 
           <div className="pt-6 mt-6 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between relative z-10">
@@ -164,8 +188,23 @@ export default function SDMLoginModal({ onLoginSuccess }) {
           </div>
         </div>
 
-        {/* Right Column: Credentials & Server Form */}
-        <div className="md:col-span-7 p-6 sm:p-8 space-y-6 bg-slate-900/40 flex flex-col justify-center">
+        {/* Right Column: Credentials & Server Form (Order 1 on mobile) */}
+        <div className="order-1 md:order-2 md:col-span-7 p-5 sm:p-8 space-y-5 bg-slate-900/40 flex flex-col justify-center">
+          {/* Compact Mobile Brand Bar */}
+          <div className="flex md:hidden items-center justify-between pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-[#FFCC00] text-black font-black text-xs flex items-center justify-center">
+                MTN
+              </div>
+              <div>
+                <h2 className="text-sm font-black text-white leading-tight">SDM Mobile Portal</h2>
+                <p className="text-[10px] text-cyan-400 font-semibold">Field Operations & SLA</p>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+              Online
+            </span>
+          </div>
           
           <div>
             <div className="flex items-center justify-between">
@@ -268,7 +307,7 @@ export default function SDMLoginModal({ onLoginSuccess }) {
                 <div className="flex items-center space-x-2">
                   <input
                     type="text"
-                    placeholder="https://during-duke-susan-binary.trycloudflare.com"
+                    placeholder="https://ice-powerseller-clerk-where.trycloudflare.com"
                     value={serverIp}
                     onChange={(e) => {
                       setServerIp(e.target.value);

@@ -3,30 +3,58 @@ import {
   Search, Phone, PhoneCall, Radio, FileSpreadsheet, MapPin, Zap, UserCheck, 
   ChevronRight, Building2, Filter, Copy, Check, ExternalLink, Shield, RefreshCw, Eye
 } from 'lucide-react';
-import { fetchSites } from '../api';
+import { fetchSites, fetchFilterOptions } from '../api';
+import { getRegionalExecutive } from '../executiveDirectory';
 
 export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
   const [sites, setSites] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState('All');
   const [smcFilter, setSmcFilter] = useState('All');
   const [clusterFilter, setClusterFilter] = useState('All');
   const [lgaFilter, setLgaFilter] = useState('All');
   const [copiedPhone, setCopiedPhone] = useState(null);
+  const [filterOpts, setFilterOpts] = useState({ states: [], lgas: [] });
 
   // Pagination state
   const [page, setPage] = useState(1);
   const pageSize = 25;
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 200);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    fetchFilterOptions({
+      state: stateFilter !== 'All' ? stateFilter : undefined,
+      lga: lgaFilter !== 'All' ? lgaFilter : undefined,
+      ihs_matrix: 'true'
+    })
+      .then((res) => {
+        if (res) setFilterOpts({ states: res.states || [], lgas: res.lgas || [] });
+      })
+      .catch(() => {});
+  }, [stateFilter, lgaFilter]);
+
   const loadMatrixSites = async () => {
     setLoading(true);
     try {
       const data = await fetchSites({
-        page_size: 2500,
-        state: 'FCT'
+        page,
+        page_size: pageSize,
+        search: debouncedSearch.trim() || undefined,
+        state: stateFilter !== 'All' ? stateFilter : undefined,
+        lga: lgaFilter !== 'All' ? lgaFilter : undefined,
+        cluster: clusterFilter !== 'All' ? clusterFilter : undefined,
+        ihs_matrix: 'true'
       });
       const results = data.results || data || [];
       setSites(results);
+      setTotalCount(data.count !== undefined ? data.count : results.length);
     } catch (err) {
       console.error('Error fetching matrix sites:', err);
     } finally {
@@ -36,7 +64,7 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
 
   useEffect(() => {
     loadMatrixSites();
-  }, []);
+  }, [page, debouncedSearch, stateFilter, lgaFilter, clusterFilter]);
 
   const handleCopyPhone = (phone, label) => {
     if (!phone) return;
@@ -45,41 +73,17 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
     setTimeout(() => setCopiedPhone(null), 2000);
   };
 
-  // Filter sites matching search query & SMC/Cluster/LGA
-  const filteredSites = sites.filter((site) => {
-    if (smcFilter !== 'All' && site.smc !== smcFilter) return false;
-    if (clusterFilter !== 'All' && site.cluster_name !== clusterFilter) return false;
-    if (lgaFilter !== 'All' && site.lga !== lgaFilter) return false;
+  // Filter current page if SMC filter is set
+  const paginatedSites = smcFilter === 'All'
+    ? sites
+    : sites.filter((site) => site.smc === smcFilter);
 
-    if (!search.trim()) return true;
-    const q = search.trim().toLowerCase();
+  const totalPages = Math.ceil(totalCount / pageSize) || 1;
 
-    return (
-      (site.ihs_site_id && site.ihs_site_id.toLowerCase().includes(q)) ||
-      (site.mtn_id && site.mtn_id.toLowerCase().includes(q)) ||
-      (site.cluster_name && site.cluster_name.toLowerCase().includes(q)) ||
-      (site.smc && site.smc.toLowerCase().includes(q)) ||
-      (site.sub_sbc && site.sub_sbc.toLowerCase().includes(q)) ||
-      (site.efs_name && site.efs_name.toLowerCase().includes(q)) ||
-      (site.efs_phone && site.efs_phone.includes(q)) ||
-      (site.rto_name && site.rto_name.toLowerCase().includes(q)) ||
-      (site.rto_phone && site.rto_phone.includes(q)) ||
-      (site.smc_fse_name && site.smc_fse_name.toLowerCase().includes(q)) ||
-      (site.smc_fse_phone && site.smc_fse_phone.includes(q)) ||
-      (site.smc_rto_name && site.smc_rto_name.toLowerCase().includes(q)) ||
-      (site.smc_hoo_name && site.smc_hoo_name.toLowerCase().includes(q)) ||
-      (site.site_address && site.site_address.toLowerCase().includes(q)) ||
-      (site.power_solution && site.power_solution.toLowerCase().includes(q)) ||
-      (site.lga && site.lga.toLowerCase().includes(q))
-    );
-  });
-
-  const totalPages = Math.ceil(filteredSites.length / pageSize) || 1;
-  const paginatedSites = filteredSites.slice((page - 1) * pageSize, page * pageSize);
-
-  const smcOptions = ['All', ...new Set(sites.map(s => s.smc).filter(Boolean))];
-  const clusterOptions = ['All', ...new Set(sites.map(s => s.cluster_name).filter(Boolean))];
-  const lgaOptions = ['All', ...new Set(sites.map(s => s.lga).filter(Boolean)).sort()];
+  const stateOptions = ['All', ...(filterOpts.states.length ? filterOpts.states : new Set(sites.map(s => s.state).filter(Boolean)))];
+  const smcOptions = ['All', ...new Set(sites.map(s => s.smc).filter(Boolean))].sort();
+  const clusterOptions = ['All', ...new Set(sites.map(s => s.cluster_name).filter(Boolean))].sort();
+  const lgaOptions = ['All', ...(filterOpts.lgas.length ? filterOpts.lgas : new Set(sites.map(s => s.lga).filter(Boolean)))];
 
   return (
     <div className="space-y-6">
@@ -94,8 +98,8 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
             <div>
               <h2 className="text-xl font-extrabold text-white tracking-wide flex items-center gap-2">
                 IHS Matrix Directory
-                <span className="px-2.5 py-0.5 text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-full">
-                  1,007 Sites
+                <span className="px-2.5 py-0.5 text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-full font-mono">
+                  {totalCount.toLocaleString()} Sites
                 </span>
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -129,6 +133,22 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="w-full bg-slate-900/90 text-xs text-white placeholder-slate-500 pl-9 pr-4 py-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500 font-medium"
           />
+        </div>
+
+        {/* State Filter */}
+        <div className="flex items-center space-x-1.5 text-xs">
+          <span className="text-slate-400 font-semibold flex items-center gap-1">
+            <MapPin className="w-3.5 h-3.5 text-emerald-400" /> State:
+          </span>
+          <select
+            value={stateFilter}
+            onChange={(e) => { setStateFilter(e.target.value); setPage(1); }}
+            className="bg-slate-900 text-white text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 focus:outline-none font-bold"
+          >
+            {stateOptions.map((st) => (
+              <option key={st} value={st}>{st}</option>
+            ))}
+          </select>
         </div>
 
         {/* SMC Vendor Filter */}
@@ -209,6 +229,10 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
                 paginatedSites.map((site) => {
                   const siteId = site.ihs_site_id || site.mtn_id || 'UNKNOWN';
                   const altId = site.mtn_id && site.mtn_id !== siteId ? site.mtn_id : (site.ihs_site_id !== siteId ? site.ihs_site_id : '');
+                  const exec = getRegionalExecutive(site.state || site.raw_data?.['STATE']);
+                  const rtoName = site.rto_name || site.raw_data?.['RTO Name'] || site.raw_data?.['RPM(MS SITE)'] || site.raw_data?.['RPM(RT SITE)'] || exec.rto.name;
+                  const rtoPhone = site.rto_phone || site.raw_data?.['RTO Phone'] || site.raw_data?.['RPM(MS SITE) CONTACT'] || site.raw_data?.['RPM(RT SITE) CONTACT'] || exec.rto.phone;
+                  const cemName = site.raw_data?.['Customer Experience Manager'] || exec.cem.name;
 
                   return (
                     <tr key={site.id} className="hover:bg-slate-900/60 transition-all">
@@ -303,13 +327,18 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
 
                       {/* RTO Officer */}
                       <td className="p-3">
-                        {site.rto_name ? (
-                          <div>
-                            <div className="font-semibold text-amber-300">{site.rto_name}</div>
-                            {site.rto_phone && (
-                              <a href={`tel:${site.rto_phone}`} className="text-[10px] text-slate-400 hover:text-amber-400 font-mono">
-                                {site.rto_phone}
+                        {rtoName ? (
+                          <div className="space-y-0.5">
+                            <div className="font-semibold text-amber-300">{rtoName}</div>
+                            {rtoPhone && (
+                              <a href={`tel:${rtoPhone}`} className="text-[10px] text-slate-400 hover:text-amber-400 font-mono block">
+                                {rtoPhone}
                               </a>
+                            )}
+                            {cemName && (
+                              <div className="text-[10px] text-slate-400 truncate" title={`CEM: ${cemName}`}>
+                                CEM: <span className="text-cyan-300 font-semibold">{cemName}</span>
+                              </div>
                             )}
                           </div>
                         ) : (
@@ -359,7 +388,7 @@ export default function IHSMatrixDirectory({ onSelectSite, currentUser }) {
         {/* Pagination Footer */}
         <div className="p-4 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
           <div>
-            Showing <b className="text-white">{filteredSites.length > 0 ? (page - 1) * pageSize + 1 : 0}</b> to <b className="text-white">{Math.min(page * pageSize, filteredSites.length)}</b> of <b className="text-cyan-300 font-mono">{filteredSites.length}</b> IHS Matrix sites
+            Showing <b className="text-white">{totalCount > 0 ? (page - 1) * pageSize + 1 : 0}</b> to <b className="text-white">{Math.min(page * pageSize, totalCount)}</b> of <b className="text-cyan-300 font-mono">{totalCount.toLocaleString()}</b> IHS Matrix sites
           </div>
 
           <div className="flex items-center space-x-2">

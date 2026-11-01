@@ -1,2307 +1,4320 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Smartphone, Wifi, WifiOff, RefreshCw, FileText, MessageSquare, 
-  CheckCircle2, AlertTriangle, Layers, Clock, UploadCloud, Trash2, Camera, ShieldCheck, ShieldAlert,
-  Server, User, LogOut, Lock, Settings, Bot, Search, Send, Sparkles, Filter, ChevronRight, Zap, Shield, MapPin, Radio, Phone, UserCheck, X, Menu, Maximize2, BarChart3, Edit3, Palette, Sun, Moon, TrendingUp, Building2, Network, ArrowLeft, Activity, Plus, Database
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+  Smartphone, Wifi, WifiOff, RefreshCw, PlusCircle, MessageSquare,
+  MapPin, Search, CheckCircle, AlertTriangle, Send, Trash2, UploadCloud, Upload,
+  Radio, Phone, ShieldAlert, Bot, Layers, Camera, X,
+  LogOut, Navigation, ExternalLink, Calendar, Clock, SlidersHorizontal,
+  ChevronRight, ChevronLeft, UserCheck, Zap, Activity, ArrowUpRight, Monitor,
+  Check, Edit3, Filter, Database, Building2, Download, FileSpreadsheet, Eye
 } from 'lucide-react';
-import { 
-  getPendingNotes, getPendingWhatsApp, getPendingFseAudits, saveOfflineNote, saveOfflineWhatsApp, saveOfflineFseAudit,
-  removePendingNote, removePendingWhatsApp, removePendingFseAudit, clearPendingQueue, getPendingTotalCount,
-  getCachedSites, saveCachedSites, clearCachedSites, getLastSyncTime 
-} from '../mobileOfflineStorage';
-import { 
-  checkServerHealth, createNote, updateNote, createWhatsAppMessage, fetchSites, setCustomServerIp,
-  fetchNotes, resolveNote, deleteNote, fetchWhatsAppMessages, queryAIAssistant,
-  fetchDashboardStats, lookupSite, getMediaUrl
+import {
+  createNote,
+  updateNote,
+  resolveNote,
+  deleteNote,
+  exportNotesExcel,
+  createWhatsAppMessage,
+  checkServerHealth,
+  fetchSites,
+  lookupSite,
+  fetchFilterOptions,
+  fetchNotes,
+  fetchWhatsAppMessages,
+  fetchDashboardStats,
+  queryAIAssistant,
+  setCustomServerIp,
+  getMediaUrl,
+  DEFAULT_MOBILE_SERVER_URL,
+  fetchAvailabilityStats,
+  fetchAvailabilityRecords,
+  fetchAvailabilityArchives,
+  uploadAvailabilityFile,
+  fetchHourlyAvailabilityStats,
+  fetchHourlyAvailabilityRecords,
+  uploadHourlyAvailabilityFile,
+  fetchWSDStatus,
+  fetchTNLLinks
 } from '../api';
-import { getSDMStateInfo } from '../utils/userUtils';
+import {
+  getPendingNotes,
+  getPendingWhatsApp,
+  getPendingFseAudits,
+  saveOfflineNote,
+  saveOfflineWhatsApp,
+  saveOfflineFseAudit,
+  removePendingNote,
+  removePendingWhatsApp,
+  removePendingFseAudit,
+  getCachedSites,
+  saveCachedSites,
+  getPendingTotalCount
+} from '../mobileOfflineStorage';
 import GeoMap from './GeoMap';
-import SiteFseInspector from './SiteFseInspector';
-import TNLLinksDirectory from './TNLLinksDirectory';
-import ReportsAnalytics from './ReportsAnalytics';
-import SiteProfile from './SiteProfile';
-import SDMUserManagement from './SDMUserManagement';
-import ConfirmDeleteModal from './ConfirmDeleteModal';
-import DailyAvailabilityCenter from './DailyAvailabilityCenter';
-import HourlyAvailabilityCenter from './HourlyAvailabilityCenter';
-import UserProfileModal from './UserProfileModal';
-import { Calendar, UserCog, Edit2 } from 'lucide-react';
+import { getSDMStateInfo } from '../utils/userUtils';
 
-const fileToBase64 = (file) => {
+// Helper to format Nigerian phone numbers for WhatsApp links
+const formatWhatsAppPhone = (phone) => {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0') && digits.length === 11) {
+    return '234' + digits.slice(1);
+  }
+  if (digits.length === 10) {
+    return '234' + digits;
+  }
+  return digits;
+};
+
+// Compress & Watermark Photo with Site ID, GPS Coordinates, and Timestamp
+const watermarkPhoto = (file, siteId, gpsCoords, authorName) => {
   return new Promise((resolve) => {
-    if (!file || typeof file === 'string') return resolve(file);
     const reader = new FileReader();
-    reader.onerror = () => resolve(null);
     reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = () => resolve(e.target.result);
+      const img = new window.Image();
       img.onload = () => {
-        try {
-          const MAX_DIM = 1000;
-          let w = img.width;
-          let h = img.height;
-          if (w > MAX_DIM || h > MAX_DIM) {
-            if (w > h) {
-              h = Math.round((h * MAX_DIM) / w);
-              w = MAX_DIM;
-            } else {
-              w = Math.round((w * MAX_DIM) / h);
-              h = MAX_DIM;
-            }
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.75));
-        } catch {
-          resolve(e.target.result);
-        }
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 1280;
+        const scale = img.width > MAX_WIDTH ? MAX_WIDTH / img.width : 1;
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const stripHeight = Math.max(76, Math.round(canvas.height * 0.11));
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.82)';
+        ctx.fillRect(0, canvas.height - stripHeight, canvas.width, stripHeight);
+
+        ctx.fillStyle = '#22d3ee';
+        const fontSize = Math.max(13, Math.round(canvas.width * 0.024));
+        ctx.font = `bold ${fontSize}px monospace`;
+
+        const timestamp = new Date().toLocaleString();
+        const gpsText = gpsCoords
+          ? `GPS: ${gpsCoords.lat.toFixed(5)}, ${gpsCoords.lng.toFixed(5)}`
+          : 'GPS: Unverified';
+
+        ctx.fillText(`MTN / IHS FIELD VERIFICATION | SITE: ${siteId || 'GENERAL'}`, 14, canvas.height - stripHeight + fontSize + 8);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText(`${gpsText} | ${timestamp}`, 14, canvas.height - stripHeight + fontSize * 2 + 14);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(`LOGGED BY: ${authorName || 'SDM Engineer'}`, 14, canvas.height - stripHeight + fontSize * 3 + 18);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        canvas.toBlob((blob) => {
+          const watermarkedFile = blob
+            ? new File([blob], file.name || `site_${Date.now()}.jpg`, { type: 'image/jpeg' })
+            : file;
+          resolve({ file: watermarkedFile, dataUrl });
+        }, 'image/jpeg', 0.8);
       };
+      img.onerror = () => resolve({ file, dataUrl: e.target.result });
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
   });
 };
 
-const base64ToFile = (dataurl, filename = 'photo.jpg') => {
-  if (!dataurl || typeof dataurl !== 'string' || !dataurl.startsWith('data:')) {
-    return null;
-  }
-  try {
-    const arr = dataurl.split(',');
-    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new File([u8arr], filename, { type: mime });
-  } catch (e) {
-    console.error('Failed to convert base64 to file:', e);
-    return null;
-  }
-};
-
-const watermarkPhoto = async (fileObj, siteId, userSdmName) => {
-  return new Promise((resolve) => {
-    if (!fileObj || typeof fileObj === 'string') return resolve(fileObj);
-
-    const getLocationPromise = new Promise((resLoc) => {
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            const lat = pos.coords.latitude.toFixed(5);
-            const lon = pos.coords.longitude.toFixed(5);
-            resLoc(`GPS: Lat ${lat}°, Lon ${lon}°`);
-          },
-          () => resLoc('GPS: FCT Location'),
-          { timeout: 3000 }
-        );
-      } else {
-        resLoc('GPS: FCT Location');
-      }
-    });
-
-    const reader = new FileReader();
-    reader.onerror = () => resolve(fileObj);
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = () => {
-        console.warn('Image load error during watermarking, preserving original file');
-        resolve(fileObj);
-      };
-      img.onload = async () => {
-        try {
-          const gpsResult = await getLocationPromise;
-
-          const MAX_DIM = 1200;
-          let targetWidth = img.width;
-          let targetHeight = img.height;
-          if (targetWidth > MAX_DIM || targetHeight > MAX_DIM) {
-            if (targetWidth > targetHeight) {
-              targetHeight = Math.round((targetHeight * MAX_DIM) / targetWidth);
-              targetWidth = MAX_DIM;
-            } else {
-              targetWidth = Math.round((targetWidth * MAX_DIM) / targetHeight);
-              targetHeight = MAX_DIM;
-            }
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = targetWidth;
-          canvas.height = targetHeight;
-          const ctx = canvas.getContext('2d');
-
-          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-
-          const now = new Date();
-          const dateStr = now.toISOString().slice(0, 10) + ' ' + now.toLocaleTimeString();
-          const siteStr = siteId ? `SITE ID: ${siteId.toUpperCase()}` : 'SITE ID: N/A';
-          const authorStr = userSdmName ? `ENGINEER: ${userSdmName}` : 'ENGINEER: SDM FIELD';
-          const locationStr = gpsResult ? gpsResult.replace('GPS: ', 'LOCATION: ') : 'LOCATION: FCT';
-
-          const lines = [
-            siteStr,
-            `DATE/TIME: ${dateStr}`,
-            locationStr,
-            authorStr
-          ];
-
-          // Compact font size
-          const fontSize = Math.max(12, Math.floor(targetHeight * 0.025));
-          const lineSpacing = fontSize * 1.35;
-          const bannerPadding = 12;
-          const bannerHeight = Math.floor(lines.length * lineSpacing + bannerPadding * 2);
-
-          // Semi-transparent dark background overlay at bottom
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-          ctx.fillRect(0, targetHeight - bannerHeight, targetWidth, bannerHeight);
-
-          // Top thin red accent border line
-          ctx.fillStyle = '#ef4444';
-          ctx.fillRect(0, targetHeight - bannerHeight, targetWidth, Math.max(2, Math.floor(fontSize * 0.15)));
-
-          // Set font & bright red text color
-          ctx.font = `bold ${fontSize}px monospace, sans-serif`;
-          ctx.fillStyle = '#ef4444';
-
-          // Render each item on its own new line
-          lines.forEach((lineText, index) => {
-            const y = targetHeight - bannerHeight + bannerPadding + (index + 1) * lineSpacing - 4;
-            ctx.fillText(lineText, 16, y);
-          });
-
-          // Sanitize filename
-          const rawName = (fileObj.name || 'photo.jpg').split('/').pop().split('\\').pop();
-          const cleanName = rawName.includes('.') ? rawName : `${rawName}.jpg`;
-
-          canvas.toBlob((blob) => {
-            if (!blob) return resolve(fileObj);
-            const watermarkedFile = new File([blob], `wm_${cleanName}`, { type: 'image/jpeg' });
-            resolve(watermarkedFile);
-          }, 'image/jpeg', 0.78);
-        } catch (err) {
-          console.error('Canvas watermark processing error:', err);
-          resolve(fileObj);
-        }
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(fileObj);
-  });
-};
-
-export default function MobileAppView({ currentUser, onLogout, onSelectSite, currentTheme = 'sky', onThemeChange }) {
-  const [activeSubTab, setActiveSubTab] = useState('overview'); // 'overview', 'sites', 'map', 'fse', 'tnl', 'note', 'whatsapp', 'ai', 'reports', 'queue', 'admin', 'profile'
-  const [selectedSiteId, setSelectedSiteId] = useState(null);
-  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
-  const [isOnline, setIsOnline] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [pendingNotes, setPendingNotes] = useState(getPendingNotes());
-  const [pendingWa, setPendingWa] = useState(getPendingWhatsApp());
-  const [pendingAudits, setPendingAudits] = useState(getPendingFseAudits());
-  const [cachedSites, setCachedSites] = useState(getCachedSites());
-  const [syncStatusMsg, setSyncStatusMsg] = useState(null);
-  const [showProfileModal, setShowProfileModal] = useState(false);
-
-  const handleMobileSelectSite = (siteId) => {
-    if (!siteId) return;
-    setSelectedSiteId(siteId);
-    setActiveSubTab('profile');
-    if (onSelectSite) onSelectSite(siteId);
-  };
-
-  // Mobile Theme State
-  const [theme, setTheme] = useState(() => localStorage.getItem('fct_sdm_theme') || currentTheme || 'sky');
-  const [showThemeModal, setShowThemeModal] = useState(false);
-
-  const mobileThemes = [
-    { id: 'mtn', label: 'MTN Operations Gold (Official)', icon: Radio, color: 'text-amber-400' },
-    { id: 'mtn-dark', label: 'MTN Operations Dark', icon: Moon, color: 'text-amber-300' },
-    { id: 'sky', label: 'Skyblueish Glass (Default)', icon: Sparkles, color: 'text-cyan-400' },
-    { id: 'dark', label: 'Obsidian Midnight Dark', icon: Moon, color: 'text-indigo-400' },
-    { id: 'emerald', label: 'Tactical Emerald Field', icon: Shield, color: 'text-emerald-400' },
-    { id: 'light', label: 'Daylight Executive Light', icon: Sun, color: 'text-amber-400' },
-  ];
-
-  const handleApplyTheme = (newTheme) => {
-    setTheme(newTheme);
-    document.documentElement.setAttribute('data-theme', newTheme);
-    localStorage.setItem('fct_sdm_theme', newTheme);
-    if (onThemeChange) onThemeChange(newTheme);
-    setShowThemeModal(false);
-  };
-
-  // Live Server Data States
-  const [dashboardStats, setDashboardStats] = useState(null);
-  const [liveNotes, setLiveNotes] = useState([]);
-  const [liveWa, setLiveWa] = useState([]);
-  const [loadingData, setLoadingData] = useState(false);
-
-  // Filters & Search
-  const [siteSearch, setSiteSearch] = useState('');
-  const [noteCategoryFilter, setNoteCategoryFilter] = useState('All');
-  const [notePriorityFilter, setNotePriorityFilter] = useState('All');
-  const [waIssueFilter, setWaIssueFilter] = useState('All');
-  const [selectedSiteDetail, setSelectedSiteDetail] = useState(null);
-  const [lightboxImg, setLightboxImg] = useState(null);
-
-  // AI Assistant Mobile State
-  const [aiQuery, setAiQuery] = useState('');
-  const [aiMessages, setAiMessages] = useState([
-    { sender: 'ai', text: '👋 Hello! I am your FCT SDM Mobile Field Assistant. Ask me about site outage diagnostics, generator faults, fuel calculations, or operational guidelines.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
-  ]);
-  const [aiLoading, setAiLoading] = useState(false);
-
+export default function MobileAppView({
+  sites = [],
+  onDataChanged,
+  onSelectSite,
+  currentTheme = 'mtn-dark',
+  onThemeChange,
+  currentUser,
+  onLogout,
+  onSwitchToDesktop
+}) {
   const isMobileNative = typeof window !== 'undefined' && Boolean(
     (window.Capacitor?.isNativePlatform?.() && window.Capacitor?.getPlatform?.() !== 'web') ||
     (window.Capacitor?.getPlatform?.() === 'android' || window.Capacitor?.getPlatform?.() === 'ios') ||
-    window.location.protocol === 'capacitor:' || 
+    window.location.protocol === 'capacitor:' ||
     window.location.protocol === 'file:'
   );
-  const defaultIp = 'https://during-duke-susan-binary.trycloudflare.com';
 
-  // Server IP Config state
-  const [serverIp, setServerIp] = useState(() => localStorage.getItem('fct_sdm_server_ip') || defaultIp);
-  const [showServerConfig, setShowServerConfig] = useState(false);
+  const isSuperuser = Boolean(currentUser?.is_superuser);
+  const isRdm =
+    currentUser?.role === 'MTN RDM' ||
+    currentUser?.role === 'Regional Delivery Manager' ||
+    Boolean(currentUser?.groups?.some((g) => g.name?.includes('RDM')));
+  const isFse =
+    currentUser?.role === 'SMC FSE Engineer' ||
+    currentUser?.role === 'FSE Engineer';
+  const isSdm = !isSuperuser && !isRdm && !isFse;
+  const userName = currentUser?.full_name || currentUser?.username || '';
+  const userRole = currentUser?.role || '';
+  const userStateProp = currentUser?.state || '';
+  const stateInfo = useMemo(
+    () => getSDMStateInfo(currentUser),
+    [userName, userRole, userStateProp, isSuperuser]
+  );
+  const stateCode = stateInfo?.code || userStateProp || undefined;
 
-  // Form states for New Offline Note
-  const toLocalISOString = (d) => {
-    if (!d) return '';
-    const dateObj = new Date(d);
-    if (isNaN(dateObj.getTime())) return '';
-    const tzOffset = dateObj.getTimezoneOffset() * 60000;
-    return new Date(dateObj.getTime() - tzOffset).toISOString().slice(0, 16);
-  };
+  // Core Navigation: 'overview' | 'sites' | 'availability' | 'field_log' | 'map_ai'
+  const [activeTab, setActiveTab] = useState('overview');
+  const [sitesMode, setSitesMode] = useState('inventory'); // 'inventory' | 'ihs_matrix'
+  const [fieldLogMode, setFieldLogMode] = useState('notes'); // 'notes' | 'whatsapp' | 'fse'
+  const [mapAiMode, setMapAiMode] = useState('map'); // 'map' | 'ai' | 'links'
+  const [availMode, setAvailMode] = useState('daily'); // 'daily' | 'hourly'
+
+  // Connectivity & Settings Drawer
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [serverReachable, setServerReachable] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState(null);
+  const [showSettingsSheet, setShowSettingsSheet] = useState(false);
+  const [showNoteComposer, setShowNoteComposer] = useState(false);
+
+  // Server IP Configuration
+  const [serverIp, setServerIp] = useState(() => {
+    const saved = localStorage.getItem('fct_sdm_server_ip');
+    if (
+      saved &&
+      (saved.includes('warm-tennis-touch-kansas.trycloudflare.com') ||
+       saved.includes('graduate-summaries-joy-tenant.trycloudflare.com'))
+    ) {
+      localStorage.removeItem('fct_sdm_server_ip');
+      return DEFAULT_MOBILE_SERVER_URL;
+    }
+    return saved || DEFAULT_MOBILE_SERVER_URL;
+  });
+
+  // Scoped Data States
+  const [localSites, setLocalSites] = useState(() => {
+    if (Array.isArray(sites) && sites.length > 0) return sites;
+    const cached = getCachedSites();
+    return Array.isArray(cached) ? cached : [];
+  });
+  const [serverStats, setServerStats] = useState(null);
+  const [liveNotes, setLiveNotes] = useState([]);
+  const [notesTotalCount, setNotesTotalCount] = useState(0);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [liveWhatsApp, setLiveWhatsApp] = useState([]);
+  const [loadingFeeds, setLoadingFeeds] = useState(false);
+
+  // Offline Queues
+  const [pendingNotes, setPendingNotes] = useState(() => getPendingNotes());
+  const [pendingWhatsApp, setPendingWhatsApp] = useState(() => getPendingWhatsApp());
+  const [pendingFseAudits, setPendingFseAudits] = useState(() => getPendingFseAudits());
+
+  // =========================================================================
+  // SITE INVENTORY & IHS MATRIX DATABASE STATE
+  // =========================================================================
+  const [dbSites, setDbSites] = useState([]);
+  const [dbTotalCount, setDbTotalCount] = useState(0);
+  const [dbPage, setDbPage] = useState(1);
+  const dbPageSize = 25;
+  const [dbLoading, setDbLoading] = useState(false);
+  const [showSiteFilters, setShowSiteFilters] = useState(false);
+
+  const [siteSearch, setSiteSearch] = useState('');
+  const [siteStatus, setSiteStatus] = useState('All'); // 'All' | 'Operational' | 'Down'
+  const [sitePriority, setSitePriority] = useState('All'); // 'All' | 'P1' | 'P2' | 'P3' | 'P4'
+  const [siteStateFilter, setSiteStateFilter] = useState('All');
+  const [siteLgaFilter, setSiteLgaFilter] = useState('All');
+  const [siteSdmFilter, setSiteSdmFilter] = useState(isSdm && userName ? userName : 'All');
+  const [siteFseFilter, setSiteFseFilter] = useState(isFse && userName ? userName : 'All');
+  const [siteRdmFilter, setSiteRdmFilter] = useState(isRdm && userName ? userName : 'All');
+  const [siteSmcFilter, setSiteSmcFilter] = useState('All');
+
+  const [filterOptions, setFilterOptions] = useState({
+    states: [],
+    lgas: [],
+    sdm_names: [],
+    fse_names: [],
+    rdm_names: []
+  });
+
+  const [selectedSite, setSelectedSite] = useState(null);
+  const [selectedSiteDetails, setSelectedSiteDetails] = useState(null);
+  const [showRawMatrixSpecs, setShowRawMatrixSpecs] = useState(false);
+
+  // =========================================================================
+  // SDM OPERATIONAL NOTES STATE (ALL EXISTING NOTES)
+  // =========================================================================
+  const [notesSearch, setNotesSearch] = useState('');
+  const [notesFilter, setNotesFilter] = useState('All'); // 'All' | 'Open' | 'In Progress' | 'Resolved' | 'Escalated'
+  const [notesCategoryFilter, setNotesCategoryFilter] = useState('All');
+  const [notesPriorityFilter, setNotesPriorityFilter] = useState('All');
+  const [notesDateFilter, setNotesDateFilter] = useState('All'); // 'All' | 'yesterday' | 'today' | '7days' | '30days' | 'custom'
+  const [notesStartDate, setNotesStartDate] = useState('');
+  const [notesEndDate, setNotesEndDate] = useState('');
+  const [notesSdmFilter, setNotesSdmFilter] = useState('All');
+  const [notesWithPhotosOnly, setNotesWithPhotosOnly] = useState(false);
+  const [showPhotosGallery, setShowPhotosGallery] = useState(false);
+  const [notesPage, setNotesPage] = useState(1);
+  const notesPageSize = 20;
+  const [exportingNotes, setExportingNotes] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState(null);
 
   const noteCategories = [
-    'Power', 'Transmission', 'Generator', 'Battery', 'Fuel', 
-    'Microwave', 'RAN', 'Fiber', 'Security', 'SA Alarms', 'Customer', 
-    'Preventive Maintenance', 'Corrective Maintenance', 'General'
+    'All', 'General', 'Power', 'Transmission', 'Generator', 'Battery', 'Fuel',
+    'Microwave', 'RAN', 'Fiber', 'Security', 'SA Alarms', 'Customer',
+    'Preventive Maintenance', 'Corrective Maintenance'
   ];
-  const notePriorities = ['Critical', 'High', 'Medium', 'Low'];
-  const noteStatuses = ['Open', 'In Progress', 'Resolved', 'Escalated'];
 
-  const [editingNote, setEditingNote] = useState(null);
-  const [noteSiteId, setNoteSiteId] = useState('');
-  const [noteTitle, setNoteTitle] = useState('');
-  const [noteIncidentTime, setNoteIncidentTime] = useState(() => toLocalISOString(new Date()));
-  const [noteCategory, setNoteCategory] = useState('Generator');
-  const [notePriority, setNotePriority] = useState('Medium');
-  const [noteStatus, setNoteStatus] = useState('Open');
-  const [noteCreatedBy, setNoteCreatedBy] = useState(() => currentUser?.full_name || currentUser?.username || 'State Delivery Manager');
-  const [noteDescription, setNoteDescription] = useState('');
-  const [noteAppendUpdate, setNoteAppendUpdate] = useState('');
-  const [notePhotos, setNotePhotos] = useState([]);
-  const [notePhotoPreviews, setNotePhotoPreviews] = useState([]);
-
-  // Form states for New WhatsApp Intel
-  const [waSiteId, setWaSiteId] = useState('');
-  const [waSender, setWaSender] = useState(currentUser?.full_name || 'Field SDM Engineer');
-  const [waMessage, setWaMessage] = useState('');
-
-  // Fetch Live Server Feeds & Stats
-  const loadLiveServerFeeds = async () => {
-    const reachable = await checkServerHealth();
-    setIsOnline(reachable);
-
-    if (reachable && currentUser) {
-      setLoadingData(true);
-      try {
-        const isRdm = currentUser?.role === 'MTN RDM' || currentUser?.role === 'Regional Delivery Manager';
-        const isSdm = currentUser?.role === 'State Delivery Manager';
-        const isFse = currentUser?.role === 'SMC FSE Engineer';
-        const rdmParam = isRdm ? (currentUser.full_name || currentUser.username) : undefined;
-        const sdmParam = isSdm ? (currentUser.full_name || currentUser.username) : undefined;
-        const fseParam = isFse ? (currentUser.full_name || currentUser.username) : undefined;
-
-        const scopeParams = {
-          rdm: rdmParam,
-          sdm: sdmParam,
-          fse: fseParam,
-          role: currentUser.role,
-          user_role: currentUser.role,
-          user_name: currentUser.full_name || currentUser.username,
-          is_superuser: currentUser.is_superuser ? 'true' : 'false'
-        };
-
-        const [statsRes, notesRes, waRes, sitesRes] = await Promise.allSettled([
-          fetchDashboardStats(scopeParams),
-          fetchNotes({ ...scopeParams, page_size: 50 }),
-          fetchWhatsAppMessages({ ...scopeParams, page_size: 50 }),
-          fetchSites({ ...scopeParams, page_size: 25000 })
-        ]);
-
-        if (statsRes.status === 'fulfilled') setDashboardStats(statsRes.value);
-        if (notesRes.status === 'fulfilled') setLiveNotes(notesRes.value.results || notesRes.value || []);
-        if (waRes.status === 'fulfilled') setLiveWa(waRes.value.results || waRes.value || []);
-        if (sitesRes.status === 'fulfilled') {
-          const list = Array.isArray(sitesRes.value) ? sitesRes.value : sitesRes.value.results || [];
-          saveCachedSites(list);
-          setCachedSites(list);
-        }
-      } catch (e) {
-        console.error('Failed to load mobile live data:', e);
-      } finally {
-        setLoadingData(false);
-      }
-    } else if (!currentUser) {
-      clearCachedSites();
-      setCachedSites([]);
-    }
+  const toLocalISOString = (dateObj = new Date()) => {
+    const d = new Date(dateObj);
+    if (isNaN(d.getTime())) return '';
+    const offset = d.getTimezoneOffset();
+    const local = new Date(d.getTime() - offset * 60 * 1000);
+    return local.toISOString().slice(0, 16);
   };
+
+  // Field Note Composer State
+  const defaultAuthor = useMemo(() => {
+    if (userName) {
+      return isRdm ? `${userName} (MTN RDM)` : userName;
+    }
+    return 'State Delivery Manager';
+  }, [userName, isRdm]);
+
+  const [noteForm, setNoteForm] = useState({
+    site: '',
+    title: '',
+    category: 'Power',
+    priority: 'High',
+    status: 'Open',
+    tower_co: 'IHS',
+    author: defaultAuthor,
+    comment: ''
+  });
+  const [noteIncidentTime, setNoteIncidentTime] = useState(() => toLocalISOString());
+  const [notePhotos, setNotePhotos] = useState([]);
+  const [gpsCoords, setGpsCoords] = useState(null);
+  const [gettingGps, setGettingGps] = useState(false);
+  const [editingNote, setEditingNote] = useState(null);
+  const [editIncidentTime, setEditIncidentTime] = useState('');
+  const [editPhotos, setEditPhotos] = useState([]);
+  const [appendUpdateText, setAppendUpdateText] = useState('');
 
   useEffect(() => {
-    loadLiveServerFeeds();
-    const interval = setInterval(loadLiveServerFeeds, 15000);
-    return () => clearInterval(interval);
-  }, [currentUser]);
+    setNoteForm((prev) => ({
+      ...prev,
+      author: defaultAuthor
+    }));
+  }, [defaultAuthor]);
 
-  const refreshPendingQueues = () => {
+  const isCreatorOfNote = useCallback(
+    (note) => {
+      if (isSuperuser) return true;
+      if (!userName || !note?.created_by) return false;
+      const author = note.created_by.toLowerCase();
+      const current = userName.toLowerCase();
+      return author === current || author.startsWith(`${current} (`);
+    },
+    [isSuperuser, userName]
+  );
+
+  // Availability & Uploaded Files State
+  const [availStats, setAvailStats] = useState(null);
+  const [availRecords, setAvailRecords] = useState([]);
+  const [availLoading, setAvailLoading] = useState(false);
+  const [availSearch, setAvailSearch] = useState('');
+  const [availBand, setAvailBand] = useState(''); // '' | 'critical_under_95' | 'degraded_under_98_5' | 'perfect_100'
+  const [availTech, setAvailTech] = useState(''); // '' | '2G' | '3G' | '4G'
+  const [availArchives, setAvailArchives] = useState([]);
+  const [selectedArchiveId, setSelectedArchiveId] = useState('');
+  const [uploadingAvailFile, setUploadingAvailFile] = useState(false);
+  const [wsdStatus, setWsdStatus] = useState(null);
+
+  // WhatsApp Form State
+  const [waForm, setWaForm] = useState({
+    site_id: '',
+    sender_name: userName || 'Field FSE Report',
+    issue_category: 'Power / Fuel',
+    status_update: 'Investigating',
+    raw_message: ''
+  });
+  const [waFilter, setWaFilter] = useState('ALL');
+
+  // FSE Quick Check State
+  const [fseQuery, setFseQuery] = useState('');
+
+  // AI Assistant State
+  const [aiMessages, setAiMessages] = useState([
+    {
+      role: 'assistant',
+      content: 'Hello! I am your Mobile Field AI Assistant. Tap a quick diagnostic below or ask about any Site ID, power alarm, or SLA issue.'
+    }
+  ]);
+  const [aiInput, setAiInput] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
+  // Fiber & TNL Links State
+  const [tnlLinks, setTnlLinks] = useState([]);
+  const [tnlSearch, setTnlSearch] = useState('');
+  const [tnlLoading, setTnlLoading] = useState(false);
+
+  // =========================================================================
+  // ROLE-BASED SCOPE PARAMETERS (MATCHING DESKTOP APP.JSX & NOTESCENTER.JSX)
+  // =========================================================================
+  const getScopeParams = useCallback(() => {
+    return {
+      is_superuser: isSuperuser ? 'true' : 'false',
+      user_role: userRole || undefined,
+      role: userRole || undefined,
+      user_state: isRdm || isSuperuser ? undefined : stateCode,
+      user_name: userName || undefined,
+      rdm: isRdm ? userName : undefined,
+      sdm: isSdm ? userName : undefined,
+      fse: isFse ? userName : undefined
+    };
+  }, [isSuperuser, isRdm, isSdm, isFse, userName, userRole, stateCode]);
+
+  const refreshQueues = useCallback(() => {
     setPendingNotes(getPendingNotes());
-    setPendingWa(getPendingWhatsApp());
-    setPendingAudits(getPendingFseAudits());
-  };
+    setPendingWhatsApp(getPendingWhatsApp());
+    setPendingFseAudits(getPendingFseAudits());
+  }, []);
 
-  // Perform full network sync when in range of server
-  const handleSyncNow = async () => {
-    const reachable = await checkServerHealth();
-    if (!reachable) {
-      setSyncStatusMsg({ type: 'error', text: '🔴 Cannot sync: Server network unreachable. Please check PC & phone Wi-Fi connection.' });
-      return;
+  // =========================================================================
+  // LOAD ALL SDM OPERATIONAL NOTES (MATCHING NOTESCENTER.JSX)
+  // =========================================================================
+  const hasLoadedNotesRef = useRef(false);
+
+  const loadAllNotes = useCallback(async (forceSpinner = false) => {
+    if (!hasLoadedNotesRef.current || forceSpinner) {
+      setLoadingNotes(true);
     }
+    try {
+      const sdmParam = isSdm
+        ? userName
+        : notesSdmFilter !== 'All'
+          ? notesSdmFilter
+          : undefined;
+      const rdmParam = isRdm ? userName : undefined;
+      const fseParam = isFse ? userName : undefined;
 
-    const currentNotes = getPendingNotes();
-    const currentWa = getPendingWhatsApp();
+      const data = await fetchNotes({
+        rdm: rdmParam,
+        sdm: sdmParam,
+        fse: fseParam,
+        is_superuser: isSuperuser ? 'true' : 'false',
+        role: userRole || undefined,
+        user_role: userRole || undefined,
+        user_state: isRdm || isSuperuser ? undefined : stateCode,
+        search: notesSearch.trim() || undefined,
+        category: notesCategoryFilter !== 'All' ? notesCategoryFilter : undefined,
+        priority: notesPriorityFilter !== 'All' ? notesPriorityFilter : undefined,
+        status: notesFilter !== 'All' && notesFilter !== 'ALL' ? notesFilter : undefined,
+        date_filter: notesDateFilter !== 'All' ? notesDateFilter : undefined,
+        start_date: notesDateFilter === 'custom' && notesStartDate ? notesStartDate : undefined,
+        end_date: notesDateFilter === 'custom' && notesEndDate ? notesEndDate : undefined,
+        page_size: 1500
+      });
 
-    if (currentNotes.length === 0 && currentWa.length === 0) {
-      setSyncStatusMsg({ type: 'info', text: 'ℹ️ Offline queue is empty. 0 pending items waiting to sync.' });
-      return;
+      const list = Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data)
+          ? data
+          : [];
+      setLiveNotes(list);
+      setNotesTotalCount(data?.count !== undefined ? data.count : list.length);
+      hasLoadedNotesRef.current = true;
+    } catch (err) {
+      console.warn('Error loading SDM notes in mobile view:', err);
+    } finally {
+      setLoadingNotes(false);
     }
+  }, [
+    isSdm,
+    isRdm,
+    isFse,
+    isSuperuser,
+    userName,
+    userRole,
+    stateCode,
+    notesSdmFilter,
+    notesSearch,
+    notesCategoryFilter,
+    notesPriorityFilter,
+    notesFilter,
+    notesDateFilter,
+    notesStartDate,
+    notesEndDate
+  ]);
 
-    setIsSyncing(true);
-    setSyncStatusMsg({ type: 'info', text: '⚡ Synchronizing offline SDM notes & WhatsApp intel to server...' });
+  useEffect(() => {
+    setNotesPage(1);
+    const timer = setTimeout(() => {
+      loadAllNotes();
+    }, notesSearch ? 200 : 0);
+    return () => clearTimeout(timer);
+  }, [loadAllNotes]);
 
-    let syncedNotesCount = 0;
-    let syncedWaCount = 0;
-    let failedNotesCount = 0;
-    let failedWaCount = 0;
-    let errorDetails = [];
-
-    // 1. Sync Pending Notes
-    for (const note of currentNotes) {
-      try {
-        const formData = new FormData();
-        const siteStr = (note.site_id_str || note.site_id_input || note.site || '').toString().trim();
-        formData.append('site_id_input', siteStr);
-        formData.append('site_id_str', siteStr);
-        formData.append('title', note.title || 'SDM Note');
-        formData.append('category', note.category || 'General');
-        formData.append('priority', note.priority || 'Medium');
-        formData.append('description', note.description || '');
-        formData.append('created_by', note.created_by || currentUser?.full_name || 'Mobile SDM');
-        if (note.created_at) {
-          formData.append('created_at', note.created_at);
-        }
-
-        if (note.photos && Array.isArray(note.photos)) {
-          note.photos.forEach((photoItem, idx) => {
-            if (photoItem && typeof photoItem === 'string' && photoItem.startsWith('data:')) {
-              const fileObj = base64ToFile(photoItem, `offline_photo_${idx + 1}.jpg`);
-              if (fileObj) {
-                formData.append('photos', fileObj);
-              }
-            } else if (photoItem && photoItem instanceof File) {
-              formData.append('photos', photoItem);
-            }
+  // =========================================================================
+  // LOAD SITE INVENTORY & IHS MATRIX DATABASE (MATCHING SITEDATABASE.JSX)
+  // =========================================================================
+  useEffect(() => {
+    fetchFilterOptions({
+      status: siteStatus !== 'All' ? siteStatus : undefined,
+      priority: sitePriority !== 'All' ? sitePriority : undefined,
+      state: siteStateFilter !== 'All' ? siteStateFilter : undefined,
+      lga: siteLgaFilter !== 'All' ? siteLgaFilter : undefined,
+      sdm: siteSdmFilter !== 'All' ? siteSdmFilter : undefined,
+      fse: siteFseFilter !== 'All' ? siteFseFilter : undefined,
+      rdm: siteRdmFilter !== 'All' ? siteRdmFilter : undefined
+    })
+      .then((res) => {
+        if (res && typeof res === 'object') {
+          setFilterOptions({
+            states: res.states || [],
+            lgas: res.lgas || [],
+            sdm_names: res.sdm_names || [],
+            fse_names: res.fse_names || [],
+            rdm_names: res.rdm_names || []
           });
         }
+      })
+      .catch(() => {});
+  }, [siteStatus, sitePriority, siteStateFilter, siteLgaFilter, siteSdmFilter, siteFseFilter, siteRdmFilter]);
 
-        await createNote(formData);
-        removePendingNote(note.local_id);
-        syncedNotesCount++;
-      } catch (e) {
-        failedNotesCount++;
-        const errMsg = e.response?.data?.error || e.message || 'Server error';
-        errorDetails.push(`Note for ${note.site_id_str || 'Site'}: ${errMsg}`);
-        console.error('Failed to sync note:', note, e);
-      }
-    }
-
-    // 2. Sync Pending WhatsApp Messages
-    for (const wa of currentWa) {
-      try {
-        const siteStr = (wa.site_id_str || wa.site_id_input || '').toString().trim();
-        await createWhatsAppMessage({
-          site_id_str: siteStr,
-          site_id_input: siteStr,
-          sender_name: wa.sender_name || currentUser?.full_name || 'Mobile Engineer',
-          message_text: wa.message_text
-        });
-        removePendingWhatsApp(wa.local_id);
-        syncedWaCount++;
-      } catch (e) {
-        failedWaCount++;
-        const errMsg = e.response?.data?.error || e.message || 'Server error';
-        errorDetails.push(`WhatsApp for ${wa.site_id_str || 'Site'}: ${errMsg}`);
-        console.error('Failed to sync WhatsApp message:', wa, e);
-      }
-    }
-
-    refreshPendingQueues();
-    setIsSyncing(false);
-    localStorage.setItem('sdm_last_sync_time', new Date().toLocaleTimeString());
-    loadLiveServerFeeds();
-
-    const totalFailed = failedNotesCount + failedWaCount;
-    if (totalFailed === 0) {
-      setSyncStatusMsg({
-        type: 'success',
-        text: `✅ Network Sync Complete! Successfully uploaded ${syncedNotesCount} SDM note(s) and ${syncedWaCount} WhatsApp intel update(s) to server.`
-      });
-      alert(`✅ Network Sync Complete!\nUploaded ${syncedNotesCount} note(s) & ${syncedWaCount} WhatsApp intel update(s) to server.`);
-    } else {
-      const firstErr = errorDetails[0] || 'Check site ID or server status';
-      setSyncStatusMsg({
-        type: 'warning',
-        text: `⚠️ Sync finished: Uploaded ${syncedNotesCount} note(s) & ${syncedWaCount} intel update(s). ${totalFailed} item(s) failed (${firstErr}).`
-      });
-      alert(`⚠️ Sync Completed with Issues:\nUploaded: ${syncedNotesCount} note(s) & ${syncedWaCount} intel update(s).\n\nFailed items (${totalFailed}):\n- ${errorDetails.join('\n- ')}`);
-    }
-  };
-
-  // Handle Photo Picker with Automatic Location, Site ID & Timestamp Watermarking
-  const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
-
-  const handlePhotoChange = async (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
-
-    setIsProcessingPhotos(true);
+  const loadSitesInventory = useCallback(async () => {
+    setDbLoading(true);
     try {
-      const watermarkedFiles = await Promise.all(
-        files.map(file => watermarkPhoto(file, noteSiteId, currentUser?.full_name || currentUser?.username))
-      );
-
-      setNotePhotos(prev => [...prev, ...watermarkedFiles]);
-      const previews = watermarkedFiles.map(file => URL.createObjectURL(file));
-      setNotePhotoPreviews(prev => [...prev, ...previews]);
-    } catch (err) {
-      console.error('Error watermarking photo:', err);
-    } finally {
-      setIsProcessingPhotos(false);
-      try { e.target.value = ''; } catch {}
-    }
-  };
-
-  // Save Server IP from Mobile UI
-  const handleSaveServerIp = (e) => {
-    e.preventDefault();
-    if (!serverIp.trim()) return;
-    setCustomServerIp(serverIp.trim());
-    setShowServerConfig(false);
-    setSyncStatusMsg({ type: 'info', text: `🔄 Server IP updated to http://${serverIp.trim()}:8001. Re-testing server connection...` });
-    loadLiveServerFeeds();
-  };
-
-  // Open Edit Note Form
-  const handleOpenEditNote = (note) => {
-    setEditingNote(note);
-    setNoteSiteId(note.site_ihs_id || note.site_id_str || note.site_id_input || '');
-    setNoteTitle(note.title || '');
-    setNoteCategory(note.category || 'General');
-    setNotePriority(note.priority || 'Medium');
-    setNoteStatus(note.status || 'Open');
-    setNoteCreatedBy(note.created_by || currentUser?.full_name || 'State Delivery Manager');
-    setNoteIncidentTime(note.created_at ? toLocalISOString(note.created_at) : toLocalISOString(new Date()));
-    setNoteDescription(note.description || '');
-    setNoteAppendUpdate('');
-    setNotePhotos([]);
-    setNotePhotoPreviews([]);
-    setActiveSubTab('note');
-  };
-
-  const handleResetNoteForm = () => {
-    setEditingNote(null);
-    setNoteSiteId('');
-    setNoteTitle('');
-    setNoteCategory('Generator');
-    setNotePriority('Medium');
-    setNoteStatus('Open');
-    setNoteCreatedBy(currentUser?.full_name || 'State Delivery Manager');
-    setNoteIncidentTime(toLocalISOString(new Date()));
-    setNoteDescription('');
-    setNoteAppendUpdate('');
-    setNotePhotos([]);
-    setNotePhotoPreviews([]);
-  };
-
-  // Save or Update Note
-  const [isSavingNote, setIsSavingNote] = useState(false);
-
-  const handleSaveNote = async (e) => {
-    e.preventDefault();
-    if (!noteSiteId || !noteSiteId.trim()) {
-      alert('⚠️ Please enter a Target Site ID (e.g. FC2700).');
-      return;
-    }
-    if (!noteTitle || !noteTitle.trim()) {
-      alert('⚠️ Please enter a Note Title.');
-      return;
-    }
-    if (!noteDescription || !noteDescription.trim()) {
-      alert('⚠️ Please enter a Detailed Operational Description.');
-      return;
-    }
-
-    const activeUser = currentUser || { full_name: 'Field SDM Engineer', username: 'field_sdm' };
-    const authorName = noteCreatedBy.trim() || activeUser.full_name || activeUser.username || 'State Delivery Manager';
-    setIsSavingNote(true);
-
-    try {
-      let finalDescription = noteDescription.trim();
-      if (noteAppendUpdate && noteAppendUpdate.trim()) {
-        const timestamp = new Date().toLocaleString();
-        const updateHeader = `\n\n--- [UPDATE by ${authorName} @ ${timestamp}] ---\n`;
-        finalDescription = finalDescription + updateHeader + noteAppendUpdate.trim();
-      }
-
-      const base64Photos = await Promise.all((notePhotos || []).map(f => fileToBase64(f)));
-      const cleanPhotos = base64Photos.filter(Boolean);
-
-      const notePayload = {
-        site_id_str: noteSiteId.trim().toUpperCase(),
-        site_id_input: noteSiteId.trim().toUpperCase(),
-        title: noteTitle.trim(),
-        category: noteCategory,
-        priority: notePriority,
-        status: noteStatus,
-        description: finalDescription,
-        created_by: authorName,
-        created_at: noteIncidentTime ? new Date(noteIncidentTime).toISOString() : new Date().toISOString(),
-        photos: cleanPhotos
+      const params = {
+        search: siteSearch.trim() || undefined,
+        status: siteStatus !== 'All' ? siteStatus : undefined,
+        priority: sitePriority !== 'All' ? sitePriority : undefined,
+        state: siteStateFilter !== 'All' ? siteStateFilter : undefined,
+        lga: siteLgaFilter !== 'All' ? siteLgaFilter : undefined,
+        sdm: siteSdmFilter !== 'All' ? siteSdmFilter : undefined,
+        fse: siteFseFilter !== 'All' ? siteFseFilter : undefined,
+        rdm: siteRdmFilter !== 'All' ? siteRdmFilter : undefined,
+        ihs_matrix: sitesMode === 'ihs_matrix' ? 'true' : undefined,
+        page: dbPage,
+        page_size: dbPageSize
       };
-
-      if (editingNote && editingNote.id) {
-        // Editing existing note online
-        if (isOnline) {
-          const formData = new FormData();
-          formData.append('site_id_input', notePayload.site_id_str);
-          formData.append('site_id_str', notePayload.site_id_str);
-          formData.append('title', notePayload.title);
-          formData.append('category', notePayload.category);
-          formData.append('priority', notePayload.priority);
-          formData.append('status', notePayload.status);
-          formData.append('description', notePayload.description);
-          formData.append('created_by', notePayload.created_by);
-          if (noteIncidentTime) {
-            formData.append('created_at', noteIncidentTime);
-          }
-          notePhotos.forEach(file => {
-            formData.append('photos', file);
-          });
-
-          await updateNote(editingNote.id, formData);
-          setSyncStatusMsg({ type: 'success', text: `🟢 Note updated successfully on server for site ${notePayload.site_id_str}!` });
-          alert(`✅ Success! Note for site ${notePayload.site_id_str} updated.`);
-          loadLiveServerFeeds();
-        } else {
-          alert('⚠️ Network offline: Note updates require an online connection.');
-        }
-      } else {
-        // Creating new note
-        if (isOnline) {
-          try {
-            const formData = new FormData();
-            formData.append('site_id_input', notePayload.site_id_str);
-            formData.append('site_id_str', notePayload.site_id_str);
-            formData.append('title', notePayload.title);
-            formData.append('category', notePayload.category);
-            formData.append('priority', notePayload.priority);
-            formData.append('status', notePayload.status);
-            formData.append('description', notePayload.description);
-            formData.append('created_by', notePayload.created_by);
-            if (noteIncidentTime) {
-              formData.append('created_at', noteIncidentTime);
-            }
-            notePhotos.forEach(file => {
-              formData.append('photos', file);
-            });
-
-            await createNote(formData);
-            setSyncStatusMsg({ type: 'success', text: `🟢 Note created & saved directly to server for site ${notePayload.site_id_str}!` });
-            alert(`✅ Success! Note for site ${notePayload.site_id_str} saved to server.`);
-            loadLiveServerFeeds();
-          } catch (e) {
-            saveOfflineNote(notePayload);
-            refreshPendingQueues();
-            const serverErr = e.response?.data?.error || e.message || 'Server network error';
-            setSyncStatusMsg({ type: 'warning', text: `📦 Note saved to Offline Queue (${serverErr}). It will auto-sync when server connects.` });
-            alert(`📦 Saved to Offline Queue! Note for site ${notePayload.site_id_str} saved locally for auto-sync.`);
-          }
-        } else {
-          saveOfflineNote(notePayload);
-          refreshPendingQueues();
-          setSyncStatusMsg({ type: 'warning', text: `📦 Offline Mode: Note saved to local device queue for site ${notePayload.site_id_str}!` });
-          alert(`📦 Offline Mode: Note for site ${notePayload.site_id_str} saved to local device queue.`);
-        }
-      }
-
-      handleResetNoteForm();
+      const data = await fetchSites(params);
+      const list = Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data)
+          ? data
+          : [];
+      setDbSites(list);
+      setDbTotalCount(data?.count !== undefined ? data.count : list.length);
     } catch (err) {
-      alert('Error saving note: ' + err.message);
+      console.warn('Error fetching site inventory:', err);
     } finally {
-      setIsSavingNote(false);
+      setDbLoading(false);
     }
+  }, [
+    siteSearch,
+    siteStatus,
+    sitePriority,
+    siteStateFilter,
+    siteLgaFilter,
+    siteSdmFilter,
+    siteFseFilter,
+    siteRdmFilter,
+    sitesMode,
+    dbPage,
+    dbPageSize
+  ]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadSitesInventory();
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [loadSitesInventory]);
+
+  const handleResetSiteFilters = () => {
+    setSiteSearch('');
+    setSiteStatus('All');
+    setSitePriority('All');
+    setSiteStateFilter('All');
+    setSiteLgaFilter('All');
+    setSiteSdmFilter(isSuperuser ? 'All' : isSdm ? userName : 'All');
+    setSiteFseFilter(isFse ? userName : 'All');
+    setSiteRdmFilter(isRdm ? userName : 'All');
+    setSiteSmcFilter('All');
+    setDbPage(1);
   };
 
-  // Save WhatsApp Intel
-  const handleSaveWa = async (e) => {
-    e.preventDefault();
-    if (!currentUser) {
-      setSyncStatusMsg({ type: 'error', text: '🔒 Login Required: You must log in to your SDM account before logging intel.' });
-      return;
-    }
-    if (!waSiteId || !waMessage) return;
+  // =========================================================================
+  // LOAD LIVE FEEDS (STATS, WHATSAPP, INITIAL SITES CACHE, AVAILABILITY, ARCHIVES)
+  // =========================================================================
+  const loadLiveFeeds = useCallback(async (includeSites = false) => {
+    setLoadingFeeds(true);
+    try {
+      const healthy = await checkServerHealth();
+      setServerReachable(healthy);
+      if (!healthy) return;
 
-    const waPayload = {
-      site_id_str: waSiteId.toUpperCase(),
-      site_id_input: waSiteId.toUpperCase(),
-      sender_name: waSender || currentUser?.full_name || currentUser?.username || 'Mobile Engineer',
-      message_text: waMessage
+      const scope = getScopeParams();
+      const promises = [
+        fetchDashboardStats(scope).catch(() => null),
+        fetchWhatsAppMessages({ ...scope, page_size: 100 }).catch(() => []),
+        fetchAvailabilityStats(scope).catch(() => null),
+        fetchAvailabilityArchives().catch(() => null),
+        fetchWSDStatus().catch(() => null)
+      ];
+
+      if (includeSites) {
+        promises.push(fetchSites({ ...scope, page_size: 100 }).catch(() => null));
+      }
+
+      const [statsData, waData, availStatsData, archivesData, wsdData, sitesData] = await Promise.all(promises);
+
+      if (statsData && typeof statsData === 'object') {
+        setServerStats(statsData);
+      }
+      if (waData) {
+        const list = Array.isArray(waData?.results)
+          ? waData.results
+          : Array.isArray(waData)
+            ? waData
+            : [];
+        setLiveWhatsApp(list);
+      }
+      if (availStatsData && typeof availStatsData === 'object') {
+        setAvailStats(availStatsData);
+      }
+      if (archivesData && Array.isArray(archivesData.archives)) {
+        setAvailArchives(archivesData.archives);
+      }
+      if (wsdData && typeof wsdData === 'object') {
+        setWsdStatus(wsdData);
+      }
+      if (sitesData) {
+        const list = Array.isArray(sitesData?.results)
+          ? sitesData.results
+          : Array.isArray(sitesData)
+            ? sitesData
+            : [];
+        if (list.length > 0) {
+          setLocalSites(list);
+          saveCachedSites(list);
+        }
+      }
+    } catch (err) {
+      console.warn('Mobile live feed sync error:', err);
+    } finally {
+      setLoadingFeeds(false);
+    }
+  }, [getScopeParams]);
+
+  useEffect(() => {
+    loadLiveFeeds(true);
+    const interval = setInterval(() => {
+      if (navigator.onLine) {
+        loadLiveFeeds(false);
+      }
+    }, 120000);
+    return () => clearInterval(interval);
+  }, [loadLiveFeeds]);
+
+  // Online / Offline listeners
+  useEffect(() => {
+    const onOnline = () => {
+      setIsOnline(true);
+      loadLiveFeeds(false);
+      loadAllNotes();
+      loadSitesInventory();
+    };
+    const onOffline = () => {
+      setIsOnline(false);
+      setServerReachable(false);
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, [loadLiveFeeds, loadAllNotes, loadSitesInventory]);
+
+  // =========================================================================
+  // LOAD DAILY & HOURLY AVAILABILITY RECORDS & UPLOADED ARCHIVES
+  // =========================================================================
+  useEffect(() => {
+    if (activeTab !== 'availability') return;
+    let cancelled = false;
+
+    const fetchAvail = async () => {
+      setAvailLoading(true);
+      try {
+        const scope = getScopeParams();
+        const params = {
+          ...scope,
+          page_size: 50
+        };
+        if (availSearch.trim()) params.search = availSearch.trim();
+        if (availBand) params.sla_filter = availBand;
+        if (availTech) params.tech = availTech;
+        if (availMode === 'daily' && selectedArchiveId) {
+          params.upload_log_id = selectedArchiveId;
+        }
+
+        if (availMode === 'daily') {
+          const [statsRes, recRes, archRes] = await Promise.all([
+            fetchAvailabilityStats(params).catch(() => null),
+            fetchAvailabilityRecords(params).catch(() => null),
+            fetchAvailabilityArchives().catch(() => null)
+          ]);
+          if (!cancelled) {
+            if (statsRes) setAvailStats(statsRes);
+            if (archRes && Array.isArray(archRes.archives)) {
+              setAvailArchives(archRes.archives);
+            }
+            const list = Array.isArray(recRes?.results)
+              ? recRes.results
+              : Array.isArray(recRes)
+                ? recRes
+                : [];
+            setAvailRecords(list);
+          }
+        } else {
+          const [statsRes, recRes] = await Promise.all([
+            fetchHourlyAvailabilityStats(params).catch(() => null),
+            fetchHourlyAvailabilityRecords(params).catch(() => null)
+          ]);
+          if (!cancelled) {
+            if (statsRes) setAvailStats(statsRes);
+            const list = Array.isArray(recRes?.results)
+              ? recRes.results
+              : Array.isArray(recRes)
+                ? recRes
+                : [];
+            setAvailRecords(list);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load availability records:', err);
+      } finally {
+        if (!cancelled) setAvailLoading(false);
+      }
     };
 
-    if (isOnline) {
-      try {
-        await createWhatsAppMessage(waPayload);
-        setSyncStatusMsg({ type: 'success', text: `🟢 WhatsApp Intel logged directly to server for site ${waPayload.site_id_str}!` });
-        loadLiveServerFeeds();
-      } catch (e) {
-        saveOfflineWhatsApp(waPayload);
-        refreshPendingQueues();
-        setSyncStatusMsg({ type: 'warning', text: `📦 Saved to Offline Queue! Intel will sync when server connection stabilizes.` });
+    const timer = setTimeout(fetchAvail, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeTab, availMode, availSearch, availBand, availTech, selectedArchiveId, getScopeParams]);
+
+  // Upload Daily or Hourly Availability .xlsb / .xlsx File from Mobile
+  const handleAvailFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAvailFile(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('uploaded_by', userName || 'SDM Engineer');
+      if (availMode === 'daily') {
+        await uploadAvailabilityFile(fd);
+        setSelectedArchiveId('');
+      } else {
+        await uploadHourlyAvailabilityFile(fd);
       }
-    } else {
-      saveOfflineWhatsApp(waPayload);
-      refreshPendingQueues();
-      setSyncStatusMsg({ type: 'warning', text: `📦 Offline Mode: WhatsApp intel saved to local queue for auto-sync.` });
-    }
-
-    setWaSiteId('');
-    setWaMessage('');
-  };
-
-  // Quick Resolve Live Note
-  const handleQuickResolveLiveNote = async (note) => {
-    try {
-      await resolveNote(note.id, { updated_by: currentUser?.full_name, sdm: currentUser?.full_name, is_superuser: currentUser?.is_superuser });
-      loadLiveServerFeeds();
-    } catch (e) {
-      alert('Error resolving note: ' + (e.response?.data?.error || e.message));
-    }
-  };
-
-  // Delete Live Note Modal State & Handler
-  const [mobileNoteToDelete, setMobileNoteToDelete] = useState(null);
-  const [isDeletingMobileNote, setIsDeletingMobileNote] = useState(false);
-
-  const handleDeleteLiveNote = (note) => {
-    setMobileNoteToDelete(note);
-  };
-
-  const handleConfirmDeleteLiveNote = async () => {
-    if (!mobileNoteToDelete) return;
-    setIsDeletingMobileNote(true);
-    try {
-      await deleteNote(mobileNoteToDelete.id, { user: currentUser?.full_name, sdm: currentUser?.full_name, is_superuser: currentUser?.is_superuser });
-      setMobileNoteToDelete(null);
-      loadLiveServerFeeds();
-    } catch (e) {
-      alert('Error deleting note: ' + (e.response?.data?.error || e.message));
-    } finally {
-      setIsDeletingMobileNote(false);
-    }
-  };
-
-  // Send Mobile AI Prompt
-  const handleSendAiPrompt = async (presetPrompt) => {
-    const q = presetPrompt || aiQuery;
-    if (!q.trim()) return;
-
-    const userMsg = { sender: 'user', text: q, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-    setAiMessages(prev => [...prev, userMsg]);
-    if (!presetPrompt) setAiQuery('');
-    setAiLoading(true);
-
-    try {
-      const res = await queryAIAssistant(q, '', 'chat');
-      const aiMsg = { sender: 'ai', text: res.answer || res.response || 'Analysis complete.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-      setAiMessages(prev => [...prev, aiMsg]);
+      setSyncMessage({ type: 'success', text: `Uploaded ${file.name} successfully!` });
+      loadLiveFeeds(false);
     } catch (err) {
-      const errorMsg = { sender: 'ai', text: '⚠️ Connection error: AI assistant requires active connection to server.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-      setAiMessages(prev => [...prev, errorMsg]);
+      setSyncMessage({
+        type: 'error',
+        text: err.response?.data?.error || `Failed to upload ${file.name}`
+      });
+    } finally {
+      setUploadingAvailFile(false);
+      try {
+        e.target.value = '';
+      } catch {}
+      setTimeout(() => setSyncMessage(null), 4000);
+    }
+  };
+
+  // Load full Site Details (including attached photos & notes) when selectedSite opens
+  useEffect(() => {
+    if (!selectedSite) {
+      setSelectedSiteDetails(null);
+      return;
+    }
+    const primaryId = selectedSite.ihs_site_id || selectedSite.mtn_id;
+    if (!primaryId) return;
+    let cancelled = false;
+    lookupSite(primaryId)
+      .then((res) => {
+        if (!cancelled && res && typeof res === 'object') {
+          setSelectedSiteDetails(res);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSite]);
+
+  // Load TNL Links when user selects Links mode in Map & AI tab
+  useEffect(() => {
+    if (activeTab !== 'map_ai' || mapAiMode !== 'links') return;
+    let cancelled = false;
+    const loadLinks = async () => {
+      setTnlLoading(true);
+      try {
+        const params = { page_size: 50 };
+        if (tnlSearch.trim()) params.search = tnlSearch.trim();
+        const res = await fetchTNLLinks(params);
+        if (!cancelled) {
+          const list = Array.isArray(res?.results) ? res.results : Array.isArray(res) ? res : [];
+          setTnlLinks(list);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch TNL links:', e);
+      } finally {
+        if (!cancelled) setTnlLoading(false);
+      }
+    };
+    const timer = setTimeout(loadLinks, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeTab, mapAiMode, tnlSearch]);
+
+  // =========================================================================
+  // COMPUTED SUMMARIES & LISTS
+  // =========================================================================
+  const summaryStats = useMemo(() => {
+    const safeSites = Array.isArray(localSites) ? localSites : [];
+    const safeNotes = Array.isArray(liveNotes) ? liveNotes : [];
+    const total = serverStats?.total_sites ?? (dbTotalCount || safeSites.length);
+    const down =
+      serverStats?.down_sites ??
+      safeSites.filter((s) => s.is_down || s.operational_status === 'Down').length;
+    const p1 =
+      serverStats?.critical_p1_sites ??
+      serverStats?.critical_sites ??
+      safeSites.filter((s) => s.is_critical || (s.priority || '').includes('P1')).length;
+    const openNotes =
+      serverStats?.open_notes ??
+      safeNotes.filter((n) => n.status !== 'Resolved').length;
+    return { total, down, p1, openNotes, allNotesCount: notesTotalCount || safeNotes.length };
+  }, [serverStats, dbTotalCount, localSites, liveNotes, notesTotalCount]);
+
+  // Priority / Down sites for Home Overview quick dispatch
+  const urgentSites = useMemo(() => {
+    const source = dbSites.length > 0 ? dbSites : localSites;
+    const safeSites = Array.isArray(source) ? source : [];
+    const down = safeSites.filter((s) => s.is_down || s.operational_status === 'Down');
+    if (down.length > 0) return down.slice(0, 6);
+    const p1 = safeSites.filter((s) => s.is_critical || (s.priority || '').includes('P1'));
+    return p1.slice(0, 6);
+  }, [dbSites, localSites]);
+
+  // Notes with Photos & All Uploaded Evidence Photos
+  const notesWithPhotosList = useMemo(() => {
+    return (Array.isArray(liveNotes) ? liveNotes : []).filter(
+      (n) => Array.isArray(n.attachments) && n.attachments.length > 0
+    );
+  }, [liveNotes]);
+
+  const allUploadedPhotos = useMemo(() => {
+    const list = [];
+    notesWithPhotosList.forEach((n) => {
+      const siteCode = n.site_ihs_id || n.site_id_str || n.site || 'GENERAL';
+      (n.attachments || []).forEach((att) => {
+        const url = getMediaUrl(att.file || att.image || att.photo_url);
+        if (url) {
+          list.push({
+            id: att.id || `${n.id}-${url}`,
+            url,
+            fileName: att.file_name || 'Site Photo',
+            siteCode,
+            noteTitle: n.title || n.category || 'Site Evidence',
+            createdBy: n.created_by || n.author || 'SDM',
+            createdAt: att.uploaded_at || n.created_at
+          });
+        }
+      });
+    });
+    return list;
+  }, [notesWithPhotosList]);
+
+  const filteredLiveNotes = useMemo(() => {
+    if (!notesWithPhotosOnly) return liveNotes;
+    return notesWithPhotosList;
+  }, [liveNotes, notesWithPhotosOnly, notesWithPhotosList]);
+
+  // Paginated Notes (20 per page, matching NotesCenter.jsx)
+  const totalNotesPages = Math.ceil(filteredLiveNotes.length / notesPageSize) || 1;
+  const paginatedNotes = useMemo(() => {
+    const start = (notesPage - 1) * notesPageSize;
+    return filteredLiveNotes.slice(start, start + notesPageSize);
+  }, [filteredLiveNotes, notesPage, notesPageSize]);
+
+  const totalDbPages = Math.ceil(dbTotalCount / dbPageSize) || 1;
+
+  // Filtered WhatsApp Intel
+  const filteredWhatsApp = useMemo(() => {
+    const safeWa = Array.isArray(liveWhatsApp) ? liveWhatsApp : [];
+    if (waFilter === 'ALL') return safeWa;
+    return safeWa.filter((w) => (w.issue_category || '').toLowerCase().includes(waFilter.toLowerCase()));
+  }, [liveWhatsApp, waFilter]);
+
+  // FSE Quick Check Directory (using real backend fields smc_fse_name & smc_fse_phone)
+  const fseDirectory = useMemo(() => {
+    const source = localSites.length > 0 ? localSites : dbSites;
+    const safeSites = Array.isArray(source) ? source : [];
+    const map = new Map();
+    safeSites.forEach((s) => {
+      const raw = s.raw_data || {};
+      const name = (s.smc_fse_name || s.fse || raw['FSE NAME'] || '').trim();
+      if (!name || name.toUpperCase() === 'NAN' || name.toUpperCase() === 'UNASSIGNED') return;
+      if (!map.has(name)) {
+        map.set(name, {
+          name,
+          phone: s.smc_fse_phone || s.fse_phone || raw['FSE CONTACT NO.'] || '',
+          sdm: s.sdm_name || s.sdm || raw['SDM NAME'] || '',
+          efs: s.efs_name || '',
+          efs_phone: s.efs_phone || '',
+          cluster: s.cluster_name || s.lga || '',
+          totalSites: 0,
+          downSites: 0,
+          p1Sites: 0,
+          sampleSites: []
+        });
+      }
+      const entry = map.get(name);
+      entry.totalSites += 1;
+      if (s.is_down || s.operational_status === 'Down') entry.downSites += 1;
+      if (s.is_critical || (s.priority || '').includes('P1')) entry.p1Sites += 1;
+      if (!entry.phone && (s.smc_fse_phone || raw['FSE CONTACT NO.'])) {
+        entry.phone = s.smc_fse_phone || raw['FSE CONTACT NO.'];
+      }
+      const sid = s.ihs_site_id || s.mtn_id;
+      if (sid && entry.sampleSites.length < 6) entry.sampleSites.push(sid);
+    });
+    const list = Array.from(map.values()).sort((a, b) => b.downSites - a.downSites || b.totalSites - a.totalSites);
+    if (!fseQuery.trim()) return list.slice(0, 40);
+    const q = fseQuery.toLowerCase();
+    return list.filter(
+      (f) =>
+        f.name.toLowerCase().includes(q) ||
+        f.cluster.toLowerCase().includes(q) ||
+        f.sdm.toLowerCase().includes(q) ||
+        f.sampleSites.some((sid) => sid.toLowerCase().includes(q))
+    );
+  }, [localSites, dbSites, fseQuery]);
+
+  // =========================================================================
+  // FIELD ACTIONS: GPS, PHOTO WATERMARKING, NOTE SUBMIT/EDIT/RESOLVE/EXPORT
+  // =========================================================================
+  const captureGpsLocation = () => {
+    if (!navigator.geolocation) return;
+    setGettingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setGettingGps(false);
+      },
+      () => setGettingGps(false),
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
+  const handlePhotoSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const processed = [];
+    for (const file of files) {
+      const wm = await watermarkPhoto(file, noteForm.site, gpsCoords, noteForm.author || defaultAuthor);
+      processed.push(wm);
+    }
+    setNotePhotos((prev) => [...prev, ...processed]);
+    e.target.value = '';
+  };
+
+  const handleEditPhotoSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const processed = [];
+    for (const file of files) {
+      const wm = await watermarkPhoto(
+        file,
+        editingNote?.site_ihs_id || editingNote?.site || 'SITE',
+        gpsCoords,
+        userName || defaultAuthor
+      );
+      processed.push(wm);
+    }
+    setEditPhotos((prev) => [...prev, ...processed]);
+    e.target.value = '';
+  };
+
+  // Submit Field Note (Using FormData matching NotesCenter.jsx & NoteViewSet)
+  const handleNoteSubmit = async (e) => {
+    e.preventDefault();
+    if (!noteForm.comment.trim()) return;
+
+    const cleanSiteId = (noteForm.site || 'GENERAL').trim().toUpperCase();
+    const cleanTitle = (noteForm.title || `${noteForm.category} Field Report - ${cleanSiteId}`).trim();
+    const finalAuthor = (noteForm.author || defaultAuthor).trim();
+    let finalDescription = noteForm.comment.trim();
+    if (gpsCoords) {
+      finalDescription += `\n[GPS: ${gpsCoords.lat.toFixed(5)}, ${gpsCoords.lng.toFixed(5)}]`;
+    }
+
+    if (isOnline && serverReachable) {
+      try {
+        const formData = new FormData();
+        formData.append('site_id_input', cleanSiteId);
+        formData.append('title', cleanTitle);
+        formData.append('description', finalDescription);
+        formData.append('category', noteForm.category || 'General');
+        formData.append('priority', noteForm.priority || 'Medium');
+        formData.append('status', noteForm.status || 'Open');
+        formData.append('tower_co', noteForm.tower_co || 'IHS');
+        formData.append('created_by', finalAuthor);
+        if (noteIncidentTime) {
+          formData.append('created_at', noteIncidentTime);
+        }
+        if (isRdm && userName) {
+          formData.append('rdm', userName);
+        }
+        if (currentUser?.role) {
+          formData.append('role', currentUser.role);
+        }
+
+        notePhotos.forEach((p) => {
+          formData.append('photos', p.file || p);
+        });
+
+        await createNote(formData);
+        setSyncMessage({ type: 'success', text: `SDM Note logged for ${cleanSiteId}` });
+        setNoteForm({
+          site: '',
+          title: '',
+          category: 'Power',
+          priority: 'High',
+          status: 'Open',
+          tower_co: 'IHS',
+          author: defaultAuthor,
+          comment: ''
+        });
+        setNoteIncidentTime(toLocalISOString());
+        setNotePhotos([]);
+        setShowNoteComposer(false);
+        loadAllNotes();
+        loadLiveFeeds(false);
+        if (onDataChanged) onDataChanged();
+        setTimeout(() => setSyncMessage(null), 3500);
+        return;
+      } catch (err) {
+        console.warn('Online note creation failed, queuing offline:', err);
+      }
+    }
+
+    saveOfflineNote({
+      site_id_input: cleanSiteId,
+      title: cleanTitle,
+      description: finalDescription,
+      category: noteForm.category || 'General',
+      priority: noteForm.priority || 'Medium',
+      status: noteForm.status || 'Open',
+      tower_co: noteForm.tower_co || 'IHS',
+      created_at: noteIncidentTime || new Date().toISOString(),
+      created_by: finalAuthor
+    });
+    refreshQueues();
+    setNoteForm({
+      site: '',
+      title: '',
+      category: 'Power',
+      priority: 'High',
+      status: 'Open',
+      tower_co: 'IHS',
+      author: defaultAuthor,
+      comment: ''
+    });
+    setNoteIncidentTime(toLocalISOString());
+    setNotePhotos([]);
+    setShowNoteComposer(false);
+    setSyncMessage({ type: 'warning', text: 'Saved to Offline Queue. Will auto-sync when online.' });
+    setTimeout(() => setSyncMessage(null), 3500);
+  };
+
+  // Resolve Note (Exact payload matching NotesCenter.jsx)
+  const handleQuickResolveNote = async (note) => {
+    try {
+      await resolveNote(note.id, {
+        updated_by: userName,
+        sdm: userName,
+        rdm: isRdm ? userName : undefined,
+        role: currentUser?.role,
+        is_superuser: isSuperuser
+      });
+      setLiveNotes((prev) =>
+        prev.map((n) => (n.id === note.id ? { ...n, status: 'Resolved', resolved_at: new Date().toISOString() } : n))
+      );
+      setSyncMessage({ type: 'success', text: `Note for ${note.site_ihs_id || 'Site'} marked Resolved!` });
+      if (onDataChanged) onDataChanged();
+      setTimeout(() => setSyncMessage(null), 2500);
+    } catch (err) {
+      console.error('Failed to resolve note:', err);
+      setSyncMessage({
+        type: 'warning',
+        text: err?.response?.data?.error || 'Failed to resolve note.'
+      });
+      setTimeout(() => setSyncMessage(null), 3500);
+    }
+  };
+
+  // Delete Note (Exact payload matching NotesCenter.jsx)
+  const handleDeleteNote = async (note) => {
+    try {
+      await deleteNote(note.id, {
+        user: userName,
+        sdm: userName,
+        rdm: isRdm ? userName : undefined,
+        role: currentUser?.role,
+        is_superuser: isSuperuser
+      });
+      setLiveNotes((prev) => prev.filter((n) => n.id !== note.id));
+      setNotesTotalCount((c) => Math.max(0, c - 1));
+      setSyncMessage({ type: 'success', text: 'Note deleted.' });
+      if (onDataChanged) onDataChanged();
+      setTimeout(() => setSyncMessage(null), 2500);
+    } catch (err) {
+      console.error('Failed to delete note:', err);
+      setSyncMessage({
+        type: 'warning',
+        text: err?.response?.data?.error || 'Failed to delete note.'
+      });
+      setTimeout(() => setSyncMessage(null), 3500);
+    }
+  };
+
+  // Save Edited Note (Matching NotesCenter.jsx FormData structure 100%)
+  const handleSaveEditNote = async (e) => {
+    e.preventDefault();
+    if (!editingNote) return;
+    try {
+      const fd = new FormData();
+      fd.append('site_id_input', (editingNote.site_ihs_id || editingNote.site || 'GENERAL').trim().toUpperCase());
+      fd.append('title', editingNote.title || 'SDM Operational Note');
+      fd.append('description', editingNote.description || editingNote.comment || '');
+      if (appendUpdateText.trim()) {
+        fd.append('append_update', appendUpdateText.trim());
+      }
+      fd.append('category', editingNote.category || 'General');
+      fd.append('priority', editingNote.priority || 'Medium');
+      fd.append('status', editingNote.status || 'Open');
+      fd.append('tower_co', editingNote.tower_co || 'IHS');
+      if (editIncidentTime) {
+        fd.append('created_at', editIncidentTime);
+      }
+      fd.append('updated_by', userName || defaultAuthor);
+      if (userName) fd.append('sdm', userName);
+      if (isRdm && userName) fd.append('rdm', userName);
+      if (currentUser?.role) fd.append('role', currentUser.role);
+      fd.append('is_superuser', isSuperuser ? 'true' : 'false');
+
+      editPhotos.forEach((p) => {
+        fd.append('photos', p.file || p);
+      });
+
+      await updateNote(editingNote.id, fd);
+      setEditingNote(null);
+      setEditPhotos([]);
+      setAppendUpdateText('');
+      loadAllNotes();
+      if (onDataChanged) onDataChanged();
+      setSyncMessage({ type: 'success', text: 'SDM Note updated!' });
+      setTimeout(() => setSyncMessage(null), 2500);
+    } catch (err) {
+      console.error('Failed to update note:', err);
+      setSyncMessage({
+        type: 'warning',
+        text: err?.response?.data?.error || 'Failed to update note.'
+      });
+      setTimeout(() => setSyncMessage(null), 3500);
+    }
+  };
+
+  // Export SDM Notes to Excel (Supports both Filtered Export & Yesterday's Notes Export)
+  const handleExportNotes = async (overrideDateFilter = null) => {
+    setExportingNotes(true);
+    try {
+      const activeDateFilter =
+        typeof overrideDateFilter === 'string' ? overrideDateFilter : notesDateFilter;
+      await exportNotesExcel({
+        sdm: isSdm ? userName : notesSdmFilter !== 'All' ? notesSdmFilter : undefined,
+        rdm: isRdm ? userName : undefined,
+        fse: isFse ? userName : undefined,
+        role: currentUser?.role,
+        user_role: currentUser?.role,
+        user_state: isRdm || isSuperuser ? undefined : stateInfo?.code,
+        is_superuser: isSuperuser ? 'true' : 'false',
+        search: notesSearch.trim() || undefined,
+        category: notesCategoryFilter !== 'All' ? notesCategoryFilter : undefined,
+        priority: notesPriorityFilter !== 'All' ? notesPriorityFilter : undefined,
+        status: notesFilter !== 'All' ? notesFilter : undefined,
+        date_filter: activeDateFilter !== 'All' ? activeDateFilter : undefined,
+        start_date: activeDateFilter === 'custom' && notesStartDate ? notesStartDate : undefined,
+        end_date: activeDateFilter === 'custom' && notesEndDate ? notesEndDate : undefined
+      });
+    } catch (err) {
+      console.error('Failed to export notes:', err);
+    } finally {
+      setExportingNotes(false);
+    }
+  };
+
+  // Submit WhatsApp Field Intel
+  const handleWhatsAppSubmit = async (e) => {
+    e.preventDefault();
+    if (!waForm.raw_message.trim()) return;
+    const payload = {
+      ...waForm,
+      site_id: (waForm.site_id || 'UNKNOWN').trim().toUpperCase()
+    };
+
+    if (isOnline && serverReachable) {
+      try {
+        await createWhatsAppMessage(payload);
+        setWaForm({ ...waForm, site_id: '', raw_message: '' });
+        setSyncMessage({ type: 'success', text: 'WhatsApp field report logged!' });
+        loadLiveFeeds(false);
+        setTimeout(() => setSyncMessage(null), 3000);
+        return;
+      } catch (err) {
+        console.warn('Failed online WA log, saving offline:', err);
+      }
+    }
+
+    saveOfflineWhatsApp(payload);
+    refreshQueues();
+    setWaForm({ ...waForm, site_id: '', raw_message: '' });
+    setSyncMessage({ type: 'warning', text: 'Queued offline for sync.' });
+    setTimeout(() => setSyncMessage(null), 3000);
+  };
+
+  // Sync Offline Queue
+  const handleSyncOfflineQueue = async () => {
+    setIsSyncing(true);
+    try {
+      const healthy = await checkServerHealth();
+      setServerReachable(healthy);
+      if (!healthy) {
+        setSyncMessage({ type: 'error', text: 'Server unreachable. Check connection.' });
+        return;
+      }
+
+      let syncedCount = 0;
+      for (const n of getPendingNotes()) {
+        try {
+          const fd = new FormData();
+          fd.append('site_id_input', n.site_id_input || n.site || 'GENERAL');
+          fd.append('title', n.title || 'Offline Field Note');
+          fd.append('description', n.description || n.comment || '');
+          fd.append('category', n.category || 'General');
+          fd.append('priority', n.priority || 'Medium');
+          fd.append('status', n.status || 'Open');
+          fd.append('tower_co', n.tower_co || 'IHS');
+          if (n.created_at) fd.append('created_at', n.created_at);
+          fd.append('created_by', n.created_by || defaultAuthor);
+          if (isRdm && userName) fd.append('rdm', userName);
+          if (currentUser?.role) fd.append('role', currentUser.role);
+          await createNote(fd);
+          removePendingNote(n.local_id);
+          syncedCount++;
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      for (const w of getPendingWhatsApp()) {
+        try {
+          const { local_id, status_sync, ...clean } = w;
+          await createWhatsAppMessage(clean);
+          removePendingWhatsApp(local_id);
+          syncedCount++;
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      for (const a of getPendingFseAudits()) {
+        try {
+          const fd = new FormData();
+          fd.append('site_id_input', a.site_id || 'GENERAL');
+          fd.append('title', `FSE Performance Audit - ${a.fse_name}`);
+          fd.append('description', `[FSE AUDIT: ${a.fse_name}] Rating: ${a.rating} — ${a.observation}`);
+          fd.append('category', 'General');
+          fd.append('priority', 'Medium');
+          fd.append('status', 'Open');
+          fd.append('created_by', defaultAuthor);
+          await createNote(fd);
+          removePendingFseAudit(a.local_id);
+          syncedCount++;
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      refreshQueues();
+      await Promise.all([loadLiveFeeds(false), loadAllNotes(), loadSitesInventory()]);
+      setSyncMessage({
+        type: 'success',
+        text: syncedCount > 0 ? `Synced ${syncedCount} offline items!` : 'All data up to date.'
+      });
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncMessage(null), 3500);
+    }
+  };
+
+  // AI Assistant Query
+  const handleSendAiPrompt = async (customText = null) => {
+    const prompt = (customText || aiInput).trim();
+    if (!prompt) return;
+    setAiMessages((prev) => [...prev, { role: 'user', content: prompt }]);
+    if (!customText) setAiInput('');
+    setAiLoading(true);
+    try {
+      const match = prompt.match(/(IHS_[A-Z0-9_]+|T\d{3,6}|FC\d{3,6})/i);
+      const siteId = match ? match[0].toUpperCase() : (selectedSite?.ihs_site_id || selectedSite?.mtn_id || '');
+      const res = await queryAIAssistant(prompt, siteId, 'chat');
+      setAiMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: res.response || res.answer || 'Diagnostic completed.' }
+      ]);
+    } catch {
+      setAiMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Unable to reach AI Engine right now. Check connection or try again.' }
+      ]);
     } finally {
       setAiLoading(false);
     }
   };
 
-  // Handle Site Card Select in Mobile
-  const handleOpenSiteDetail = async (siteItem) => {
-    try {
-      const fullData = await lookupSite(siteItem.ihs_site_id);
-      setSelectedSiteDetail(fullData);
-    } catch {
-      setSelectedSiteDetail(siteItem);
-    }
-    if (onSelectSite) onSelectSite(siteItem.ihs_site_id);
+  // Open Quick Note for a specific site
+  const openQuickNoteForSite = (siteId) => {
+    setNoteForm((prev) => ({
+      ...prev,
+      site: siteId || '',
+      title: `Field Update - ${siteId || ''}`,
+      author: defaultAuthor
+    }));
+    setNoteIncidentTime(toLocalISOString());
+    setSelectedSite(null);
+    setActiveTab('field_log');
+    setFieldLogMode('notes');
+    setShowNoteComposer(true);
+    captureGpsLocation();
   };
 
-  const pendingTotal = pendingNotes.length + pendingWa.length;
-  const lastSync = getLastSyncTime();
+  // Open AI RCA for a specific site
+  const openAiForSite = (siteId) => {
+    setSelectedSite(null);
+    setActiveTab('map_ai');
+    setMapAiMode('ai');
+    handleSendAiPrompt(`Give me full status, power setup, FSE/EFS contact, and RCA for site ${siteId}`);
+  };
 
-  // Filtered Sites for Mobile Search
-  const filteredCachedSites = cachedSites.filter(site => {
-    if (!siteSearch.trim()) return true;
-    const q = siteSearch.trim().toLowerCase();
-    return (
-      (site.ihs_site_id || '').toLowerCase().includes(q) ||
-      (site.mtn_id || '').toLowerCase().includes(q) ||
-      (site.site_address || '').toLowerCase().includes(q) ||
-      (site.state || '').toLowerCase().includes(q) ||
-      (site.power_solution || '').toLowerCase().includes(q)
-    );
-  });
-
-  // Filtered Live Notes
-  const filteredLiveNotes = liveNotes.filter(n => {
-    if (noteCategoryFilter !== 'All' && n.category !== noteCategoryFilter) return false;
-    if (notePriorityFilter !== 'All' && n.priority !== notePriorityFilter) return false;
-    return true;
-  });
-
-  // Filtered Live WhatsApp
-  const filteredLiveWa = liveWa.filter(w => {
-    if (waIssueFilter === 'Power' && !w.has_power_issue) return false;
-    if (waIssueFilter === 'Generator' && !w.has_generator_issue) return false;
-    if (waIssueFilter === 'Fuel' && !w.has_fuel_issue) return false;
-    if (waIssueFilter === 'Battery' && !w.has_battery_issue) return false;
-    if (waIssueFilter === 'Transmission' && !w.has_transmission_issue) return false;
-    return true;
-  });
+  const pendingTotal = getPendingTotalCount();
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5 pb-16 px-2 sm:px-4">
-      {/* Mobile Top Header Banner */}
-      <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center space-x-3">
-          {/* Hamburger Menu Toggle Button */}
-          <button
-            onClick={() => setIsMobileDrawerOpen(!isMobileDrawerOpen)}
-            className="p-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-400 rounded-xl border border-cyan-500/40 transition-all shadow-md flex items-center justify-center"
-            title="Toggle Mobile Navigation Drawer"
-          >
-            {isMobileDrawerOpen ? <X className="w-5 h-5 text-cyan-400" /> : <Menu className="w-5 h-5 text-cyan-400" />}
-          </button>
-
-          <div className="p-2.5 bg-cyan-500/20 text-cyan-400 rounded-xl border border-cyan-500/30 hidden sm:block">
-            <Smartphone className="w-5 h-5 animate-pulse" />
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h2 className="text-sm sm:text-base font-extrabold text-white">
-                {currentUser?.is_superuser ? 'SDM Mobile App' : `${getSDMStateInfo(currentUser).code} SDM Mobile`}
-              </h2>
-              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded-full border border-cyan-500/30">
-                {isMobileNative ? 'ANDROID APK' : 'MOBILE WEB'}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400">
-              User: <strong className="text-white">{currentUser?.full_name || currentUser?.username || 'Field SDM'}</strong>
-            </p>
-          </div>
-        </div>
-
-        {/* Status Indicator & Controls */}
-        <div className="flex items-center space-x-2">
-          {/* Log Out Quick Button */}
-          <button
-            onClick={onLogout}
-            className="px-2.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
-            title="Log Out of Mobile App Account"
-          >
-            <LogOut className="w-3.5 h-3.5 text-rose-400" />
-            <span className="hidden sm:inline">Logout</span>
-          </button>
-          <button
-            onClick={() => setShowThemeModal(true)}
-            className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all"
-            title="Change Mobile App Theme"
-          >
-            <Palette className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="capitalize hidden sm:inline">{theme} Theme</span>
-          </button>
-
-          <button
-            onClick={() => setShowServerConfig(!showServerConfig)}
-            className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl border border-slate-700 text-xs font-mono flex items-center gap-1.5 transition-all"
-            title="Configure Server Host IP"
-          >
-            <Server className="w-3.5 h-3.5 text-cyan-400" />
-            <span>IP: {serverIp}</span>
-          </button>
-
-          <button
-            onClick={loadLiveServerFeeds}
-            className="p-2 bg-slate-900 hover:bg-slate-800 text-cyan-400 rounded-xl border border-slate-700 transition-all"
-            title="Refresh Network Connection & Feeds"
-          >
-            <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
-          </button>
-
-          <div className={`px-3 py-1 rounded-xl border text-xs font-extrabold flex items-center gap-1.5 ${
-            isOnline 
-              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800' 
-              : 'bg-amber-950/80 text-amber-300 border-amber-800 animate-pulse'
-          }`}>
-            {isOnline ? <Wifi className="w-3.5 h-3.5 text-emerald-400" /> : <WifiOff className="w-3.5 h-3.5 text-amber-400" />}
-            <span>{isOnline ? 'SERVER ONLINE' : 'OFFLINE MODE'}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Native Mobile Hamburger Overlay Drawer */}
-      {isMobileDrawerOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-2xl border-b border-slate-800 animate-fadeIn p-4 overflow-y-auto space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center space-x-3">
-              <div className="p-2.5 bg-gradient-to-tr from-cyan-600 to-indigo-600 rounded-xl shadow-lg">
-                <Smartphone className="w-6 h-6 text-white animate-pulse" />
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col pb-20 select-none">
+      {/* STICKY MOBILE APP BAR */}
+      <header className="sticky top-0 z-40 bg-slate-950/95 backdrop-blur-xl border-b border-slate-800/80 px-3.5 py-2.5">
+        <div className="max-w-lg mx-auto flex items-center justify-between gap-2">
+          {/* Left: Brand / User Avatar & Territory Status */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            {currentUser?.avatar_url ? (
+              <img
+                src={getMediaUrl(currentUser.avatar_url)}
+                alt={userName || 'SDM'}
+                onClick={() => setShowSettingsSheet(true)}
+                className="w-9 h-9 rounded-xl object-cover shadow-md shrink-0 border-2 border-[#FFCC00] cursor-pointer"
+              />
+            ) : (
+              <div
+                onClick={() => setShowSettingsSheet(true)}
+                className="w-9 h-9 rounded-xl bg-[#FFCC00] text-black font-black text-xs flex items-center justify-center shadow-md shrink-0 border border-amber-300 cursor-pointer"
+              >
+                MTN
               </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-white">SDM Field Mobile App</h3>
-                <p className="text-[11px] text-cyan-400 font-semibold">{getSDMStateInfo(currentUser).code} Territory</p>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-black text-sm text-white truncate tracking-tight">
+                  {stateInfo.shortName || 'SDM'} Field Ops
+                </h1>
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    isOnline && serverReachable
+                      ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
+                      : 'bg-amber-400 animate-pulse'
+                  }`}
+                  title={isOnline && serverReachable ? 'Connected to Live Server' : 'Offline Mode'}
+                />
               </div>
+              <p className="text-[10px] text-slate-400 truncate font-medium">
+                {userName || 'SDM Engineer'} • {currentUser?.role || 'Operations'}
+              </p>
             </div>
+          </div>
+
+          {/* Right: Actions */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {pendingTotal > 0 && (
+              <button
+                onClick={handleSyncOfflineQueue}
+                disabled={isSyncing}
+                className="px-2.5 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black flex items-center gap-1 animate-pulse"
+              >
+                <UploadCloud className="w-3.5 h-3.5" />
+                <span>{pendingTotal}</span>
+              </button>
+            )}
+
             <button
-              onClick={() => setIsMobileDrawerOpen(false)}
-              className="p-2 text-slate-400 hover:text-white bg-slate-900 rounded-xl border border-slate-800"
+              onClick={() => setActiveTab('sites')}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 active:scale-95"
+              title="Search Site Inventory & IHS Matrix"
             >
-              <X className="w-6 h-6 text-cyan-400" />
+              <Search className="w-4 h-4 text-cyan-400" />
             </button>
-          </div>
 
-          {/* User Profile Info Card */}
-          <div 
-            onClick={() => {
-              setIsMobileDrawerOpen(false);
-              setShowProfileModal(true);
-            }}
-            className="glass-panel p-3.5 rounded-2xl border border-cyan-500/30 bg-slate-900/90 space-y-3 cursor-pointer hover:border-cyan-400 transition-all shadow-md group"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3 min-w-0">
-                <div className={`w-11 h-11 rounded-xl overflow-hidden flex items-center justify-center font-bold text-sm border shrink-0 ${
-                  currentUser?.is_superuser
-                    ? 'border-amber-400/60 bg-amber-950 text-amber-300'
-                    : currentUser?.role === 'MTN RDM'
-                      ? 'border-indigo-400/60 bg-indigo-950 text-indigo-300'
-                      : 'border-cyan-400/60 bg-slate-800 text-cyan-300'
-                }`}>
-                  {currentUser?.avatar_url ? (
-                    <img
-                      src={getMediaUrl(currentUser.avatar_url)}
-                      alt={currentUser.full_name || 'User'}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span>{currentUser?.full_name ? currentUser.full_name.charAt(0).toUpperCase() : 'U'}</span>
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <h4 className="text-sm font-bold text-white leading-tight truncate group-hover:text-cyan-300 transition-colors">
-                    {currentUser?.full_name || 'Field SDM'}
-                  </h4>
-                  <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-md border mt-0.5 ${
-                    currentUser?.role === 'MTN RDM'
-                      ? 'bg-indigo-950/80 text-indigo-300 border-indigo-500/40'
-                      : currentUser?.is_superuser
-                        ? 'bg-amber-950/80 text-amber-300 border-amber-500/40'
-                        : 'bg-cyan-950/80 text-cyan-300 border-cyan-500/40'
-                  }`}>
-                    {currentUser?.role || 'State Delivery Manager'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="p-2 rounded-xl bg-slate-800 text-slate-400 group-hover:text-cyan-300 group-hover:bg-cyan-500/20 transition-all flex items-center gap-1 text-[11px] font-bold">
-                <UserCog className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Profile</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-800/80">
-              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Cached Sites</span>
-                <strong className="text-cyan-300 font-mono">{cachedSites.length} Sites</strong>
-              </div>
-              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Pending Uploads</span>
-                <strong className={pendingTotal > 0 ? 'text-amber-400 font-mono' : 'text-slate-400'}>
-                  {pendingTotal} Pending
-                </strong>
-              </div>
-            </div>
-          </div>
-
-          {/* Mobile Navigation Views List */}
-          <div className="space-y-3">
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-2 mb-1.5">Core Operations</div>
-              <div className="space-y-1">
-                {[
-                  { id: 'overview', label: 'Dashboard Overview', icon: BarChart3 },
-                  { id: 'daily_avail', label: 'Daily Availability Center', icon: Calendar },
-                  { id: 'hourly_avail', label: 'Hourly Availability (24H)', icon: Clock },
-                  { id: 'sites', label: `Sites Directory (${cachedSites.length})`, icon: Layers },
-                ].map((sub) => {
-                  const IconComp = sub.icon;
-                  const isActive = activeSubTab === sub.id;
-                  return (
-                    <button
-                      key={sub.id}
-                      onClick={() => {
-                        setSelectedSiteId(null);
-                        setActiveSubTab(sub.id);
-                        setIsMobileDrawerOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-md'
-                          : 'text-slate-300 hover:bg-slate-900 border border-transparent'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <IconComp className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-                        <span>{sub.label}</span>
-                      </div>
-                      {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-2 mb-1.5">Field Control &amp; Incidents</div>
-              <div className="space-y-1">
-                {[
-                  { id: 'map', label: 'Live Geo Map & 4G Sectors', icon: MapPin },
-                  { id: 'note', label: 'Record SDM Field Note', icon: Edit3 },
-                  { id: 'fse', label: 'FSE Field Inspector', icon: UserCheck },
-                  { id: 'whatsapp', label: 'WhatsApp Field Intel', icon: MessageSquare },
-                  { id: 'tnl', label: 'Fiber & TNL Links', icon: Radio },
-                ].map((sub) => {
-                  const IconComp = sub.icon;
-                  const isActive = activeSubTab === sub.id;
-                  return (
-                    <button
-                      key={sub.id}
-                      onClick={() => {
-                        setSelectedSiteId(null);
-                        setActiveSubTab(sub.id);
-                        setIsMobileDrawerOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-md'
-                          : 'text-slate-300 hover:bg-slate-900 border border-transparent'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <IconComp className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-                        <span>{sub.label}</span>
-                      </div>
-                      {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-2 mb-1.5">Analytics &amp; Queue</div>
-              <div className="space-y-1">
-                {[
-                  { id: 'ai', label: 'AI Operations Assistant', icon: Bot },
-                  { id: 'reports', label: 'Executive Analytics', icon: TrendingUp },
-                  { id: 'queue', label: `Offline Sync Queue (${pendingTotal})`, icon: UploadCloud },
-                ].map((sub) => {
-                  const IconComp = sub.icon;
-                  const isActive = activeSubTab === sub.id;
-                  return (
-                    <button
-                      key={sub.id}
-                      onClick={() => {
-                        setSelectedSiteId(null);
-                        setActiveSubTab(sub.id);
-                        setIsMobileDrawerOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 border border-cyan-500/50 shadow-md'
-                          : 'text-slate-300 hover:bg-slate-900 border border-transparent'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <IconComp className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-                        <span>{sub.label}</span>
-                      </div>
-                      {isActive && <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-glow-cyan" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* Android APK Download Card in Drawer */}
-          <div className="p-3.5 rounded-xl border border-cyan-500/40 bg-cyan-950/40 space-y-2">
-            <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
-              <span className="flex items-center gap-1.5">
-                <Smartphone className="w-4 h-4 text-cyan-400" /> FCT SDM Mobile APK v3.0
-              </span>
-              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Native App</span>
-            </div>
-            <a
-              href="https://during-duke-susan-binary.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
-              download="FCT_SDM_Mobile_v3.apk"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center space-x-2 transition-all"
-            >
-              <UploadCloud className="w-4 h-4 text-cyan-200 rotate-180" />
-              <span>Download Android APK (6.2 MB)</span>
-            </a>
-          </div>
-
-          {/* Log Out Action Button */}
-          <div className="pt-4 border-t border-slate-800">
             <button
               onClick={() => {
-                setIsMobileDrawerOpen(false);
-                if (onLogout) onLogout();
+                loadLiveFeeds(true);
+                loadAllNotes();
+                loadSitesInventory();
               }}
-              className="w-full py-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl border border-rose-500/40 shadow-lg flex items-center justify-center space-x-2 transition-all"
+              disabled={loadingFeeds || dbLoading || loadingNotes}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 active:scale-95"
+              title="Refresh Live Telemetry"
             >
-              <LogOut className="w-4 h-4 text-rose-400" />
-              <span>Log Out of Mobile App</span>
+              <RefreshCw
+                className={`w-4 h-4 text-cyan-400 ${
+                  loadingFeeds || dbLoading || loadingNotes ? 'animate-spin' : ''
+                }`}
+              />
             </button>
-          </div>
-        </div>
-      )}
 
-      {/* Server IP Configuration Panel */}
-      {showServerConfig && (
-        <div className="glass-panel p-4 rounded-2xl border border-cyan-500/40 bg-slate-900/95 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-cyan-300 flex items-center gap-1.5 font-mono">
-              <Server className="w-4 h-4 text-cyan-400" /> CONFIGURE BACKEND SERVER IP ADDRESS
-            </h4>
-            <button type="button" onClick={() => setShowServerConfig(false)} className="text-slate-400 hover:text-white text-xs">&times;</button>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            Enter host server IP address (e.g. <code className="text-cyan-300 font-mono">192.168.1.120</code>). Target API: <code className="text-cyan-300 font-mono">http://{serverIp}:8001/api/v1</code>
-          </p>
-          <form onSubmit={handleSaveServerIp} className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="e.g. 192.168.1.120"
-              value={serverIp}
-              onChange={(e) => setServerIp(e.target.value)}
-              required
-              className="flex-1 bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
-            />
             <button
-              type="submit"
-              className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all"
+              onClick={() => setShowSettingsSheet(true)}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 active:scale-95 relative"
+              title="Settings & Account"
             >
-              Update Server IP
+              <SlidersHorizontal className="w-4 h-4 text-[#FFCC00]" />
             </button>
-          </form>
-        </div>
-      )}
-
-      {/* Sync Status Banner */}
-      {syncStatusMsg && (
-        <div className={`p-3.5 rounded-xl text-xs border flex items-center justify-between ${
-          syncStatusMsg.type === 'success' ? 'bg-emerald-950/60 text-emerald-200 border-emerald-800' :
-          syncStatusMsg.type === 'error' ? 'bg-rose-950/60 text-rose-200 border-rose-800' :
-          syncStatusMsg.type === 'info' ? 'bg-cyan-950/60 text-cyan-200 border-cyan-800' :
-          'bg-amber-950/60 text-amber-200 border-amber-800'
-        }`}>
-          <span>{syncStatusMsg.text}</span>
-          <button onClick={() => setSyncStatusMsg(null)} className="text-slate-400 hover:text-white text-xs font-bold pl-2">&times;</button>
-        </div>
-      )}
-
-      {/* Mobile KPI Summary Quick Bar */}
-      {dashboardStats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          <div className="glass-card p-3 rounded-xl border border-slate-800 text-center">
-            <div className="text-[10px] text-slate-400 font-bold uppercase">Total Sites</div>
-            <div className="text-lg font-extrabold text-white font-mono">{dashboardStats.total_sites || 0}</div>
-          </div>
-          <div className="glass-card p-3 rounded-xl border border-red-500/30 bg-red-950/20 text-center">
-            <div className="text-[10px] text-red-300 font-bold uppercase">Sites Down</div>
-            <div className="text-lg font-extrabold text-red-400 font-mono">{dashboardStats.sites_down || 0}</div>
-          </div>
-          <div className="glass-card p-3 rounded-xl border border-amber-500/30 bg-amber-950/20 text-center">
-            <div className="text-[10px] text-amber-300 font-bold uppercase">Critical Sites</div>
-            <div className="text-lg font-extrabold text-amber-300 font-mono">{dashboardStats.critical_sites || 0}</div>
-          </div>
-          <div className="glass-card p-3 rounded-xl border border-cyan-500/30 bg-cyan-950/20 text-center">
-            <div className="text-[10px] text-cyan-300 font-bold uppercase">Open Incidents</div>
-            <div className="text-lg font-extrabold text-cyan-300 font-mono">{dashboardStats.open_incidents || 0}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Native APK Direct Download Home Page Banner */}
-      <div className="glass-panel p-4 rounded-2xl border border-cyan-500/50 bg-gradient-to-r from-cyan-950/80 via-slate-900/90 to-indigo-950/80 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-center space-x-3">
-          <div className="p-3 bg-gradient-to-tr from-cyan-600 to-indigo-600 rounded-xl shadow-lg text-white">
-            <Smartphone className="w-6 h-6 animate-pulse" />
-          </div>
-          <div>
-            <h3 className="text-xs sm:text-sm font-extrabold text-white flex items-center gap-2">
-              <span>FCT SDM Mobile Native App (v3.0)</span>
-              <span className="px-2 py-0.5 text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full">
-                ANDROID APK
-              </span>
-            </h3>
-            <p className="text-[11px] text-slate-300">
-              Download and install the native Android APK directly on your phone.
-            </p>
           </div>
         </div>
 
-        <a
-          href="https://during-duke-susan-binary.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
-          download="FCT_SDM_Mobile_v3.apk"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-cyan-500/20 flex items-center justify-center space-x-2 transition-all hover:scale-105 active:scale-95"
-        >
-          <UploadCloud className="w-4 h-4 text-cyan-200 rotate-180" />
-          <span>Download Android APK (6.2 MB)</span>
-        </a>
-      </div>
-
-      {/* Mobile Touch Navigation Sub-Tabs */}
-      <div className="flex overflow-x-auto p-1.5 bg-slate-900/95 rounded-2xl border border-slate-800 text-xs font-bold gap-1.5 no-scrollbar shadow-lg sticky top-0 z-30 backdrop-blur-md">
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('overview'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'overview' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4 text-cyan-400" />
-          <span>Overview</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('daily_avail'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'daily_avail' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Calendar className="w-4 h-4 text-cyan-400" />
-          <span>Daily Avail</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('hourly_avail'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'hourly_avail' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Clock className="w-4 h-4 text-amber-400" />
-          <span>Hourly Avail</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('sites'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'sites' || activeSubTab === 'profile' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Layers className="w-4 h-4 text-blue-400" />
-          <span>Sites ({cachedSites.length})</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('map'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'map' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <MapPin className="w-4 h-4 text-emerald-400" />
-          <span>Live Map</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('fse'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'fse' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4 text-amber-400" />
-          <span>FSE Audit</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('tnl'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'tnl' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Radio className="w-4 h-4 text-violet-400" />
-          <span>TNL Links</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('note'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'note' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <FileText className="w-4 h-4 text-teal-400" />
-          <span>SDM Notes</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('whatsapp'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'whatsapp' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4 text-emerald-400" />
-          <span>WhatsApp</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('ai'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'ai' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <Bot className="w-4 h-4 text-purple-400" />
-          <span>AI Assistant</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('reports'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'reports' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <TrendingUp className="w-4 h-4 text-pink-400" />
-          <span>Reports</span>
-        </button>
-
-        <button
-          onClick={() => { setSelectedSiteId(null); setActiveSubTab('queue'); }}
-          className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-            activeSubTab === 'queue' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-          }`}
-        >
-          <UploadCloud className="w-4 h-4 text-cyan-400" />
-          <span>Queue {pendingTotal > 0 ? `(${pendingTotal})` : ''}</span>
-        </button>
-
-        {currentUser?.is_superuser && (
-          <button
-            onClick={() => { setSelectedSiteId(null); setActiveSubTab('admin'); }}
-            className={`py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-              activeSubTab === 'admin' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+        {/* Toast Notification Banner */}
+        {syncMessage && (
+          <div
+            className={`max-w-lg mx-auto mt-2 px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-between border ${
+              syncMessage.type === 'success'
+                ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-300'
+                : syncMessage.type === 'warning'
+                  ? 'bg-amber-950/90 border-amber-500/40 text-amber-300'
+                  : 'bg-rose-950/90 border-rose-500/40 text-rose-300'
             }`}
           >
-            <UserCheck className="w-4 h-4 text-red-400" />
-            <span>Admin</span>
-          </button>
-        )}
-      </div>
-
-      {/* Sub-Tab 0: Overview Summary */}
-      {activeSubTab === 'overview' && (
-        <div className="space-y-4">
-          {/* Quick Action Bar */}
-          <div className="grid grid-cols-4 gap-1.5">
-            <button
-              onClick={() => { setSelectedSiteId(null); setActiveSubTab('daily_avail'); }}
-              className="py-3 px-1 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-[11px] rounded-xl shadow-lg flex flex-col items-center justify-center gap-1 transition-all"
-            >
-              <Calendar className="w-4 h-4 text-cyan-200" />
-              <span>Daily Avail</span>
-            </button>
-
-            <button
-              onClick={() => { setSelectedSiteId(null); setActiveSubTab('note'); }}
-              className="py-3 px-1 bg-slate-900 hover:bg-slate-800 text-slate-200 font-bold text-[11px] rounded-xl border border-slate-700 flex flex-col items-center justify-center gap-1 transition-all"
-            >
-              <FileText className="w-4 h-4 text-teal-400" />
-              <span>Log Note</span>
-            </button>
-
-            <button
-              onClick={() => { setSelectedSiteId(null); setActiveSubTab('fse'); }}
-              className="py-3 px-1 bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold text-[11px] rounded-xl border border-amber-500/30 flex flex-col items-center justify-center gap-1 transition-all"
-            >
-              <ShieldCheck className="w-4 h-4 text-amber-400" />
-              <span>FSE Audit</span>
-            </button>
-
-            <button
-              onClick={() => { setSelectedSiteId(null); setActiveSubTab('whatsapp'); }}
-              className="py-3 px-1 bg-slate-900 hover:bg-slate-800 text-emerald-300 font-bold text-[11px] rounded-xl border border-emerald-500/30 flex flex-col items-center justify-center gap-1 transition-all"
-            >
-              <MessageSquare className="w-4 h-4 text-emerald-400" />
-              <span>WhatsApp</span>
+            <span className="truncate">{syncMessage.text}</span>
+            <button onClick={() => setSyncMessage(null)} className="ml-2 text-slate-400">
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
+        )}
+      </header>
 
-          {/* Quick Search & Field Sites List */}
-          <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-                <Layers className="w-4 h-4 text-cyan-400" /> Assigned Sites ({cachedSites.length})
-              </h3>
+      {/* MAIN MOBILE CONTENT AREA */}
+      <main className="flex-1 w-full max-w-lg mx-auto px-3.5 pt-3 pb-6 space-y-4">
+        {/* ============================================================
+            TAB 1: HOME OVERVIEW
+        ============================================================ */}
+        {activeTab === 'overview' && (
+          <div className="space-y-4">
+            {/* 2x2 Touch KPI Grid */}
+            <div className="grid grid-cols-2 gap-2.5">
               <button
-                onClick={() => setActiveSubTab('sites')}
-                className="text-[11px] text-cyan-400 hover:underline font-bold flex items-center gap-0.5"
+                onClick={() => {
+                  setSitesMode('inventory');
+                  setSiteStatus('All');
+                  setActiveTab('sites');
+                }}
+                className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800/90 text-left active:scale-[0.98] transition-transform"
               >
-                <span>View All</span>
-                <ChevronRight className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Site Inventory
+                  </span>
+                  <Database className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div className="text-2xl font-black text-white mt-1 font-mono">
+                  {summaryStats.total.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-cyan-400 font-semibold mt-0.5 flex items-center gap-0.5">
+                  <span>Sites & IHS Matrix</span>
+                  <ChevronRight className="w-3 h-3" />
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSiteStatus('Down');
+                  setDbPage(1);
+                  setActiveTab('sites');
+                }}
+                className="p-3.5 rounded-2xl bg-rose-950/30 border border-rose-500/30 text-left active:scale-[0.98] transition-transform"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-rose-300">Down Sites</span>
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                </div>
+                <div className="text-2xl font-black text-rose-400 mt-1 font-mono">
+                  {summaryStats.down.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-rose-300/80 font-semibold mt-0.5 flex items-center gap-0.5">
+                  <span>Dispatch FSE / EFS</span>
+                  <ChevronRight className="w-3 h-3" />
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSitePriority('P1');
+                  setDbPage(1);
+                  setActiveTab('sites');
+                }}
+                className="p-3.5 rounded-2xl bg-amber-950/25 border border-amber-500/30 text-left active:scale-[0.98] transition-transform"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300">Critical P1</span>
+                  <Zap className="w-4 h-4 text-[#FFCC00]" />
+                </div>
+                <div className="text-2xl font-black text-[#FFCC00] mt-1 font-mono">
+                  {summaryStats.p1.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-amber-300/80 font-semibold mt-0.5 flex items-center gap-0.5">
+                  <span>Priority hubs</span>
+                  <ChevronRight className="w-3 h-3" />
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setFieldLogMode('notes');
+                  setActiveTab('field_log');
+                }}
+                className="p-3.5 rounded-2xl bg-cyan-950/25 border border-cyan-500/30 text-left active:scale-[0.98] transition-transform"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">SDM Notes</span>
+                  <Activity className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div className="text-2xl font-black text-cyan-300 mt-1 font-mono">
+                  {summaryStats.allNotesCount.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-cyan-300/80 font-semibold mt-0.5 flex items-center gap-0.5">
+                  <span>{summaryStats.openNotes} Open • View all</span>
+                  <ChevronRight className="w-3 h-3" />
+                </div>
               </button>
             </div>
 
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
-              <input
-                type="text"
-                placeholder="Search site ID, state, vendor..."
-                value={siteSearch}
-                onChange={(e) => setSiteSearch(e.target.value)}
-                className="w-full bg-slate-950 text-xs text-white pl-9 pr-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-cyan-400"
-              />
+            {/* Daily Availability SLA Card */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/40 border border-slate-800 shadow-lg">
+              <div className="flex items-center justify-between mb-2.5">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#FFCC00] block">
+                    Network Availability SLA
+                  </span>
+                  <h2 className="text-xs text-slate-400 font-medium truncate">
+                    {availStats?.date_range || availStats?.active_filename || 'Active Daily Availability'}
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setActiveTab('availability')}
+                  className="px-3 py-1.5 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center gap-1 active:scale-95 shrink-0"
+                >
+                  <span>Full SLA</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2 pt-1">
+                <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                  <div className="text-[10px] text-slate-400 font-bold">OVERALL</div>
+                  <div className="text-sm font-black text-emerald-400 font-mono mt-0.5">
+                    {availStats?.overall_avg != null
+                      ? `${Number(availStats.overall_avg).toFixed(2)}%`
+                      : '98.4%'}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                  <div className="text-[10px] text-slate-400 font-bold">2G</div>
+                  <div className="text-sm font-black text-cyan-300 font-mono mt-0.5">
+                    {availStats?.tech_breakdown?.['2G']?.avg != null
+                      ? `${Number(availStats.tech_breakdown['2G'].avg).toFixed(1)}%`
+                      : '—'}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                  <div className="text-[10px] text-slate-400 font-bold">3G</div>
+                  <div className="text-sm font-black text-indigo-300 font-mono mt-0.5">
+                    {availStats?.tech_breakdown?.['3G']?.avg != null
+                      ? `${Number(availStats.tech_breakdown['3G'].avg).toFixed(1)}%`
+                      : '—'}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                  <div className="text-[10px] text-slate-400 font-bold">4G LTE</div>
+                  <div className="text-sm font-black text-[#FFCC00] font-mono mt-0.5">
+                    {availStats?.tech_breakdown?.['4G']?.avg != null
+                      ? `${Number(availStats.tech_breakdown['4G'].avg).toFixed(1)}%`
+                      : '—'}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {filteredCachedSites.length === 0 ? (
-                <div className="p-6 text-center text-slate-500 text-xs">No sites found matching search.</div>
-              ) : (
-                filteredCachedSites.slice(0, 8).map(s => (
-                  <div
-                    key={s.id || s.ihs_site_id}
-                    onClick={() => handleMobileSelectSite(s.ihs_site_id)}
-                    className="p-3 bg-slate-900/90 hover:bg-slate-800/90 rounded-xl border border-slate-800/80 flex items-center justify-between cursor-pointer transition-all active:scale-[0.99]"
+            {/* 4 Quick Field Action Buttons */}
+            <div className="grid grid-cols-4 gap-2">
+              <button
+                onClick={() => {
+                  setActiveTab('field_log');
+                  setFieldLogMode('notes');
+                  setShowNoteComposer(true);
+                  captureGpsLocation();
+                }}
+                className="p-3 rounded-2xl bg-cyan-600/20 border border-cyan-500/40 flex flex-col items-center justify-center gap-1.5 active:scale-95"
+              >
+                <PlusCircle className="w-5 h-5 text-cyan-400" />
+                <span className="text-[10px] font-bold text-cyan-200 text-center leading-tight">Log Note</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSitesMode('ihs_matrix');
+                  setDbPage(1);
+                  setActiveTab('sites');
+                }}
+                className="p-3 rounded-2xl bg-purple-600/20 border border-purple-500/40 flex flex-col items-center justify-center gap-1.5 active:scale-95"
+              >
+                <FileSpreadsheet className="w-5 h-5 text-purple-400" />
+                <span className="text-[10px] font-bold text-purple-200 text-center leading-tight">IHS Matrix</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('field_log');
+                  setFieldLogMode('fse');
+                }}
+                className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/40 flex flex-col items-center justify-center gap-1.5 active:scale-95"
+              >
+                <UserCheck className="w-5 h-5 text-[#FFCC00]" />
+                <span className="text-[10px] font-bold text-amber-200 text-center leading-tight">FSE Directory</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('map_ai');
+                  setMapAiMode('ai');
+                }}
+                className="p-3 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex flex-col items-center justify-center gap-1.5 active:scale-95"
+              >
+                <Bot className="w-5 h-5 text-indigo-400" />
+                <span className="text-[10px] font-bold text-indigo-200 text-center leading-tight">Ask AI</span>
+              </button>
+            </div>
+
+            {/* Priority / Down Sites Quick Dispatch */}
+            {urgentSites.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <ShieldAlert className="w-4 h-4 text-rose-400" />
+                    <span>Priority Site Dispatch</span>
+                  </h3>
+                  <button
+                    onClick={() => setActiveTab('sites')}
+                    className="text-[11px] font-bold text-cyan-400"
                   >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-cyan-300 font-mono text-xs">{s.ihs_site_id}</span>
-                        <span className="text-[10px] text-slate-400 font-medium">({s.state || 'FCT'})</span>
+                    All Sites ({summaryStats.total.toLocaleString()})
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {urgentSites.map((s) => {
+                    const raw = s.raw_data || {};
+                    const siteId = s.ihs_site_id || s.mtn_id || 'SITE';
+                    const fseName = s.smc_fse_name || raw['FSE NAME'] || 'Unassigned';
+                    const fsePhone = s.smc_fse_phone || raw['FSE CONTACT NO.'] || s.efs_phone || s.sdm_phone;
+                    const waPhone = formatWhatsAppPhone(fsePhone);
+                    const isDown = s.is_down || s.operational_status === 'Down';
+
+                    return (
+                      <div
+                        key={s.id || siteId}
+                        className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between gap-2"
+                      >
+                        <div
+                          onClick={() => setSelectedSite(s)}
+                          className="min-w-0 flex-1 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-black text-sm text-white">{siteId}</span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold ${
+                                isDown
+                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              }`}
+                            >
+                              {s.operational_status || 'Operational'}
+                            </span>
+                            {s.priority && (
+                              <span className="text-[9px] font-mono text-amber-300 bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-500/30">
+                                {s.priority}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                            {s.cluster_name || s.site_address || s.lga || 'FCT'}
+                          </p>
+                          <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                            FSE: <span className="text-slate-300 font-semibold">{fseName}</span>
+                            {s.efs_name ? ` • EFS: ${s.efs_name}` : ''}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {fsePhone && (
+                            <a
+                              href={`tel:${fsePhone}`}
+                              className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 active:scale-95"
+                              title="Call FSE / EFS"
+                            >
+                              <Phone className="w-4 h-4" />
+                            </a>
+                          )}
+                          {waPhone && (
+                            <a
+                              href={`https://wa.me/${waPhone}?text=${encodeURIComponent(
+                                `Hello ${fseName}, requesting urgent field status update on Site ${siteId} (${s.cluster_name || s.site_address || ''}).`
+                              )}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-2.5 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 active:scale-95"
+                              title="WhatsApp FSE"
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                            </a>
+                          )}
+                          <button
+                            onClick={() => setSelectedSite(s)}
+                            className="p-2.5 rounded-xl bg-slate-800 text-slate-300 active:scale-95"
+                            title="Inspect Site"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                      <p className="text-[11px] text-slate-400 truncate max-w-[220px]">{s.site_name || s.vendor_name || 'SDM Field Site'}</p>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Uploaded Files & Site Photo Evidence Strip */}
+            <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-[#FFCC00]" />
+                  <span>Uploaded Files &amp; Site Evidence Photos</span>
+                </span>
+                <button
+                  onClick={() => {
+                    setFieldLogMode('notes');
+                    setNotesWithPhotosOnly(true);
+                    setShowPhotosGallery(true);
+                    setActiveTab('field_log');
+                  }}
+                  className="text-[11px] font-bold text-[#FFCC00] flex items-center gap-0.5"
+                >
+                  <span>All {allUploadedPhotos.length} Photos</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Uploaded Datasets Summary Pills */}
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <button
+                  onClick={() => setActiveTab('availability')}
+                  className="p-2 rounded-xl bg-slate-950 border border-slate-800 text-left flex items-center gap-2 active:scale-95"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-slate-400 block font-bold">SLA Uploaded Files ({availArchives.length || 50})</span>
+                    <span className="text-emerald-300 font-mono font-bold truncate block">
+                      {availStats?.active_filename || availArchives[0]?.filename || '2026-10-24.xlsb'}
+                    </span>
                   </div>
-                ))
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('sites')}
+                  className="p-2 rounded-xl bg-slate-950 border border-slate-800 text-left flex items-center gap-2 active:scale-95"
+                >
+                  <Database className="w-4 h-4 text-cyan-400 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-slate-400 block font-bold">Active WSD Master File</span>
+                    <span className="text-cyan-300 font-mono font-bold truncate block">
+                      {wsdStatus?.active_filename || 'WSD October 2026 v1.0.xlsx'}
+                    </span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Uploaded Site Evidence Photos Horizontal Carousel */}
+              {allUploadedPhotos.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1">
+                  {allUploadedPhotos.slice(0, 14).map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setLightboxImage(item.url)}
+                      className="relative w-20 h-20 rounded-xl overflow-hidden border border-slate-700 shrink-0 group active:scale-95"
+                    >
+                      <img
+                        src={item.url}
+                        alt={item.siteCode}
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-x-0 bottom-0 bg-black/80 px-1 py-0.5 text-[9px] font-mono font-bold text-cyan-300 truncate">
+                        {item.siteCode}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recent SDM Operational Notes Stream */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
+                  Recent SDM Notes ({summaryStats.allNotesCount.toLocaleString()})
+                </h3>
+                <button
+                  onClick={() => {
+                    setFieldLogMode('notes');
+                    setActiveTab('field_log');
+                  }}
+                  className="text-[11px] font-bold text-cyan-400"
+                >
+                  View All ({summaryStats.allNotesCount.toLocaleString()})
+                </button>
+              </div>
+
+              {liveNotes.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80 text-center text-xs text-slate-500">
+                  {loadingNotes ? 'Loading SDM operational notes...' : 'No SDM notes found for this filter.'}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {liveNotes.slice(0, 5).map((n) => {
+                    const siteCode = n.site_ihs_id || n.site_id_str || n.site || 'GENERAL';
+                    const bodyText = n.description || n.comment || '';
+                    const creator = n.created_by || n.author || 'SDM';
+                    const photos = n.attachments || n.photos || [];
+                    return (
+                      <div
+                        key={n.id}
+                        className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono font-black text-xs text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded-lg border border-cyan-500/30 shrink-0">
+                              {siteCode}
+                            </span>
+                            <span className="text-xs font-bold text-white truncate">
+                              {n.title || n.category}
+                            </span>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${
+                              n.status === 'Resolved'
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : 'bg-amber-500/20 text-amber-300'
+                            }`}
+                          >
+                            {n.status || 'Open'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">{bodyText}</p>
+                        {Array.isArray(photos) && photos.length > 0 && (
+                          <div className="flex items-center gap-1.5 overflow-x-auto pt-1">
+                            {photos.map((ph, i) => {
+                              const imgUrl = getMediaUrl(ph.file || ph.image || ph.photo_url);
+                              return (
+                                <button
+                                  key={ph.id || i}
+                                  type="button"
+                                  onClick={() => setLightboxImage(imgUrl)}
+                                  className="w-14 h-14 rounded-lg overflow-hidden border border-slate-700 shrink-0"
+                                >
+                                  <img src={imgUrl} alt="Evidence" loading="lazy" className="w-full h-full object-cover" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between pt-1 text-[10px] text-slate-400">
+                          <span className="truncate">
+                            By <b className="text-slate-200">{creator}</b> •{' '}
+                            {n.created_at ? new Date(n.created_at).toLocaleDateString() : ''}
+                          </span>
+                          {n.status !== 'Resolved' && (
+                            <button
+                              onClick={() => handleQuickResolveNote(n)}
+                              className="text-emerald-400 font-bold flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 shrink-0"
+                            >
+                              <Check className="w-3 h-3" /> Resolve
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Sub-Tab 1: Create & View SDM Operational Notes */}
-      {activeSubTab === 'note' && (
-        <div className="space-y-4">
-          {/* Note Form */}
-          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <FileText className="w-4 h-4 text-cyan-400" />
-                {editingNote ? `Edit Note: ${editingNote.site_ihs_id || noteSiteId}` : 'Create Field SDM Operational Note'}
-              </h3>
-              <div className="flex items-center gap-2">
-                {editingNote && (
-                  <button
-                    type="button"
-                    onClick={handleResetNoteForm}
-                    className="text-[10px] px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700"
+        {/* ============================================================
+            TAB 2: SITE INVENTORY & IHS MATRIX DATABASE
+        ============================================================ */}
+        {activeTab === 'sites' && (
+          <div className="space-y-3">
+            {/* Segmented Mode Switcher: Site Inventory vs IHS Matrix Directory */}
+            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-slate-900 border border-slate-800">
+              <button
+                onClick={() => {
+                  setSitesMode('inventory');
+                  setDbPage(1);
+                }}
+                className={`py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
+                  sitesMode === 'inventory'
+                    ? 'bg-[#FFCC00] text-black shadow'
+                    : 'text-slate-400'
+                }`}
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>Site Inventory</span>
+              </button>
+              <button
+                onClick={() => {
+                  setSitesMode('ihs_matrix');
+                  setDbPage(1);
+                }}
+                className={`py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
+                  sitesMode === 'ihs_matrix'
+                    ? 'bg-[#FFCC00] text-black shadow'
+                    : 'text-slate-400'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>IHS Matrix DB</span>
+              </button>
+            </div>
+
+            {/* Header Counter & Filter Toggle */}
+            <div className="flex items-center justify-between px-1">
+              <div className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono text-[11px]">
+                  {dbTotalCount.toLocaleString()} Sites
+                </span>
+                <span className="text-slate-400 text-[11px]">
+                  {sitesMode === 'ihs_matrix' ? 'IHS Matrix Records' : 'Unified Site Database'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setShowSiteFilters(!showSiteFilters)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1 border ${
+                    showSiteFilters
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                      : 'bg-slate-900 text-slate-300 border-slate-800'
+                  }`}
+                >
+                  <Filter className="w-3 h-3" />
+                  <span>Filters</span>
+                </button>
+                <button
+                  onClick={handleResetSiteFilters}
+                  className="px-2 py-1 rounded-xl bg-slate-900 border border-slate-800 text-[10px] font-bold text-slate-400"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            {/* Search Bar */}
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+              <input
+                type="text"
+                value={siteSearch}
+                onChange={(e) => {
+                  setSiteSearch(e.target.value);
+                  setDbPage(1);
+                }}
+                placeholder="Search IHS ID (IHS_ABJ_0001A), MTN ID (FC2063), EFS, FSE, Cluster..."
+                className="w-full bg-slate-900 text-xs text-white pl-10 pr-9 py-2.5 rounded-2xl border border-slate-700/80 focus:outline-none focus:border-cyan-400 font-mono"
+              />
+              {siteSearch && (
+                <button
+                  onClick={() => {
+                    setSiteSearch('');
+                    setDbPage(1);
+                  }}
+                  className="absolute right-3 top-2.5 text-slate-400 p-0.5"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Quick Status & Priority Filter Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              {[
+                { id: 'All', label: 'All Status' },
+                { id: 'Down', label: '🔴 Down' },
+                { id: 'Operational', label: '🟢 Operational' }
+              ].map((st) => (
+                <button
+                  key={st.id}
+                  onClick={() => {
+                    setSiteStatus(st.id);
+                    setDbPage(1);
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap ${
+                    siteStatus === st.id
+                      ? 'bg-[#FFCC00] text-black font-black'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800'
+                  }`}
+                >
+                  {st.label}
+                </button>
+              ))}
+
+              {['P1', 'P2', 'P3'].map((pr) => (
+                <button
+                  key={pr}
+                  onClick={() => {
+                    setSitePriority(sitePriority === pr ? 'All' : pr);
+                    setDbPage(1);
+                  }}
+                  className={`px-2.5 py-1.5 rounded-xl text-[11px] font-mono font-bold whitespace-nowrap ${
+                    sitePriority === pr
+                      ? 'bg-cyan-500 text-slate-950 font-black'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800'
+                  }`}
+                >
+                  {pr}
+                </button>
+              ))}
+            </div>
+
+            {/* Collapsible Advanced Filter Dropdowns (State, LGA, SDM, FSE, RDM) */}
+            {showSiteFilters && (
+              <div className="p-3.5 rounded-2xl bg-slate-900/95 border border-cyan-500/30 grid grid-cols-2 gap-2.5 text-xs">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">State</label>
+                  <select
+                    value={siteStateFilter}
+                    onChange={(e) => {
+                      setSiteStateFilter(e.target.value);
+                      setDbPage(1);
+                    }}
+                    className="w-full bg-slate-950 text-white text-xs p-2 rounded-xl border border-slate-700"
                   >
-                    Cancel Edit
-                  </button>
-                )}
-                <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
-                  {isOnline ? '🟢 Live Online Save' : '📦 Local Device Queue'}
+                    <option value="All">All States ({filterOptions.states.length})</option>
+                    {filterOptions.states.map((st) => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">LGA</label>
+                  <select
+                    value={siteLgaFilter}
+                    onChange={(e) => {
+                      setSiteLgaFilter(e.target.value);
+                      setDbPage(1);
+                    }}
+                    className="w-full bg-slate-950 text-white text-xs p-2 rounded-xl border border-slate-700"
+                  >
+                    <option value="All">All LGAs ({filterOptions.lgas.length})</option>
+                    {filterOptions.lgas.map((l) => (
+                      <option key={l} value={l}>{l}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">SDM Manager</label>
+                  <select
+                    value={siteSdmFilter}
+                    disabled={isSdm}
+                    onChange={(e) => {
+                      setSiteSdmFilter(e.target.value);
+                      setDbPage(1);
+                    }}
+                    className="w-full bg-slate-950 text-white text-xs p-2 rounded-xl border border-slate-700"
+                  >
+                    {isSdm ? (
+                      <option value={userName}>{userName}</option>
+                    ) : (
+                      <>
+                        <option value="All">All SDMs ({filterOptions.sdm_names.length})</option>
+                        {filterOptions.sdm_names.map((sdm) => (
+                          <option key={sdm} value={sdm}>{sdm}</option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">SMC FSE Engineer</label>
+                  <select
+                    value={siteFseFilter}
+                    disabled={isFse}
+                    onChange={(e) => {
+                      setSiteFseFilter(e.target.value);
+                      setDbPage(1);
+                    }}
+                    className="w-full bg-slate-950 text-white text-xs p-2 rounded-xl border border-slate-700"
+                  >
+                    {isFse ? (
+                      <option value={userName}>{userName}</option>
+                    ) : (
+                      <>
+                        <option value="All">All FSEs ({filterOptions.fse_names.length})</option>
+                        {filterOptions.fse_names.map((fse) => (
+                          <option key={fse} value={fse}>{fse}</option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Loading State */}
+            {dbLoading ? (
+              <div className="p-10 rounded-2xl bg-slate-900/60 border border-slate-800 text-center space-y-2">
+                <RefreshCw className="w-6 h-6 text-cyan-400 animate-spin mx-auto" />
+                <p className="text-xs font-bold text-slate-300">
+                  Loading {sitesMode === 'ihs_matrix' ? 'IHS Matrix Directory' : 'Site Inventory'}...
+                </p>
+              </div>
+            ) : dbSites.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-slate-900/60 border border-slate-800 text-center space-y-2">
+                <Radio className="w-7 h-7 text-slate-600 mx-auto" />
+                <p className="text-xs font-bold text-slate-300">No matching sites found</p>
+                <p className="text-[11px] text-slate-500">Tap Reset to clear active filters.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {dbSites.map((s) => {
+                  const raw = s.raw_data || {};
+                  const primaryId = s.ihs_site_id || s.mtn_id || 'UNKNOWN';
+                  const altId =
+                    s.mtn_id && s.mtn_id !== primaryId
+                      ? s.mtn_id
+                      : s.ihs_site_id && s.ihs_site_id !== primaryId
+                        ? s.ihs_site_id
+                        : '';
+                  const towerCo = s.tower_co || raw['Tower Co'] || 'IHS';
+                  const smcVendor = s.smc || raw['SMC'] || 'IHS';
+                  const clusterName = s.cluster_name || raw['Cluster Name(SMC)'] || s.hvc_cluster || 'N/A';
+                  const isDown = Boolean(s.is_down || s.operational_status === 'Down');
+                  const statusLabel = s.operational_status || (isDown ? 'Down' : 'Operational');
+                  const priorityLabel = s.priority || 'P2';
+                  const sdmName = s.sdm_name || raw['SDM NAME'] || 'State Delivery Manager';
+                  const efsName = s.efs_name || raw['EFS Name'] || '';
+                  const efsPhone = s.efs_phone || raw['EFS Number'] || '';
+                  const rtoName = s.rto_name || raw['RTO Name'] || '';
+                  const rtoPhone = s.rto_phone || raw['RTO Number'] || '';
+                  const fseName = s.smc_fse_name || raw['FSE NAME'] || 'Unassigned';
+                  const fsePhone = s.smc_fse_phone || raw['FSE CONTACT NO.'] || '';
+                  const powerSol = s.power_solution || raw['Power Solution'] || '-';
+                  const dgCap = s.dg_capacity || s.dg_1_kva || raw['DG CAP'] || '';
+
+                  const dialPhone = fsePhone || efsPhone || rtoPhone || s.sdm_phone;
+                  const waPhone = formatWhatsAppPhone(dialPhone);
+
+                  return (
+                    <div
+                      key={s.id || primaryId}
+                      className={`p-3.5 rounded-2xl border transition-all space-y-2.5 ${
+                        isDown
+                          ? 'bg-rose-950/20 border-rose-500/40'
+                          : 'bg-slate-900/90 border-slate-800/90'
+                      }`}
+                    >
+                      {/* Top Header: Site ID + MTN ID + TowerCo/SMC + Status/Priority */}
+                      <div
+                        onClick={() => {
+                          setSelectedSite(s);
+                          setShowRawMatrixSpecs(false);
+                        }}
+                        className="flex items-start justify-between gap-2 cursor-pointer"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-black text-sm text-cyan-300">{primaryId}</span>
+                            {altId && (
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                                {altId}
+                              </span>
+                            )}
+                            <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-[10px] font-bold rounded border border-purple-500/30">
+                              {towerCo} ({smcVendor})
+                            </span>
+                          </div>
+                          <div className="text-xs font-bold text-emerald-300 truncate mt-1">
+                            Cluster: {clusterName}
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                            {s.site_address || s.lga || 'FCT'} • {s.state || 'FCT'} ({s.region || 'Abuja'})
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              isDown
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            }`}
+                          >
+                            {statusLabel}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-black ${
+                              priorityLabel === 'P1'
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                : 'bg-amber-500/20 text-[#FFCC00] border border-amber-500/30'
+                            }`}
+                          >
+                            {priorityLabel}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Middle Grid: SDM, EFS (IHS Matrix), SMC FSE, Power/DG */}
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80 text-[11px]">
+                        <div className="truncate">
+                          <span className="text-slate-500 block text-[9px] uppercase font-bold">SMC FSE Engineer</span>
+                          <span className="text-purple-200 font-bold truncate block">{fseName}</span>
+                          {fsePhone && <span className="text-[10px] font-mono text-emerald-400">{fsePhone}</span>}
+                        </div>
+
+                        <div className="truncate">
+                          <span className="text-slate-500 block text-[9px] uppercase font-bold">
+                            EFS Contact (IHS Matrix)
+                          </span>
+                          <span className="text-white font-bold truncate block">{efsName || rtoName || '-'}</span>
+                          {(efsPhone || rtoPhone) && (
+                            <span className="text-[10px] font-mono text-cyan-300">{efsPhone || rtoPhone}</span>
+                          )}
+                        </div>
+
+                        <div className="truncate">
+                          <span className="text-slate-500 block text-[9px] uppercase font-bold">SDM Manager</span>
+                          <span className="text-cyan-300 font-semibold truncate block">{sdmName}</span>
+                        </div>
+
+                        <div className="truncate">
+                          <span className="text-slate-500 block text-[9px] uppercase font-bold">Power & DG Cap</span>
+                          <span className="text-slate-200 font-semibold truncate block">
+                            {powerSol} {dgCap ? `(${dgCap})` : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Row: 1-Tap Call FSE / Call EFS / WhatsApp / Specs & Note */}
+                      <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                        {fsePhone && (
+                          <a
+                            href={`tel:${fsePhone}`}
+                            className="flex-1 min-w-[85px] py-2 px-2 rounded-xl bg-purple-600/25 border border-purple-500/40 text-purple-200 text-[11px] font-bold flex items-center justify-center gap-1 active:scale-95"
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>Call FSE</span>
+                          </a>
+                        )}
+                        {efsPhone && (
+                          <a
+                            href={`tel:${efsPhone}`}
+                            className="flex-1 min-w-[85px] py-2 px-2 rounded-xl bg-emerald-600/25 border border-emerald-500/40 text-emerald-200 text-[11px] font-bold flex items-center justify-center gap-1 active:scale-95"
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>Call EFS</span>
+                          </a>
+                        )}
+                        {waPhone && (
+                          <a
+                            href={`https://wa.me/${waPhone}?text=${encodeURIComponent(
+                              `Hi, checking status on Site ${primaryId} (${clusterName}).`
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="py-2 px-2.5 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[11px] font-bold flex items-center justify-center gap-1 active:scale-95"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            <span>WA</span>
+                          </a>
+                        )}
+                        <button
+                          onClick={() => openQuickNoteForSite(primaryId)}
+                          className="py-2 px-2.5 rounded-xl bg-slate-800 text-slate-200 text-[11px] font-bold flex items-center justify-center gap-1 active:scale-95"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5 text-[#FFCC00]" />
+                          <span>Note</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedSite(s);
+                            setShowRawMatrixSpecs(false);
+                          }}
+                          className="py-2 px-2.5 rounded-xl bg-slate-800 text-cyan-300 text-[11px] font-bold flex items-center justify-center gap-1 active:scale-95"
+                        >
+                          <Database className="w-3.5 h-3.5" />
+                          <span>Specs</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Server-Side Pagination Controls */}
+            {totalDbPages > 1 && (
+              <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
+                <button
+                  onClick={() => setDbPage((p) => Math.max(1, p - 1))}
+                  disabled={dbPage === 1}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 font-bold disabled:opacity-40 flex items-center gap-1"
+                >
+                  <ChevronLeft className="w-4 h-4" /> Prev
+                </button>
+                <span className="font-mono text-cyan-300 font-bold">
+                  Page {dbPage} of {totalDbPages.toLocaleString()}
+                </span>
+                <button
+                  onClick={() => setDbPage((p) => Math.min(totalDbPages, p + 1))}
+                  disabled={dbPage === totalDbPages}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 font-bold disabled:opacity-40 flex items-center gap-1"
+                >
+                  Next <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============================================================
+            TAB 3: MOBILE DAILY & HOURLY AVAILABILITY SLA
+        ============================================================ */}
+        {activeTab === 'availability' && (
+          <div className="space-y-3">
+            {/* Segmented Mode Switcher: Daily vs 24H Hourly */}
+            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-slate-900 border border-slate-800">
+              <button
+                onClick={() => setAvailMode('daily')}
+                className={`py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
+                  availMode === 'daily'
+                    ? 'bg-[#FFCC00] text-black shadow'
+                    : 'text-slate-400'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Daily Availability</span>
+              </button>
+              <button
+                onClick={() => setAvailMode('hourly')}
+                className={`py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
+                  availMode === 'hourly'
+                    ? 'bg-[#FFCC00] text-black shadow'
+                    : 'text-slate-400'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>24H Hourly SLA</span>
+              </button>
+            </div>
+
+            {/* Uploaded SLA Files Selector & Uploader Bar */}
+            <div className="p-3 rounded-2xl bg-slate-900/95 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="text-[11px] font-black text-slate-200 truncate">
+                    {availMode === 'daily'
+                      ? `Uploaded Daily SLA Files (${availArchives.length || 1})`
+                      : `Active Hourly SLA: ${availStats?.active_filename || '2pm.xlsb'}`}
+                  </span>
+                </div>
+
+                <label className="px-2.5 py-1 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-black flex items-center gap-1 cursor-pointer shrink-0 active:scale-95">
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>{uploadingAvailFile ? 'Uploading...' : 'Upload .xlsb'}</span>
+                  <input
+                    type="file"
+                    accept=".xlsb,.xlsx,.xls,.csv"
+                    onChange={handleAvailFileUpload}
+                    disabled={uploadingAvailFile}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {availMode === 'daily' && availArchives.length > 0 && (
+                <select
+                  value={selectedArchiveId}
+                  onChange={(e) => setSelectedArchiveId(e.target.value)}
+                  className="w-full bg-slate-950 text-xs text-cyan-300 font-mono p-2 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400"
+                >
+                  <option value="">
+                    📂 Active: {availStats?.active_filename || availArchives[0]?.filename} ({availStats?.date_range || availArchives[0]?.date_range || 'Latest'})
+                  </option>
+                  {availArchives.map((arch) => (
+                    <option key={arch.id} value={arch.id}>
+                      📄 {arch.filename} • {arch.date_range || arch.month_str} ({arch.records_count?.toLocaleString() || 0} rows)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Compact SLA Summary Strip */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 text-center">
+                <span className="text-[9px] text-slate-400 font-bold uppercase block">Network Avg</span>
+                <span className="text-base font-black text-emerald-400 font-mono">
+                  {availStats?.overall_avg != null
+                    ? `${Number(availStats.overall_avg).toFixed(2)}%`
+                    : '—'}
+                </span>
+              </div>
+              <div className="p-3 rounded-2xl bg-rose-950/25 border border-rose-500/30 text-center">
+                <span className="text-[9px] text-rose-300 font-bold uppercase block">&lt;95% Critical</span>
+                <span className="text-base font-black text-rose-400 font-mono">
+                  {availStats?.critical_breach_count ?? 0}
+                </span>
+              </div>
+              <div className="p-3 rounded-2xl bg-amber-950/25 border border-amber-500/30 text-center">
+                <span className="text-[9px] text-amber-300 font-bold uppercase block">&lt;98.5% Breached</span>
+                <span className="text-base font-black text-[#FFCC00] font-mono">
+                  {availStats?.sla_breached_count ?? 0}
                 </span>
               </div>
             </div>
 
-            <form onSubmit={handleSaveNote} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Target Site ID *</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. FC2700..."
-                    value={noteSiteId}
-                    onChange={(e) => setNoteSiteId(e.target.value.toUpperCase())}
-                    required
-                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Category *</label>
-                  <select
-                    value={noteCategory}
-                    onChange={(e) => setNoteCategory(e.target.value)}
-                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                  >
-                    {noteCategories.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Priority *</label>
-                  <select
-                    value={notePriority}
-                    onChange={(e) => setNotePriority(e.target.value)}
-                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                  >
-                    {notePriorities.map(p => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Status *</label>
-                  <select
-                    value={noteStatus}
-                    onChange={(e) => setNoteStatus(e.target.value)}
-                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                  >
-                    {noteStatuses.map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Incident Occurrence Time *</label>
-                  <input
-                    type="datetime-local"
-                    required
-                    value={noteIncidentTime}
-                    onChange={(e) => setNoteIncidentTime(e.target.value)}
-                    className="w-full bg-slate-900 text-xs text-white font-mono p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Created By / Field Author *</label>
-                  <input
-                    type="text"
-                    value={noteCreatedBy}
-                    onChange={(e) => setNoteCreatedBy(e.target.value)}
-                    required
-                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Note Title *</label>
+            {/* Search & SLA Filter Pills */}
+            <div className="space-y-2">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="text"
-                  placeholder="e.g. Generator AVR Replacement Completed"
-                  value={noteTitle}
-                  onChange={(e) => setNoteTitle(e.target.value)}
-                  required
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
+                  value={availSearch}
+                  onChange={(e) => setAvailSearch(e.target.value)}
+                  placeholder="Search Site ID, Element Name, LGA, Territory..."
+                  className="w-full bg-slate-900 text-xs text-white pl-10 pr-8 py-2.5 rounded-2xl border border-slate-700/80 focus:outline-none focus:border-cyan-400 font-mono"
                 />
+                {availSearch && (
+                  <button
+                    onClick={() => setAvailSearch('')}
+                    className="absolute right-3 top-2.5 text-slate-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
-              {/* Progress Update Entry / New Data Field */}
-              {editingNote && (
-                <div className="p-3 bg-cyan-950/40 rounded-xl border border-cyan-500/30 space-y-1">
-                  <label className="block text-cyan-300 font-semibold text-xs flex items-center justify-between">
-                    <span>➕ Append New Progress Update / Field Data</span>
-                    <span className="text-[10px] text-cyan-400 font-normal">Appends timestamped entry to RCA history</span>
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="e.g. FSE visited site at 18:45; swapped battery bank, power restored..."
-                    value={noteAppendUpdate}
-                    onChange={(e) => setNoteAppendUpdate(e.target.value)}
-                    className="w-full bg-slate-900 text-white p-2 rounded-lg border border-slate-700 focus:outline-none focus:border-cyan-400 text-xs"
-                  />
-                </div>
-              )}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                {[
+                  { id: '', label: 'All SLA' },
+                  { id: 'critical_under_95', label: '< 95% Critical' },
+                  { id: 'degraded_under_98_5', label: '< 98.5% Degraded' },
+                  { id: 'perfect_100', label: '100% Compliant' }
+                ].map((b) => (
+                  <button
+                    key={b.id}
+                    onClick={() => setAvailBand(b.id)}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap ${
+                      availBand === b.id
+                        ? 'bg-cyan-500 text-slate-950 font-black'
+                        : 'bg-slate-900 text-slate-400 border border-slate-800'
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                ))}
 
-              {/* Photo Picker with Camera & Watermarking */}
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Attach Photo Evidence (Auto-Stamped with Site ID, Date, Time & GPS Location)
-                </label>
+                {['2G', '3G', '4G'].map((tech) => (
+                  <button
+                    key={tech}
+                    onClick={() => setAvailTech(availTech === tech ? '' : tech)}
+                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-mono font-bold whitespace-nowrap ${
+                      availTech === tech
+                        ? 'bg-[#FFCC00] text-black font-black'
+                        : 'bg-slate-900 text-slate-400 border border-slate-800'
+                    }`}
+                  >
+                    {tech}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Availability Mobile Cards */}
+            {availLoading ? (
+              <div className="p-8 text-center text-xs text-cyan-400 font-mono flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin" /> Loading SLA records...
+              </div>
+            ) : availRecords.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
+                No availability records match this filter.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {availRecords.slice(0, 50).map((rec, idx) => {
+                  const pct = Number(
+                    rec.period_availability ?? rec.avg_availability ?? rec.latest_availability ?? 0
+                  );
+                  const isCrit = pct < 95;
+                  const isWarn = pct >= 95 && pct < 98.5;
+                  const dailyDict = rec.daily_scores && typeof rec.daily_scores === 'object' ? rec.daily_scores : {};
+                  const dayKeys = Object.keys(dailyDict).sort().slice(-7);
+                  const days = dayKeys.map((k) => ({ date: k, val: Number(dailyDict[k] ?? 0) }));
+
+                  return (
+                    <div
+                      key={rec.id || `${rec.site_id}-${rec.tech}-${idx}`}
+                      className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-black text-sm text-white">
+                              {rec.site_id}
+                            </span>
+                            {(rec.tech || rec.technology) && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-cyan-300">
+                                {rec.tech || rec.technology}
+                              </span>
+                            )}
+                            {rec.tower_co && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-500/15 text-purple-300">
+                                {rec.tower_co}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                            {rec.element_name || rec.lga || rec.territory || 'FCT'} • {rec.lga || rec.state || ''}
+                          </p>
+                        </div>
+
+                        <div
+                          className={`px-3 py-1 rounded-xl font-mono font-black text-sm shrink-0 border ${
+                            isCrit
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                              : isWarn
+                                ? 'bg-amber-500/20 text-[#FFCC00] border-amber-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          }`}
+                        >
+                          {pct.toFixed(2)}%
+                        </div>
+                      </div>
+
+                      {/* 7-Day Mini Trend Sparkbar */}
+                      {days.length > 0 && (
+                        <div className="flex items-end gap-1 h-6 pt-1">
+                          {days.map((d, i) => {
+                            const val = Math.max(8, Math.min(100, d.val));
+                            return (
+                              <div key={i} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.date}: ${d.val}%`}>
+                                <div className="w-full bg-slate-800 rounded-sm h-4 flex items-end overflow-hidden">
+                                  <div
+                                    style={{ height: `${val}%` }}
+                                    className={`w-full ${
+                                      d.val < 95 ? 'bg-rose-500' : d.val < 98.5 ? 'bg-amber-400' : 'bg-emerald-400'
+                                    }`}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/70">
+                        <span>
+                          Latest: <strong className="text-slate-200">{Number(rec.latest_availability ?? pct).toFixed(2)}%</strong>
+                        </span>
+                        <button
+                          onClick={() => openQuickNoteForSite(rec.site_id)}
+                          className="text-cyan-400 font-bold flex items-center gap-1"
+                        >
+                          <PlusCircle className="w-3 h-3" /> Log SLA Note
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============================================================
+            TAB 4: UNIFIED FIELD LOG (ALL SDM NOTES + WHATSAPP + FSE)
+        ============================================================ */}
+        {activeTab === 'field_log' && (
+          <div className="space-y-3">
+            {/* Segmented Mode Selector */}
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-2xl bg-slate-900 border border-slate-800">
+              {[
+                { id: 'notes', label: `SDM Notes (${notesTotalCount || liveNotes.length})` },
+                { id: 'whatsapp', label: 'WA Intel' },
+                { id: 'fse', label: 'FSE Check' }
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setFieldLogMode(m.id)}
+                  className={`py-2 rounded-xl text-xs font-extrabold transition-all ${
+                    fieldLogMode === m.id
+                      ? 'bg-[#FFCC00] text-black shadow'
+                      : 'text-slate-400'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {/* SUB-MODE A: ALL SDM OPERATIONAL NOTES */}
+            {fieldLogMode === 'notes' && (
+              <div className="space-y-3">
+                {/* Action Row: Record Note + Export Yesterday + Export Filtered Excel */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Camera Snap Input */}
-                  <label className="cursor-pointer px-3 py-2 bg-cyan-600/30 hover:bg-cyan-600/40 text-cyan-200 border border-cyan-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all">
-                    <Camera className="w-4 h-4 text-cyan-400" />
-                    <span>Snap Camera Photo</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handlePhotoChange}
-                      className="hidden"
-                    />
-                  </label>
+                  {!showNoteComposer && (
+                    <button
+                      onClick={() => {
+                        setNoteIncidentTime(toLocalISOString());
+                        setShowNoteComposer(true);
+                        captureGpsLocation();
+                      }}
+                      className="flex-1 min-w-[180px] py-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-[0.99]"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      <span>New SDM Note</span>
+                    </button>
+                  )}
 
-                  {/* Gallery Input */}
-                  <label className="cursor-pointer px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all">
-                    <UploadCloud className="w-4 h-4 text-slate-400" />
-                    <span>Upload Gallery Photo</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={handlePhotoChange}
-                      className="hidden"
-                    />
-                  </label>
+                  <button
+                    onClick={() => handleExportNotes('yesterday')}
+                    disabled={exportingNotes}
+                    className="py-3 px-3 rounded-2xl bg-amber-950/80 border border-amber-500/40 text-amber-300 font-bold text-[11px] flex items-center gap-1.5 shrink-0"
+                    title="Export Yesterday's Notes to Excel"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{exportingNotes ? '...' : "Yesterday's Excel"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleExportNotes()}
+                    disabled={exportingNotes}
+                    className="py-3 px-3 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 font-bold text-[11px] flex items-center gap-1.5 shrink-0"
+                    title="Export Filtered Notes to Excel"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{exportingNotes ? '...' : 'Export Filtered'}</span>
+                  </button>
                 </div>
 
-                {isProcessingPhotos && (
-                  <div className="text-xs text-cyan-400 flex items-center gap-1.5 mt-2">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Stamping Site ID, Timestamp & GPS Location onto photo canvas...</span>
-                  </div>
+                {/* New SDM Note Composer (Exact Fields as Web NotesCenter.jsx) */}
+                {showNoteComposer && (
+                  <form
+                    onSubmit={handleNoteSubmit}
+                    className="p-4 rounded-2xl bg-slate-900 border border-cyan-500/40 space-y-3 shadow-xl"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                        <Camera className="w-4 h-4" /> Record New SDM Operational Note
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowNoteComposer(false)}
+                        className="text-slate-400 p-1"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-1">
+                          Site ID (IHS / MTN Code) <span className="text-cyan-400">(Auto-FSE)</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={noteForm.site}
+                          onChange={(e) => setNoteForm({ ...noteForm, site: e.target.value.toUpperCase() })}
+                          placeholder="e.g. IHS_ABJ_0001A"
+                          className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-1">Category</label>
+                        <select
+                          value={noteForm.category}
+                          onChange={(e) => setNoteForm({ ...noteForm, category: e.target.value })}
+                          className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                        >
+                          {noteCategories.filter((c) => c !== 'All').map((cat) => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">Note Title</label>
+                      <input
+                        type="text"
+                        required
+                        value={noteForm.title}
+                        onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
+                        placeholder="e.g. Generator Overhaul Required / Fiber Cut"
+                        className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-amber-400 block mb-1">
+                        Incident / Occurrence Date & Time
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={noteIncidentTime}
+                        onChange={(e) => setNoteIncidentTime(e.target.value)}
+                        className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-amber-500/40"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-1">Priority</label>
+                        <select
+                          value={noteForm.priority}
+                          onChange={(e) => setNoteForm({ ...noteForm, priority: e.target.value })}
+                          className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                        >
+                          <option value="Low">Low</option>
+                          <option value="Medium">Medium</option>
+                          <option value="High">High</option>
+                          <option value="Critical">Critical</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-1">Status</label>
+                        <select
+                          value={noteForm.status}
+                          onChange={(e) => setNoteForm({ ...noteForm, status: e.target.value })}
+                          className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                        >
+                          <option value="Open">Open</option>
+                          <option value="In Progress">In Progress</option>
+                          <option value="Resolved">Resolved</option>
+                          <option value="Escalated">Escalated</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-1">Tower Co</label>
+                        <select
+                          value={noteForm.tower_co}
+                          onChange={(e) => setNoteForm({ ...noteForm, tower_co: e.target.value })}
+                          className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                        >
+                          <option value="IHS">IHS Towers</option>
+                          <option value="ATC">ATC</option>
+                          <option value="PAT">PAT</option>
+                          <option value="MTN">MTN Direct</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">Logged By (Author)</label>
+                      <input
+                        type="text"
+                        required
+                        value={noteForm.author}
+                        onChange={(e) => setNoteForm({ ...noteForm, author: e.target.value })}
+                        placeholder="SDM / RDM Name"
+                        className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">
+                        Description & Operational Context
+                      </label>
+                      <textarea
+                        rows={4}
+                        required
+                        value={noteForm.comment}
+                        onChange={(e) => setNoteForm({ ...noteForm, comment: e.target.value })}
+                        placeholder="Provide full details of the site issue, root cause, action required, and FSE assigned..."
+                        className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                      />
+                    </div>
+
+                    {/* Camera, Gallery & GPS Strip */}
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      <label className="py-2 px-2 rounded-xl bg-slate-950 border border-cyan-500/40 text-[11px] font-bold text-cyan-300 flex items-center justify-center gap-1 cursor-pointer">
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Camera</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          multiple
+                          onChange={handlePhotoSelect}
+                          className="hidden"
+                        />
+                      </label>
+
+                      <label className="py-2 px-2 rounded-xl bg-slate-950 border border-purple-500/40 text-[11px] font-bold text-purple-300 flex items-center justify-center gap-1 cursor-pointer">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Gallery ({notePhotos.length})</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          onChange={handlePhotoSelect}
+                          className="hidden"
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={captureGpsLocation}
+                        className="py-2 px-2 rounded-xl bg-slate-950 border border-slate-700 text-[11px] font-mono text-emerald-300 flex items-center justify-center gap-1"
+                      >
+                        <MapPin className="w-3.5 h-3.5" />
+                        <span>{gettingGps ? 'GPS...' : gpsCoords ? 'GPS OK' : 'Tag GPS'}</span>
+                      </button>
+                    </div>
+
+                    {notePhotos.length > 0 && (
+                      <div className="flex items-center gap-2 overflow-x-auto py-1">
+                        {notePhotos.map((p, idx) => (
+                          <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden border border-cyan-500/40 shrink-0">
+                            <img src={p.dataUrl} alt="Preview" className="w-full h-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => setNotePhotos((prev) => prev.filter((_, i) => i !== idx))}
+                              className="absolute top-0.5 right-0.5 bg-black/80 text-white rounded-full p-0.5"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowNoteComposer(false)}
+                        className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 py-3 rounded-xl bg-[#FFCC00] text-black font-black text-xs flex items-center justify-center gap-1.5 shadow-md"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Save SDM Note</span>
+                      </button>
+                    </div>
+                  </form>
                 )}
 
-                {notePhotoPreviews.length > 0 && (
-                  <div className="space-y-1.5 mt-3">
-                    <div className="text-[11px] font-bold text-cyan-300">
-                      Watermarked Photo Previews ({notePhotoPreviews.length}):
+                {/* Search & Filters for SDM Notes */}
+                <div className="space-y-2">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                    <input
+                      type="text"
+                      value={notesSearch}
+                      onChange={(e) => setNotesSearch(e.target.value)}
+                      placeholder="Search by Site ID, Title, FSE, Author, or Description..."
+                      className="w-full bg-slate-900 text-xs text-white pl-10 pr-8 py-2.5 rounded-2xl border border-slate-700/80"
+                    />
+                    {notesSearch && (
+                      <button
+                        onClick={() => setNotesSearch('')}
+                        className="absolute right-3 top-2.5 text-slate-400"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Status, With Photos & Gallery Filter Pills */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                    {['All', 'Open', 'In Progress', 'Resolved', 'Escalated'].map((st) => (
+                      <button
+                        key={st}
+                        onClick={() => {
+                          setNotesFilter(st);
+                          setNotesPage(1);
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap ${
+                          notesFilter === st && !notesWithPhotosOnly
+                            ? 'bg-cyan-500 text-slate-950 font-black'
+                            : 'bg-slate-900 text-slate-400 border border-slate-800'
+                        }`}
+                      >
+                        {st === 'All' ? `All (${liveNotes.length})` : st}
+                      </button>
+                    ))}
+
+                    <button
+                      onClick={() => {
+                        setNotesWithPhotosOnly(!notesWithPhotosOnly);
+                        setNotesPage(1);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap flex items-center gap-1 ${
+                        notesWithPhotosOnly
+                          ? 'bg-[#FFCC00] text-black font-black shadow'
+                          : 'bg-slate-900 text-cyan-300 border border-cyan-500/40'
+                      }`}
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>With Photos ({notesWithPhotosList.length})</span>
+                    </button>
+
+                    <button
+                      onClick={() => setShowPhotosGallery(!showPhotosGallery)}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap flex items-center gap-1 ${
+                        showPhotosGallery
+                          ? 'bg-purple-500 text-white font-black shadow'
+                          : 'bg-slate-900 text-purple-300 border border-purple-500/40'
+                      }`}
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Photo Grid ({allUploadedPhotos.length})</span>
+                    </button>
+                  </div>
+
+                  {/* Secondary Dropdowns: Date, Category, Priority, and SDM Manager */}
+                  <div className={`grid ${(isSuperuser || isRdm) ? 'grid-cols-2' : 'grid-cols-3'} gap-1.5 text-[11px]`}>
+                    <select
+                      value={notesDateFilter}
+                      onChange={(e) => {
+                        setNotesDateFilter(e.target.value);
+                        if (e.target.value !== 'custom') {
+                          setNotesStartDate('');
+                          setNotesEndDate('');
+                        }
+                      }}
+                      className="bg-slate-900 text-amber-200 px-2 py-1.5 rounded-xl border border-amber-500/30 font-semibold"
+                    >
+                      <option value="All">📅 All Dates</option>
+                      <option value="yesterday">📅 Yesterday's Notes</option>
+                      <option value="today">📅 Today's Notes</option>
+                      <option value="7days">📅 Last 7 Days</option>
+                      <option value="30days">📅 Last 30 Days</option>
+                      <option value="custom">🗓️ Custom Date Range</option>
+                    </select>
+
+                    <select
+                      value={notesCategoryFilter}
+                      onChange={(e) => setNotesCategoryFilter(e.target.value)}
+                      className="bg-slate-900 text-slate-200 px-2 py-1.5 rounded-xl border border-slate-800 font-semibold"
+                    >
+                      {noteCategories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat === 'All' ? 'All Categories' : cat}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={notesPriorityFilter}
+                      onChange={(e) => setNotesPriorityFilter(e.target.value)}
+                      className="bg-slate-900 text-slate-200 px-2 py-1.5 rounded-xl border border-slate-800 font-semibold"
+                    >
+                      <option value="All">All Priorities</option>
+                      <option value="Critical">Critical</option>
+                      <option value="High">High</option>
+                      <option value="Medium">Medium</option>
+                      <option value="Low">Low</option>
+                    </select>
+
+                    {(isSuperuser || isRdm) && (
+                      <select
+                        value={notesSdmFilter}
+                        onChange={(e) => setNotesSdmFilter(e.target.value)}
+                        className="bg-slate-900 text-indigo-200 px-2 py-1.5 rounded-xl border border-indigo-500/30 font-semibold"
+                      >
+                        <option value="All">All SDM Managers</option>
+                        {filterOptions.sdm_names.map((sdm) => (
+                          <option key={sdm} value={sdm}>{sdm}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Custom Date Range Pickers (Matching Web NotesCenter.jsx) */}
+                  {notesDateFilter === 'custom' && (
+                    <div className="grid grid-cols-2 gap-2 p-2.5 rounded-2xl bg-slate-900 border border-amber-500/30">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-1">From Date</label>
+                        <input
+                          type="date"
+                          value={notesStartDate}
+                          onChange={(e) => setNotesStartDate(e.target.value)}
+                          className="w-full bg-slate-950 text-xs text-white px-2.5 py-1.5 rounded-xl border border-slate-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 block mb-1">To Date</label>
+                        <input
+                          type="date"
+                          value={notesEndDate}
+                          onChange={(e) => setNotesEndDate(e.target.value)}
+                          className="w-full bg-slate-950 text-xs text-white px-2.5 py-1.5 rounded-xl border border-slate-700"
+                        />
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {notePhotoPreviews.map((src, i) => (
-                        <div key={i} className="relative group">
-                          <img src={src} alt="watermarked preview" className="w-20 h-20 object-cover rounded-xl border-2 border-cyan-500/40 shadow-lg" />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNotePhotos(prev => prev.filter((_, idx) => idx !== i));
-                              setNotePhotoPreviews(prev => prev.filter((_, idx) => idx !== i));
-                            }}
-                            className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white rounded-full p-0.5 text-xs shadow hover:bg-rose-500"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                  )}
+                </div>
+
+                {/* Collapsible 3-Column Site Evidence Photo Gallery */}
+                {showPhotosGallery && allUploadedPhotos.length > 0 && (
+                  <div className="p-3 rounded-2xl bg-slate-900/95 border border-purple-500/40 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-purple-200 flex items-center gap-1.5">
+                        <Camera className="w-4 h-4 text-[#FFCC00]" />
+                        <span>All Uploaded Site Evidence Photos ({allUploadedPhotos.length})</span>
+                      </span>
+                      <button
+                        onClick={() => setShowPhotosGallery(false)}
+                        className="text-[11px] font-bold text-slate-400"
+                      >
+                        Hide
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 max-h-80 overflow-y-auto pr-0.5">
+                      {allUploadedPhotos.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setLightboxImage(item.url)}
+                          className="relative aspect-square rounded-xl overflow-hidden border border-slate-700 group active:scale-95"
+                        >
+                          <img
+                            src={item.url}
+                            alt={item.siteCode}
+                            loading="lazy"
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-x-0 bottom-0 bg-black/80 px-1.5 py-1 text-left">
+                            <span className="font-mono font-black text-[10px] text-cyan-300 block truncate">
+                              {item.siteCode}
+                            </span>
+                            <span className="text-[8px] text-slate-300 block truncate">
+                              {item.noteTitle}
+                            </span>
+                          </div>
+                        </button>
                       ))}
                     </div>
                   </div>
                 )}
-              </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Detailed Operational Description *</label>
-                <textarea
-                  rows="3"
-                  placeholder="Describe root cause, action taken, FSE on site, status..."
-                  value={noteDescription}
-                  onChange={(e) => setNoteDescription(e.target.value)}
-                  required={!noteAppendUpdate.trim()}
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
+                {/* Live SDM Notes Cards (Exact Fields & Badges as Web NotesCenter.jsx) */}
+                {loadingNotes ? (
+                  <div className="p-8 text-center text-xs text-cyan-400 font-mono flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin" /> Loading SDM operational notes...
+                  </div>
+                ) : paginatedNotes.length === 0 ? (
+                  <div className="p-8 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
+                    No SDM notes found matching your current filter.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {paginatedNotes.map((n) => {
+                      const siteCode = n.site_ihs_id || n.site_id_str || n.site || 'GENERAL';
+                      const noteTitle = n.title || n.category || 'SDM Operational Note';
+                      const noteDesc = n.description || n.comment || '';
+                      const creator = n.created_by || n.author || 'State Delivery Manager';
+                      const photos = n.attachments || n.photos || [];
+                      const isResolved = n.status === 'Resolved';
+                      const canModify = isCreatorOfNote(n);
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={isSavingNote}
-                  className="flex-1 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <FileText className="w-4 h-4" />
-                  <span>{isSavingNote ? 'Saving Operational Note...' : (editingNote ? 'Update SDM Operational Note' : 'Save SDM Operational Note')}</span>
-                </button>
+                      // Duration / Resolution Time Calculation matching Web NotesCenter.jsx
+                      let durationBadge = null;
+                      if (n.created_at) {
+                        const startMs = new Date(n.created_at).getTime();
+                        const endMs =
+                          isResolved && n.resolved_at
+                            ? new Date(n.resolved_at).getTime()
+                            : Date.now();
+                        const diffMins = Math.max(0, Math.floor((endMs - startMs) / 60000));
+                        const days = Math.floor(diffMins / 1440);
+                        const hrs = Math.floor((diffMins % 1440) / 60);
+                        const mins = diffMins % 60;
+                        const durationStr =
+                          days > 0
+                            ? `${days}d ${hrs}h ${mins}m`
+                            : hrs > 0
+                              ? `${hrs}h ${mins}m`
+                              : `${mins}m`;
+                        durationBadge = (
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                              isResolved
+                                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                                : 'bg-amber-950/60 text-amber-300 border-amber-500/40'
+                            }`}
+                          >
+                            ⏱️ {isResolved ? 'Resolution Time:' : 'Duration:'} {durationStr}
+                          </span>
+                        );
+                      }
 
-                {editingNote && (
-                  <button
-                    type="button"
-                    onClick={handleResetNoteForm}
-                    className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl"
-                  >
-                    Cancel
-                  </button>
+                      const d = n.created_at ? new Date(n.created_at) : null;
+                      const dateStr = d
+                        ? d.toLocaleDateString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric'
+                          })
+                        : '';
+                      const timeStr = d
+                        ? d.toLocaleTimeString('en-GB', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })
+                        : '';
+
+                      return (
+                        <div
+                          key={n.id}
+                          className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2.5"
+                        >
+                          {/* Top Row: Site ID + Availability Shortcut + Title */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSiteSearch(siteCode);
+                                    setActiveTab('sites');
+                                  }}
+                                  className="font-mono font-black text-xs text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded-lg border border-cyan-500/30"
+                                  title="Open Site in Site Matrix"
+                                >
+                                  {siteCode}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAvailSearch(siteCode);
+                                    setActiveTab('availability');
+                                  }}
+                                  className="text-[9px] font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1"
+                                  title="View Site Daily Availability"
+                                >
+                                  <span>📊 Daily Availability</span>
+                                </button>
+                              </div>
+                              <h4 className="font-bold text-xs text-white mt-1.5">{noteTitle}</h4>
+                            </div>
+                          </div>
+
+                          {/* Badges Row matching Web NotesCenter.jsx */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              Tower Co: {n.tower_co || 'IHS'}
+                            </span>
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                              FSE: {n.smc_fse_name || 'Unassigned'}
+                            </span>
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-cyan-300 border border-slate-700">
+                              {n.category || 'General'}
+                            </span>
+                            <span
+                              className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                                n.priority === 'Critical'
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                  : n.priority === 'High'
+                                    ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
+                                    : n.priority === 'Medium'
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              }`}
+                            >
+                              Priority: {n.priority || 'Medium'}
+                            </span>
+                            <span
+                              className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                                n.status === 'Resolved'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                  : n.status === 'Escalated'
+                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                    : n.status === 'In Progress'
+                                      ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                              }`}
+                            >
+                              Status: {n.status || 'Open'}
+                            </span>
+                            {durationBadge}
+                          </div>
+
+                          {/* Note Description */}
+                          <p className="text-xs text-slate-200 whitespace-pre-line leading-relaxed bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/80">
+                            {noteDesc}
+                          </p>
+
+                          {/* Attached Evidence Photos */}
+                          {Array.isArray(photos) && photos.length > 0 && (
+                            <div className="flex items-center gap-2 overflow-x-auto pt-1">
+                              {photos.map((ph, i) => {
+                                const imgUrl = getMediaUrl(ph.file || ph.image || ph.photo_url);
+                                return (
+                                  <button
+                                    key={ph.id || i}
+                                    type="button"
+                                    onClick={() => setLightboxImage(imgUrl)}
+                                    className="w-16 h-16 rounded-xl overflow-hidden border border-slate-700 shrink-0"
+                                  >
+                                    <img
+                                      src={imgUrl}
+                                      alt={ph.caption || 'Evidence'}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Footer Metadata & Role-Aware Action Buttons */}
+                          <div className="flex flex-wrap items-center justify-between pt-2 border-t border-slate-800/80 text-[10px] text-slate-400 gap-2">
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span>
+                                  Logged By: <strong className="text-slate-200">{creator}</strong>
+                                </span>
+                                {n.site_cluster && (
+                                  <span>
+                                    • Cluster: <strong className="text-slate-300">{n.site_cluster}</strong>
+                                  </span>
+                                )}
+                              </div>
+                              {d && (
+                                <div className="flex flex-wrap items-center gap-2 text-[9px] text-slate-400">
+                                  <span>
+                                    📅 Created Date: <strong className="text-slate-300">{dateStr}</strong>
+                                  </span>
+                                  <span>
+                                    ⏰ Created Time: <strong className="text-amber-300">{timeStr}</strong>
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {canModify ? (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {!isResolved && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickResolveNote(n)}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold flex items-center gap-1"
+                                  >
+                                    <Check className="w-3 h-3" /> Quick Resolve
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingNote({
+                                      ...n,
+                                      site_ihs_id: n.site_ihs_id || n.site || ''
+                                    });
+                                    setEditIncidentTime(
+                                      n.created_at ? toLocalISOString(n.created_at) : toLocalISOString()
+                                    );
+                                    setEditPhotos([]);
+                                    setAppendUpdateText('');
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-bold flex items-center gap-1"
+                                  title="Edit / Append Note"
+                                >
+                                  <Edit3 className="w-3 h-3" /> Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteNote(n)}
+                                  className="p-1.5 rounded-lg bg-rose-950/40 border border-rose-500/30 text-rose-400"
+                                  title="Delete Note"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <span
+                                className="text-[10px] text-slate-500 italic px-2 py-1 rounded bg-slate-950/60 border border-slate-800"
+                                title="Only the note creator can edit or delete this note"
+                              >
+                                🔒 Read Only
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Notes Pagination Controls */}
+                {totalNotesPages > 1 && (
+                  <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
+                    <button
+                      onClick={() => setNotesPage((p) => Math.max(1, p - 1))}
+                      disabled={notesPage === 1}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 font-bold disabled:opacity-40 flex items-center gap-1"
+                    >
+                      <ChevronLeft className="w-4 h-4" /> Prev
+                    </button>
+                    <span className="font-mono text-cyan-300 font-bold">
+                      Page {notesPage} of {totalNotesPages} ({liveNotes.length} Notes)
+                    </span>
+                    <button
+                      onClick={() => setNotesPage((p) => Math.min(totalNotesPages, p + 1))}
+                      disabled={notesPage === totalNotesPages}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 font-bold disabled:opacity-40 flex items-center gap-1"
+                    >
+                      Next <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 )}
               </div>
-            </form>
-          </div>
+            )}
 
-          {/* Live Recent Notes Feed */}
-          {isOnline && (
-            <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-cyan-400" /> Live SDM Notes Stream ({filteredLiveNotes.length})
-                </h4>
-                <div className="flex items-center gap-2 text-xs">
-                  <select
-                    value={notePriorityFilter}
-                    onChange={(e) => setNotePriorityFilter(e.target.value)}
-                    className="bg-slate-900 text-slate-300 text-[11px] px-2 py-1 rounded-lg border border-slate-700"
-                  >
-                    <option value="All">All Priorities</option>
-                    <option value="Critical">Critical</option>
-                    <option value="High">High</option>
-                    <option value="Medium">Medium</option>
-                    <option value="Low">Low</option>
-                  </select>
+            {/* SUB-MODE B: WHATSAPP FIELD INTEL */}
+            {fieldLogMode === 'whatsapp' && (
+              <div className="space-y-3">
+                <form
+                  onSubmit={handleWhatsAppSubmit}
+                  className="p-4 rounded-2xl bg-slate-900 border border-emerald-500/30 space-y-2.5"
+                >
+                  <h3 className="text-xs font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                    <MessageSquare className="w-4 h-4" /> Log WhatsApp Field Report
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={waForm.site_id}
+                      onChange={(e) => setWaForm({ ...waForm, site_id: e.target.value.toUpperCase() })}
+                      placeholder="Site ID (e.g. IHS_ABJ_0001A)"
+                      className="bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700 font-mono"
+                    />
+                    <select
+                      value={waForm.issue_category}
+                      onChange={(e) => setWaForm({ ...waForm, issue_category: e.target.value })}
+                      className="bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                    >
+                      <option value="Power / Fuel">Power / Fuel</option>
+                      <option value="Fiber Cut">Fiber Cut</option>
+                      <option value="Generator Fault">Generator Fault</option>
+                      <option value="Access / Security">Access / Security</option>
+                      <option value="Restored">Site Restored</option>
+                    </select>
+                  </div>
+                  <textarea
+                    rows={2}
+                    required
+                    value={waForm.raw_message}
+                    onChange={(e) => setWaForm({ ...waForm, raw_message: e.target.value })}
+                    placeholder="Paste WhatsApp update from FSE or NOC group..."
+                    className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5"
+                    >
+                      <Send className="w-3.5 h-3.5" /> Save to Intel Feed
+                    </button>
+                    {waForm.raw_message.trim() && (
+                      <a
+                        href={`https://wa.me/?text=${encodeURIComponent(
+                          `*[MTN SDM FIELD REPORT - ${waForm.site_id || 'SITE'}]*\nCategory: ${waForm.issue_category}\n${waForm.raw_message}`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="py-2.5 px-3 rounded-xl bg-slate-800 text-emerald-300 text-xs font-bold flex items-center gap-1"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Share WA
+                      </a>
+                    )}
+                  </div>
+                </form>
+
+                <div className="space-y-2">
+                  {filteredWhatsApp.slice(0, 30).map((w, idx) => (
+                    <div
+                      key={w.id || idx}
+                      className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-black text-xs text-emerald-300 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                          {w.site_id || w.site_ihs_id || 'FIELD'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-bold">{w.issue_category}</span>
+                      </div>
+                      <p className="text-xs text-slate-200 leading-relaxed">{w.raw_message}</p>
+                      <div className="text-[10px] text-slate-500 flex justify-between pt-1">
+                        <span>{w.sender_name}</span>
+                        <span>{w.status_update}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
+            )}
 
-              <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-                {filteredLiveNotes.length === 0 ? (
-                  <div className="p-8 text-center text-slate-500 text-xs">No notes matching filter.</div>
-                ) : (
-                  filteredLiveNotes.map((note) => (
-                    <div key={note.id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span 
-                          onClick={() => handleMobileSelectSite(note.site_ihs_id || note.site_id || (note.title ? note.title.split(' ')[0] : ''))}
-                          className="font-extrabold text-cyan-300 font-mono cursor-pointer hover:underline"
-                        >
-                          {note.site_ihs_id || note.site_id || (note.title ? note.title.split(' ')[0] : 'General')}
-                        </span>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                            {note.tower_co || 'IHS'}
-                          </span>
-                          <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                            FSE: {note.smc_fse_name || 'Unassigned'}
-                          </span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                            note.priority === 'Critical' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-300'
-                          }`}>
-                            {note.priority}
-                          </span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                            note.status === 'Resolved' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'
-                          }`}>
-                            {note.status}
-                          </span>
+            {/* SUB-MODE C: FSE QUICK CHECK & DIRECTORY */}
+            {fieldLogMode === 'fse' && (
+              <div className="space-y-3">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    value={fseQuery}
+                    onChange={(e) => setFseQuery(e.target.value)}
+                    placeholder="Search FSE name, cluster, SDM, or Site ID..."
+                    className="w-full bg-slate-900 text-xs text-white pl-10 pr-4 py-2.5 rounded-2xl border border-slate-700/80"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  {fseDirectory.map((f) => {
+                    const wa = formatWhatsAppPhone(f.phone);
+                    return (
+                      <div
+                        key={f.name}
+                        className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <h4 className="font-bold text-sm text-white truncate">{f.name}</h4>
+                            <p className="text-[10px] text-slate-400 truncate">
+                              Cluster: {f.cluster || 'FCT'} • SDM: {f.sdm || 'N/A'}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 font-mono text-xs">
+                            <span className="px-2 py-0.5 rounded-lg bg-slate-800 text-cyan-300 font-bold">
+                              {f.totalSites} sites
+                            </span>
+                            {f.downSites > 0 && (
+                              <span className="px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-300 font-bold">
+                                {f.downSites} down
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="text-xs font-bold text-white">{note.title}</div>
-                      <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-line">{note.description}</p>
 
-                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60">
-                        <span>By: {note.created_by} ({new Date(note.created_at).toLocaleDateString()})</span>
-                        <div className="flex items-center space-x-2">
-                          <button
-                            onClick={() => handleOpenEditNote(note)}
-                            className="text-cyan-400 hover:underline font-bold flex items-center gap-1"
-                          >
-                            <Edit3 className="w-3 h-3" /> Edit
-                          </button>
-                          {note.status !== 'Resolved' && (
-                            <button
-                              onClick={() => handleQuickResolveLiveNote(note)}
-                              className="text-emerald-400 hover:underline font-bold"
+                        <div className="flex items-center gap-1.5 pt-1">
+                          {f.phone && (
+                            <a
+                              href={`tel:${f.phone}`}
+                              className="flex-1 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center justify-center gap-1"
                             >
-                              Resolve
-                            </button>
+                              <Phone className="w-3.5 h-3.5" /> Call FSE
+                            </a>
+                          )}
+                          {wa && (
+                            <a
+                              href={`https://wa.me/${wa}?text=${encodeURIComponent(
+                                `Hello ${f.name}, checking in on your cluster sites.`
+                              )}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-1 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-bold flex items-center justify-center gap-1"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" /> WhatsApp
+                            </a>
                           )}
                           <button
-                            onClick={() => handleDeleteLiveNote(note)}
-                            className="text-rose-400 hover:underline font-bold"
+                            onClick={() => {
+                              setSiteFseFilter(f.name);
+                              setDbPage(1);
+                              setActiveTab('sites');
+                            }}
+                            className="py-2 px-3 rounded-xl bg-slate-800 text-slate-200 text-xs font-bold"
                           >
-                            Delete
+                            View Sites
                           </button>
                         </div>
                       </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Sub-Tab 2: Log WhatsApp Field Intel */}
-      {activeSubTab === 'whatsapp' && (
-        <div className="space-y-4">
-          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-emerald-400" />
-                Log WhatsApp Field Intel Report
-              </h3>
-              <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-400 rounded">
-                {isOnline ? '🟢 Live Online Save' : '📦 Local Device Storage'}
-              </span>
-            </div>
-
-            <form onSubmit={handleSaveWa} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Target Site ID *</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. FC1200..."
-                    value={waSiteId}
-                    onChange={(e) => setWaSiteId(e.target.value.toUpperCase())}
-                    required
-                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-emerald-500 font-mono"
-                  />
+                    );
+                  })}
                 </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">Sender / Engineer Name</label>
-                  <input
-                    type="text"
-                    value={waSender}
-                    onChange={(e) => setWaSender(e.target.value)}
-                    required
-                    className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">WhatsApp Message Content *</label>
-                <textarea
-                  rows="3"
-                  placeholder="Paste WhatsApp update e.g: Engineer arrived site FC1200 at 10:30am. Generator running fine..."
-                  value={waMessage}
-                  onChange={(e) => setWaMessage(e.target.value)}
-                  required
-                  className="w-full bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
-              >
-                <MessageSquare className="w-4 h-4" />
-                <span>Log WhatsApp Intel</span>
-              </button>
-            </form>
-          </div>
-
-          {/* Live WhatsApp Stream */}
-          {isOnline && (
-            <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-emerald-400" /> Live WhatsApp Field Intel Stream ({filteredLiveWa.length})
-                </h4>
-                <select
-                  value={waIssueFilter}
-                  onChange={(e) => setWaIssueFilter(e.target.value)}
-                  className="bg-slate-900 text-slate-300 text-[11px] px-2 py-1 rounded-lg border border-slate-700"
-                >
-                  <option value="All">All Issues</option>
-                  <option value="Generator">Generator</option>
-                  <option value="Power">Power</option>
-                  <option value="Fuel">Fuel</option>
-                  <option value="Battery">Battery</option>
-                  <option value="Transmission">Transmission</option>
-                </select>
-              </div>
-
-              <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
-                {filteredLiveWa.length === 0 ? (
-                  <div className="p-8 text-center text-slate-500 text-xs">No WhatsApp intel matching filter.</div>
-                ) : (
-                  filteredLiveWa.map((wa) => (
-                    <div key={wa.id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1 font-sans">
-                      <div className="flex items-center justify-between text-xs">
-                        <span 
-                          onClick={() => handleOpenSiteDetail({ ihs_site_id: wa.site_id_str })}
-                          className="font-extrabold text-emerald-300 font-mono cursor-pointer hover:underline"
-                        >
-                          {wa.site_id_str || 'SITE'}
-                        </span>
-                        <span className="text-[10px] text-slate-400">{wa.sender_name}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-200 leading-relaxed">{wa.message_text}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Sub-Tab 3: Mobile AI Assistant */}
-      {activeSubTab === 'ai' && (
-        <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Bot className="w-5 h-5 text-purple-400 animate-pulse" />
-              Mobile SDM AI Field Assistant
-            </h3>
-            <span className="text-[10px] px-2 py-0.5 bg-purple-950/60 text-purple-300 border border-purple-800 rounded">
-              AI ENGINE v2.0
-            </span>
-          </div>
-
-          {/* Preset Prompts */}
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              onClick={() => handleSendAiPrompt('Show summary of current generator outage causes in FCT')}
-              className="px-2.5 py-1 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 border border-purple-800/60 rounded-lg text-[11px]"
-            >
-              ⚡ Generator Outages
-            </button>
-            <button
-              onClick={() => handleSendAiPrompt('What are the top critical sites requiring immediate intervention?')}
-              className="px-2.5 py-1 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 border border-purple-800/60 rounded-lg text-[11px]"
-            >
-              🚨 Critical Sites
-            </button>
-            <button
-              onClick={() => handleSendAiPrompt('Summarize recent WhatsApp updates for diesel refills')}
-              className="px-2.5 py-1 bg-purple-950/40 hover:bg-purple-900/60 text-purple-200 border border-purple-800/60 rounded-lg text-[11px]"
-            >
-              ⛽ Fuel Updates
-            </button>
-          </div>
-
-          {/* AI Chat Messages Window */}
-          <div className="space-y-3 max-h-80 overflow-y-auto p-3 bg-slate-950 rounded-xl border border-slate-800">
-            {aiMessages.map((msg, i) => (
-              <div key={i} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                <div className={`max-w-[85%] p-3 rounded-2xl text-xs ${
-                  msg.sender === 'user'
-                    ? 'bg-cyan-600 text-white rounded-br-none'
-                    : 'bg-slate-900 text-slate-200 border border-purple-500/30 rounded-bl-none'
-                }`}>
-                  <div className="font-bold text-[10px] text-purple-300 mb-1">
-                    {msg.sender === 'user' ? 'You (SDM)' : '🤖 SDM AI Engine'}
-                  </div>
-                  <div className="whitespace-pre-line leading-relaxed">{msg.text}</div>
-                </div>
-                <span className="text-[9px] text-slate-500 mt-1 px-1">{msg.time}</span>
-              </div>
-            ))}
-
-            {aiLoading && (
-              <div className="flex items-center space-x-2 text-xs text-purple-400 p-2">
-                <Sparkles className="w-4 h-4 animate-spin" />
-                <span>AI Assistant thinking & analyzing site data...</span>
               </div>
             )}
           </div>
+        )}
 
-          {/* Query Input Form */}
-          <form onSubmit={(e) => { e.preventDefault(); handleSendAiPrompt(); }} className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Ask AI about site issues, DG faults, or guidelines..."
-              value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
-              className="flex-1 bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-purple-500"
-            />
-            <button
-              type="submit"
-              disabled={aiLoading}
-              className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Ask</span>
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* Sub-Tab 4: SDM Site Finder & Profiles */}
-      {activeSubTab === 'sites' && (
-        <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-            <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Layers className="w-4 h-4 text-cyan-400" />
-                SDM Sites Directory ({filteredCachedSites.length} Sites)
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                Search & inspect site specifications assigned to {currentUser?.full_name || 'SDM'}.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={loadLiveServerFeeds}
-              className="px-2.5 py-1 text-xs bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-lg hover:bg-cyan-500/30"
-            >
-              Refresh Sites
-            </button>
-          </div>
-
-          {/* Search Bar */}
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search site ID, address, state, or power solution..."
-              value={siteSearch}
-              onChange={(e) => setSiteSearch(e.target.value)}
-              className="w-full bg-slate-900 text-xs text-white pl-9 pr-4 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-500"
-            />
-          </div>
-
-          {filteredCachedSites.length === 0 ? (
-            <div className="p-12 text-center text-slate-500 text-xs">
-              No matching sites found in cache. Ensure you are connected to the server network.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
-              {filteredCachedSites.slice(0, 60).map((site) => (
-                <div 
-                  key={site.id} 
-                  onClick={() => handleMobileSelectSite(site.ihs_site_id)}
-                  className="p-3.5 bg-slate-900/90 hover:bg-slate-800 rounded-xl border border-slate-800 cursor-pointer transition-all space-y-1.5 group"
+        {/* ============================================================
+            TAB 5: LIVE GEO MAP, AI ASSISTANT & FIBER LINKS
+        ============================================================ */}
+        {activeTab === 'map_ai' && (
+          <div className="space-y-3">
+            {/* Segmented Mode Bar */}
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-2xl bg-slate-900 border border-slate-800">
+              {[
+                { id: 'map', label: 'Geo Map' },
+                { id: 'ai', label: 'Field AI' },
+                { id: 'links', label: 'TNL / Fiber' }
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setMapAiMode(m.id)}
+                  className={`py-2 rounded-xl text-xs font-extrabold transition-all ${
+                    mapAiMode === m.id
+                      ? 'bg-[#FFCC00] text-black shadow'
+                      : 'text-slate-400'
+                  }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-extrabold text-cyan-300 font-mono group-hover:text-cyan-200">{site.ihs_site_id}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                      site.is_down ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    }`}>
-                      {site.operational_status || 'Active'}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-300 truncate">{site.site_address || site.cluster_name}</p>
-                  <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/60">
-                    <span>Power: {site.power_solution || 'Grid'}</span>
-                    <span>DG: {site.dg_capacity || 'N/A'}</span>
-                  </div>
-                </div>
+                  {m.label}
+                </button>
               ))}
             </div>
-          )}
-        </div>
-      )}
 
-      {/* Sub-Tab 5: Interactive Geo Map */}
-      {activeSubTab === 'map' && (
-        <div className="space-y-4">
-          <div className="glass-panel p-3 rounded-2xl border border-slate-800 min-h-[500px]">
-            <GeoMap currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
-          </div>
-        </div>
-      )}
-
-      {/* Sub-Tab 6: FSE Audit & Inspector */}
-      {activeSubTab === 'fse' && (
-        <div className="space-y-4">
-          <SiteFseInspector currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
-        </div>
-      )}
-
-      {/* Sub-Tab 7: TNL Links Directory */}
-      {activeSubTab === 'tnl' && (
-        <div className="space-y-4">
-          <TNLLinksDirectory currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
-        </div>
-      )}
-
-      {/* Sub-Tab 8: Reports & Executive Analytics */}
-      {activeSubTab === 'reports' && (
-        <div className="space-y-4">
-          <ReportsAnalytics currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
-        </div>
-      )}
-
-      {/* Sub-Tab 9: SDM Admin & User Management */}
-      {activeSubTab === 'admin' && currentUser?.is_superuser && (
-        <div className="space-y-4">
-          <SDMUserManagement currentUser={currentUser} />
-        </div>
-      )}
-
-      {/* Sub-Tab 10: Detailed Site Profile View */}
-      {activeSubTab === 'profile' && selectedSiteId && (
-        <div className="space-y-4">
-          <SiteProfile
-            siteId={selectedSiteId}
-            currentUser={currentUser}
-            onBack={() => setActiveSubTab('sites')}
-            onOpenAIWithPrompt={(promptText) => {
-              setAiQuery(promptText);
-              setActiveSubTab('ai');
-            }}
-          />
-        </div>
-      )}
-
-      {/* Sub-Tab 11: Daily Network Availability Command Center */}
-      {activeSubTab === 'daily_avail' && (
-        <div className="space-y-4">
-          <DailyAvailabilityCenter currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
-        </div>
-      )}
-
-      {/* Sub-Tab 12: Hourly Availability Command Center */}
-      {activeSubTab === 'hourly_avail' && (
-        <div className="space-y-4">
-          <HourlyAvailabilityCenter currentUser={currentUser} onSelectSite={handleMobileSelectSite} />
-        </div>
-      )}
-
-      {/* Sub-Tab 5: Offline Queue & Sync Controls */}
-      {activeSubTab === 'queue' && (
-        <div className="space-y-4">
-          <div className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <UploadCloud className="w-4 h-4 text-cyan-400" />
-                  Pending Offline Queue ({pendingTotal} Items)
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Items created offline waiting for server sync.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleSyncNow}
-                  disabled={isSyncing}
-                  className="px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                  <span>Sync Now</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearPendingQueue();
-                    refreshPendingQueues();
-                    setSyncStatusMsg({ type: 'info', text: '🗑️ Pending offline queue cleared.' });
+            {mapAiMode === 'map' && (
+              <div className="w-full">
+                <GeoMap
+                  sites={localSites}
+                  selectedSite={selectedSite}
+                  onSelectSite={(siteOrId) => {
+                    if (!siteOrId) return;
+                    if (typeof siteOrId === 'string') {
+                      const found =
+                        localSites.find(
+                          (s) => s.ihs_site_id === siteOrId || s.mtn_id === siteOrId
+                        ) ||
+                        dbSites.find(
+                          (s) => s.ihs_site_id === siteOrId || s.mtn_id === siteOrId
+                        ) || { ihs_site_id: siteOrId };
+                      setSelectedSite(found);
+                    } else {
+                      setSelectedSite(siteOrId);
+                    }
                   }}
-                  className="px-3 py-1.5 bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs rounded-xl hover:bg-rose-500/30"
+                  currentUser={currentUser}
+                />
+              </div>
+            )}
+
+            {mapAiMode === 'ai' && (
+              <div className="flex flex-col h-[68vh] rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden">
+                <div className="p-2.5 bg-slate-950 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  {[
+                    'List down sites',
+                    'Critical P1 summary',
+                    'Fiber cut checklist',
+                    'DG PM procedure'
+                  ].map((chip) => (
+                    <button
+                      key={chip}
+                      onClick={() => handleSendAiPrompt(chip)}
+                      className="px-2.5 py-1 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 text-[11px] font-bold whitespace-nowrap"
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+                  {aiMessages.map((m, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-2xl text-xs leading-relaxed max-w-[90%] ${
+                        m.role === 'user'
+                          ? 'ml-auto bg-cyan-600 text-white font-medium'
+                          : 'bg-slate-950 border border-slate-800 text-slate-200'
+                      }`}
+                    >
+                      <div className="whitespace-pre-line">{m.content}</div>
+                    </div>
+                  ))}
+                  {aiLoading && (
+                    <div className="text-xs text-cyan-400 font-mono p-2 animate-pulse">
+                      AI analyzing telemetry...
+                    </div>
+                  )}
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSendAiPrompt();
+                  }}
+                  className="p-2.5 bg-slate-950 border-t border-slate-800 flex items-center gap-2"
                 >
-                  Clear Queue
-                </button>
+                  <input
+                    type="text"
+                    value={aiInput}
+                    onChange={(e) => setAiInput(e.target.value)}
+                    placeholder="Ask about any Site ID or fault..."
+                    className="flex-1 bg-slate-900 text-xs text-white px-3.5 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={aiLoading}
+                    className="p-2.5 rounded-xl bg-[#FFCC00] text-black font-black"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
               </div>
-            </div>
+            )}
 
-            {pendingTotal === 0 ? (
-              <div className="p-12 text-center text-slate-400 text-xs">
-                No pending items in queue. All your operational notes and WhatsApp intel are synced!
-              </div>
-            ) : (
-              <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-                {/* Pending Notes */}
-                {pendingNotes.map((note) => (
-                  <div key={note.local_id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-                    <div>
-                      <div className="font-extrabold text-cyan-300 font-mono">[NOTE] {note.site_id_str} - {note.title}</div>
-                      <div className="text-[11px] text-slate-400">{note.description.slice(0, 60)}...</div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        removePendingNote(note.local_id);
-                        refreshPendingQueues();
-                      }}
-                      className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+            {mapAiMode === 'links' && (
+              <div className="space-y-2.5">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    value={tnlSearch}
+                    onChange={(e) => setTnlSearch(e.target.value)}
+                    placeholder="Search Segment Name, Site A, Site B..."
+                    className="w-full bg-slate-900 text-xs text-white pl-10 pr-4 py-2.5 rounded-2xl border border-slate-700/80 font-mono"
+                  />
+                </div>
 
-                {/* Pending WhatsApp */}
-                {pendingWa.map((wa) => (
-                  <div key={wa.local_id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-                    <div>
-                      <div className="font-extrabold text-emerald-300 font-mono">[INTEL] {wa.site_id_str} - {wa.sender_name}</div>
-                      <div className="text-[11px] text-slate-400">{wa.message_text.slice(0, 60)}...</div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        removePendingWhatsApp(wa.local_id);
-                        refreshPendingQueues();
-                      }}
-                      className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                {tnlLoading ? (
+                  <div className="p-6 text-center text-xs text-cyan-400 font-mono">Loading TNL links...</div>
+                ) : tnlLinks.length === 0 ? (
+                  <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
+                    No TNL links found.
                   </div>
-                ))}
-
-                {/* Pending FSE Audits */}
-                {pendingAudits.map((audit) => (
-                  <div key={audit.local_id} className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-                    <div>
-                      <div className="font-extrabold text-amber-300 font-mono">[FSE AUDIT] {audit.site_id} - {audit.engineer_name}</div>
-                      <div className="text-[11px] text-slate-400">DG: {audit.gen_hours || 'N/A'} hrs, Fuel: {audit.fuel_level || 'N/A'}%</div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        removePendingFseAudit(audit.local_id);
-                        refreshPendingQueues();
-                      }}
-                      className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-lg"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                ) : (
+                  <div className="space-y-2">
+                    {tnlLinks.slice(0, 30).map((lnk, i) => (
+                      <div
+                        key={lnk.id || i}
+                        className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-black text-xs text-cyan-300">
+                            {lnk.segment_name || lnk.link_id || 'TNL LINK'}
+                          </span>
+                          <span className="text-[10px] font-mono text-[#FFCC00]">
+                            {lnk.network_type || lnk.maintenance_fmp || 'Fiber/MW'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-white font-semibold">
+                          {lnk.site_a || 'Site A'} ↔ {lnk.site_b || 'Site B'}
+                        </div>
+                        {lnk.distance_km != null && (
+                          <div className="text-[10px] text-slate-400">
+                            Distance: {lnk.distance_km} km • State: {lnk.state || 'FCT'}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </main>
 
-      {/* Site Detail Overlay Modal inside Mobile View */}
-      {selectedSiteDetail && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="glass-panel max-w-xl w-full p-6 rounded-2xl border border-cyan-500/40 bg-slate-950 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div>
-                <span className="text-xs font-mono text-cyan-400 font-extrabold">{selectedSiteDetail.ihs_site_id}</span>
-                <h3 className="text-base font-extrabold text-white">{selectedSiteDetail.site_address || selectedSiteDetail.cluster_name}</h3>
+      {/* ============================================================
+          SITE INSPECTOR & FULL IHS MATRIX SPECS BOTTOM SHEET
+      ============================================================ */}
+      {selectedSite && (() => {
+        const raw = selectedSite.raw_data || {};
+        const primaryId = selectedSite.ihs_site_id || selectedSite.mtn_id || 'SITE';
+        const fseName = selectedSite.smc_fse_name || raw['FSE NAME'] || 'Unassigned';
+        const fsePhone = selectedSite.smc_fse_phone || raw['FSE CONTACT NO.'] || '';
+        const efsName = selectedSite.efs_name || raw['EFS Name'] || '';
+        const efsPhone = selectedSite.efs_phone || raw['EFS Number'] || '';
+        const rtoName = selectedSite.rto_name || raw['RTO Name'] || '';
+        const rtoPhone = selectedSite.rto_phone || raw['RTO Number'] || '';
+        const sdmName = selectedSite.sdm_name || raw['SDM NAME'] || 'State Delivery Manager';
+        const isDown = Boolean(selectedSite.is_down || selectedSite.operational_status === 'Down');
+        const rawEntries = Object.entries(raw).filter(
+          ([, v]) => v !== null && v !== undefined && String(v).trim() !== '' && String(v).trim() !== '0'
+        );
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end justify-center p-0 sm:p-4">
+            <div className="w-full max-w-lg bg-slate-900 border-t sm:border border-slate-700 rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-lg font-black font-mono text-cyan-300">{primaryId}</h2>
+                    {selectedSite.mtn_id && selectedSite.mtn_id !== primaryId && (
+                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700">
+                        MTN: {selectedSite.mtn_id}
+                      </span>
+                    )}
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                        isDown
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      }`}
+                    >
+                      {selectedSite.operational_status || 'Operational'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-1">
+                    {selectedSite.cluster_name || 'Cluster'} • {selectedSite.site_address || selectedSite.lga || 'FCT'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedSite(null)}
+                  className="p-2 rounded-full bg-slate-800 text-slate-300"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
+
+              {/* Key IHS Matrix & Site Inventory Specs */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block font-bold uppercase">Tower Co & SMC</span>
+                  <span className="font-bold text-purple-300">
+                    {selectedSite.tower_co || raw['Tower Co'] || 'IHS'} ({selectedSite.smc || raw['SMC'] || 'IHS'})
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block font-bold uppercase">Priority & Power</span>
+                  <span className="font-bold text-[#FFCC00]">
+                    {selectedSite.priority || 'P2'} • {selectedSite.power_solution || raw['Power Solution'] || 'Grid/DG'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block font-bold uppercase">SMC FSE Engineer</span>
+                  <span className="font-bold text-white block truncate">{fseName}</span>
+                  <span className="font-mono text-[11px] text-emerald-400">{fsePhone || 'N/A'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block font-bold uppercase">EFS (IHS Matrix)</span>
+                  <span className="font-bold text-white block truncate">{efsName || 'N/A'}</span>
+                  <span className="font-mono text-[11px] text-cyan-300">{efsPhone || 'N/A'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block font-bold uppercase">RTO Contact</span>
+                  <span className="font-bold text-slate-200 block truncate">{rtoName || 'N/A'}</span>
+                  <span className="font-mono text-[11px] text-slate-400">{rtoPhone || ''}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block font-bold uppercase">SDM Manager</span>
+                  <span className="font-bold text-cyan-300 block truncate">{sdmName}</span>
+                  <span className="font-mono text-[11px] text-slate-400">{selectedSite.sdm_phone || ''}</span>
+                </div>
+              </div>
+
+              {/* Direct Call / WhatsApp / Navigate Buttons */}
+              <div className="grid grid-cols-2 gap-2">
+                {fsePhone && (
+                  <a
+                    href={`tel:${fsePhone}`}
+                    className="py-2.5 px-3 rounded-xl bg-purple-500/20 border border-purple-500/40 text-purple-200 text-xs font-extrabold flex items-center justify-center gap-1.5"
+                  >
+                    <Phone className="w-4 h-4" /> Call FSE
+                  </a>
+                )}
+                {efsPhone && (
+                  <a
+                    href={`tel:${efsPhone}`}
+                    className="py-2.5 px-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold flex items-center justify-center gap-1.5"
+                  >
+                    <Phone className="w-4 h-4" /> Call EFS
+                  </a>
+                )}
+                {(fsePhone || efsPhone) && (
+                  <a
+                    href={`https://wa.me/${formatWhatsAppPhone(fsePhone || efsPhone)}?text=${encodeURIComponent(
+                      `Hello, requesting update on Site ${primaryId}.`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2.5 px-3 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 text-xs font-extrabold flex items-center justify-center gap-1.5"
+                  >
+                    <MessageSquare className="w-4 h-4" /> WhatsApp
+                  </a>
+                )}
+                {selectedSite.latitude && selectedSite.longitude && (
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${selectedSite.latitude},${selectedSite.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2.5 px-3 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-xs font-extrabold flex items-center justify-center gap-1.5"
+                  >
+                    <Navigation className="w-4 h-4" /> Navigate GPS
+                  </a>
+                )}
+              </div>
+
+              {/* Site Attached Photos & Notes (from lookupSite or liveNotes) */}
+              {(() => {
+                const siteAtts = Array.isArray(selectedSiteDetails?.attachments)
+                  ? selectedSiteDetails.attachments
+                  : [];
+                const siteNotes = Array.isArray(selectedSiteDetails?.notes)
+                  ? selectedSiteDetails.notes
+                  : liveNotes.filter(
+                      (n) =>
+                        n.site_ihs_id === primaryId ||
+                        n.site_ihs_id === selectedSite.mtn_id ||
+                        n.site === primaryId
+                    );
+                return (
+                  <>
+                    {siteAtts.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[#FFCC00] flex items-center gap-1">
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>Site Evidence Photos ({siteAtts.length})</span>
+                        </span>
+                        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                          {siteAtts.map((att, idx) => {
+                            const url = getMediaUrl(att.file || att.image);
+                            return (
+                              <button
+                                key={att.id || idx}
+                                type="button"
+                                onClick={() => setLightboxImage(url)}
+                                className="w-16 h-16 rounded-xl overflow-hidden border border-slate-700 shrink-0"
+                              >
+                                <img src={url} alt="Site Evidence" loading="lazy" className="w-full h-full object-cover" />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {siteNotes.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-cyan-300 block">
+                          Site Operational Notes ({siteNotes.length})
+                        </span>
+                        <div className="max-h-36 overflow-y-auto space-y-1.5">
+                          {siteNotes.slice(0, 5).map((sn) => (
+                            <div
+                              key={sn.id}
+                              className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] space-y-1"
+                            >
+                              <div className="flex items-center justify-between font-bold text-white">
+                                <span className="truncate">{sn.title || sn.category}</span>
+                                <span className="text-[9px] text-amber-300">{sn.status}</span>
+                              </div>
+                              <p className="text-slate-300 line-clamp-2">{sn.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              {/* Toggle All 87-Column IHS Matrix Raw Parameters */}
+              {rawEntries.length > 0 && (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setShowRawMatrixSpecs(!showRawMatrixSpecs)}
+                    className="w-full py-2 px-3 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-cyan-300 flex items-center justify-between"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Database className="w-3.5 h-3.5" />
+                      <span>All IHS Matrix Parameters ({rawEntries.length} Fields)</span>
+                    </span>
+                    <span>{showRawMatrixSpecs ? '▲ Hide' : '▼ Expand'}</span>
+                  </button>
+
+                  {showRawMatrixSpecs && (
+                    <div className="max-h-56 overflow-y-auto rounded-xl bg-slate-950 border border-slate-800 p-2.5 grid grid-cols-1 gap-1.5 text-[11px]">
+                      {rawEntries.map(([k, v]) => (
+                        <div key={k} className="flex items-start justify-between gap-2 border-b border-slate-900 pb-1">
+                          <span className="text-slate-400 font-semibold">{k}:</span>
+                          <span className="text-slate-200 font-mono text-right break-all">{String(v)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  onClick={() => openQuickNoteForSite(primaryId)}
+                  className="py-2.5 px-3 rounded-xl bg-[#FFCC00] text-black text-xs font-black flex items-center justify-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" /> Log SDM Note
+                </button>
+                <button
+                  onClick={() => openAiForSite(primaryId)}
+                  className="py-2.5 px-3 rounded-xl bg-slate-800 border border-slate-700 text-cyan-300 text-xs font-bold flex items-center justify-center gap-1.5"
+                >
+                  <Bot className="w-4 h-4" /> AI Diagnostic
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ============================================================
+          EDIT / APPEND SDM NOTE MODAL (MATCHING WEB NOTESCENTER.JSX)
+      ============================================================ */}
+      {editingNote && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={handleSaveEditNote}
+            className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-slate-900 border border-cyan-500/40 rounded-3xl p-5 space-y-3 my-auto"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-cyan-300">
+                Edit SDM Operational Note ({editingNote.site_ihs_id || editingNote.site || 'Site'})
+              </h3>
               <button
-                onClick={() => setSelectedSiteDetail(null)}
-                className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-900 border border-slate-800"
+                type="button"
+                onClick={() => {
+                  setEditingNote(null);
+                  setEditPhotos([]);
+                  setAppendUpdateText('');
+                }}
+                className="text-slate-400"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
-              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Operational Status</span>
-                <span className="font-extrabold text-cyan-300">{selectedSiteDetail.operational_status || 'Normal'}</span>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">
+                  Site ID (IHS / MTN Code)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editingNote.site_ihs_id || editingNote.site || ''}
+                  onChange={(e) =>
+                    setEditingNote({
+                      ...editingNote,
+                      site_ihs_id: e.target.value.toUpperCase()
+                    })
+                  }
+                  className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700 font-mono"
+                />
               </div>
-              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Power Solution</span>
-                <span className="font-bold text-white">{selectedSiteDetail.power_solution || 'Grid'}</span>
-              </div>
-              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">DG Capacity</span>
-                <span className="font-bold text-white">{selectedSiteDetail.dg_capacity || 'N/A'}</span>
-              </div>
-              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">State / LGA</span>
-                <span className="font-bold text-white">{selectedSiteDetail.state || 'FCT'} / {selectedSiteDetail.lga || 'Abuja'}</span>
-              </div>
-              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">SMC FSE</span>
-                <span className="font-bold text-white">{selectedSiteDetail.smc_fse_name || 'N/A'}</span>
-              </div>
-              <div className="p-2.5 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">MTN RDM</span>
-                <span className="font-bold text-white">{selectedSiteDetail.mtn_rdm_name || 'N/A'}</span>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">Category</label>
+                <select
+                  value={editingNote.category || 'General'}
+                  onChange={(e) => setEditingNote({ ...editingNote, category: e.target.value })}
+                  className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                >
+                  {noteCategories.filter((c) => c !== 'All').map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            <div className="pt-2 flex items-center justify-end gap-2">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 block mb-1">Note Title</label>
+              <input
+                type="text"
+                required
+                value={editingNote.title || ''}
+                onChange={(e) => setEditingNote({ ...editingNote, title: e.target.value })}
+                className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+              />
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-amber-400 block mb-1">
+                Incident / Occurrence Date & Time
+              </label>
+              <input
+                type="datetime-local"
+                value={editIncidentTime}
+                onChange={(e) => setEditIncidentTime(e.target.value)}
+                className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-amber-500/40"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">Priority</label>
+                <select
+                  value={editingNote.priority || 'Medium'}
+                  onChange={(e) => setEditingNote({ ...editingNote, priority: e.target.value })}
+                  className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                >
+                  <option value="Low">Low</option>
+                  <option value="Medium">Medium</option>
+                  <option value="High">High</option>
+                  <option value="Critical">Critical</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">Status</label>
+                <select
+                  value={editingNote.status || 'Open'}
+                  onChange={(e) => setEditingNote({ ...editingNote, status: e.target.value })}
+                  className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                >
+                  <option value="Open">Open</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Resolved">Resolved</option>
+                  <option value="Escalated">Escalated</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">Tower Co</label>
+                <select
+                  value={editingNote.tower_co || 'IHS'}
+                  onChange={(e) => setEditingNote({ ...editingNote, tower_co: e.target.value })}
+                  className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+                >
+                  <option value="IHS">IHS Towers</option>
+                  <option value="ATC">ATC</option>
+                  <option value="PAT">PAT</option>
+                  <option value="MTN">MTN Direct</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 block mb-1">
+                Logged By (Author)
+              </label>
+              <input
+                type="text"
+                readOnly
+                value={editingNote.created_by || editingNote.author || defaultAuthor}
+                className="w-full bg-slate-950/60 text-xs text-slate-400 p-2.5 rounded-xl border border-slate-800 cursor-not-allowed"
+              />
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 block mb-1">
+                Description & Operational Context History
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={editingNote.description || editingNote.comment || ''}
+                onChange={(e) => setEditingNote({ ...editingNote, description: e.target.value })}
+                className="w-full bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700"
+              />
+            </div>
+
+            <div className="p-2.5 rounded-2xl bg-cyan-950/30 border border-cyan-500/30">
+              <label className="text-[10px] font-bold text-cyan-300 block mb-1">
+                ➕ Append New Progress Update / Field Data
+              </label>
+              <textarea
+                rows={2}
+                value={appendUpdateText}
+                onChange={(e) => setAppendUpdateText(e.target.value)}
+                placeholder="Type a new progress update, diesel delivery quantity, or FSE feedback to append with a timestamp..."
+                className="w-full bg-slate-950 text-xs text-white p-2 rounded-xl border border-cyan-500/40"
+              />
+            </div>
+
+            {/* Existing Attached Photos */}
+            {Array.isArray(editingNote.attachments) && editingNote.attachments.length > 0 && (
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 block">
+                  Existing Attached Photos ({editingNote.attachments.length})
+                </span>
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                  {editingNote.attachments.map((att, i) => (
+                    <img
+                      key={att.id || i}
+                      src={getMediaUrl(att.file || att.image)}
+                      alt="Attached"
+                      onClick={() => setLightboxImage(getMediaUrl(att.file || att.image))}
+                      className="w-12 h-12 rounded-lg object-cover border border-slate-700 shrink-0 cursor-pointer"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Add More Site Inspection Photos on Edit */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-bold text-slate-400 block">
+                Attach Site Inspection Photos (Evidence)
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="py-2 px-2.5 rounded-xl bg-slate-950 border border-cyan-500/40 text-[11px] font-bold text-cyan-300 flex items-center justify-center gap-1.5 cursor-pointer">
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Camera</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    multiple
+                    onChange={handleEditPhotoSelect}
+                    className="hidden"
+                  />
+                </label>
+                <label className="py-2 px-2.5 rounded-xl bg-slate-950 border border-purple-500/40 text-[11px] font-bold text-purple-300 flex items-center justify-center gap-1.5 cursor-pointer">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Gallery ({editPhotos.length})</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleEditPhotoSelect}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {editPhotos.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto py-1">
+                  {editPhotos.map((p, idx) => (
+                    <div
+                      key={idx}
+                      className="relative w-14 h-14 rounded-xl overflow-hidden border border-cyan-500/40 shrink-0"
+                    >
+                      <img src={p.dataUrl} alt="New Evidence" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setEditPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                        className="absolute top-0.5 right-0.5 bg-black/80 text-white rounded-full p-0.5"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
               <button
+                type="button"
                 onClick={() => {
-                  setNoteSiteId(selectedSiteDetail.ihs_site_id);
-                  setSelectedSiteDetail(null);
-                  setActiveSubTab('note');
+                  setEditingNote(null);
+                  setEditPhotos([]);
+                  setAppendUpdateText('');
                 }}
-                className="px-4 py-2 bg-cyan-600 text-white font-bold text-xs rounded-xl shadow-md"
+                className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs"
               >
-                Log Note for {selectedSiteDetail.ihs_site_id}
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="flex-1 py-2.5 rounded-xl bg-[#FFCC00] text-black font-black text-xs"
+              >
+                Update SDM Note
               </button>
             </div>
+          </form>
+        </div>
+      )}
+
+      {/* ============================================================
+          PHOTO LIGHTBOX MODAL
+      ============================================================ */}
+      {lightboxImage && (
+        <div
+          onClick={() => setLightboxImage(null)}
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+        >
+          <img src={getMediaUrl(lightboxImage)} alt="Evidence Full" className="max-w-full max-h-[85vh] rounded-2xl" />
+        </div>
+      )}
+
+      {/* ============================================================
+          SETTINGS, SERVER & PROFILE BOTTOM SHEET
+      ============================================================ */}
+      {showSettingsSheet && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end justify-center p-0 sm:p-4">
+          <div className="w-full max-w-lg bg-slate-900 border-t sm:border border-slate-700 rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                {currentUser?.avatar_url ? (
+                  <img
+                    src={getMediaUrl(currentUser.avatar_url)}
+                    alt={userName || 'SDM'}
+                    className="w-10 h-10 rounded-xl object-cover border-2 border-[#FFCC00]"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-xl bg-[#FFCC00] text-black font-black flex items-center justify-center text-sm">
+                    {userName ? userName.charAt(0).toUpperCase() : 'S'}
+                  </div>
+                )}
+                <div>
+                  <h3 className="text-sm font-black text-white">{userName || 'SDM Engineer'}</h3>
+                  <p className="text-[11px] text-cyan-400 font-semibold">{currentUser?.role || 'Operations'}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSettingsSheet(false)}
+                className="p-2 rounded-full bg-slate-800 text-slate-300"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {onThemeChange && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase text-slate-400">Display Theme</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'mtn-dark', label: 'MTN Dark' },
+                    { id: 'mtn', label: 'MTN Gold' },
+                    { id: 'sky', label: 'Cyber Sky' }
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => onThemeChange(t.id)}
+                      className={`py-2 rounded-xl text-xs font-bold border ${
+                        currentTheme === t.id
+                          ? 'bg-[#FFCC00] text-black border-amber-300 font-black'
+                          : 'bg-slate-950 text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase text-slate-400">Cloudflare / Server Endpoint</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={serverIp}
+                  onChange={(e) => setServerIp(e.target.value)}
+                  className="flex-1 bg-slate-950 text-xs text-white p-2.5 rounded-xl border border-slate-700 font-mono"
+                />
+                <button
+                  onClick={() => {
+                    setCustomServerIp(serverIp);
+                    loadLiveFeeds(true);
+                    loadAllNotes();
+                    loadSitesInventory();
+                    setShowSettingsSheet(false);
+                  }}
+                  className="px-3.5 py-2.5 rounded-xl bg-cyan-500 text-slate-950 font-black text-xs"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+
+            {!isMobileNative && onSwitchToDesktop && (
+              <button
+                onClick={() => {
+                  setShowSettingsSheet(false);
+                  onSwitchToDesktop();
+                }}
+                className="w-full py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-xs font-bold flex items-center justify-center gap-2"
+              >
+                <Monitor className="w-4 h-4 text-cyan-400" />
+                <span>Switch to Full Desktop Workspace</span>
+              </button>
+            )}
+
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="w-full py-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-extrabold flex items-center justify-center gap-2"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out of Account</span>
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {/* Mobile Theme Selector Overlay Modal */}
-      {showThemeModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel max-w-sm w-full p-5 rounded-2xl border border-cyan-500/40 bg-slate-950 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Palette className="w-4 h-4 text-cyan-400" />
-                Select Mobile App Theme
-              </h3>
-              <button onClick={() => setShowThemeModal(false)} className="text-slate-400 hover:text-white text-xs font-bold">&times;</button>
-            </div>
-
-            <div className="space-y-2">
-              {mobileThemes.map((t) => {
-                const Icon = t.icon;
-                const isActive = theme === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => handleApplyTheme(t.id)}
-                    className={`w-full p-3 rounded-xl border flex items-center justify-between transition-all ${
-                      isActive ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-md' : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2.5">
-                      <Icon className={`w-4 h-4 ${t.color}`} />
-                      <span className="text-xs font-bold">{t.label}</span>
-                    </div>
-                    {isActive && <span className="text-[10px] px-2 py-0.5 bg-cyan-500/30 text-cyan-300 rounded font-extrabold">ACTIVE</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+      {/* ============================================================
+          FIXED BOTTOM MOBILE NAVIGATION BAR
+      ============================================================ */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/90 px-2 py-1.5">
+        <div className="max-w-lg mx-auto grid grid-cols-5 gap-1">
+          {[
+            { id: 'overview', label: 'Home', icon: Layers },
+            { id: 'sites', label: 'Sites/IHS', icon: Database },
+            { id: 'availability', label: 'SLA', icon: Calendar },
+            { id: 'field_log', label: 'SDM Notes', icon: PlusCircle, badge: pendingTotal },
+            { id: 'map_ai', label: 'Map & AI', icon: MapPin }
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-1.5 rounded-2xl flex flex-col items-center justify-center gap-0.5 relative transition-all ${
+                  active ? 'text-[#FFCC00] bg-amber-500/10 font-black' : 'text-slate-400 font-semibold'
+                }`}
+              >
+                <Icon className={`w-5 h-5 ${active ? 'text-[#FFCC00]' : 'text-slate-400'}`} />
+                <span className="text-[10px] tracking-tight">{tab.label}</span>
+                {tab.badge > 0 && (
+                  <span className="absolute top-1 right-3 w-4 h-4 rounded-full bg-amber-500 text-black text-[9px] font-black flex items-center justify-center">
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
-      )}
-
-      {/* User Profile & Account Settings Modal */}
-      <UserProfileModal
-        isOpen={showProfileModal}
-        onClose={() => setShowProfileModal(false)}
-        currentUser={currentUser}
-        onUpdateUser={(updatedUser) => {
-          const existing = JSON.parse(localStorage.getItem('fct_sdm_user') || '{}');
-          const merged = { ...existing, ...updatedUser };
-          localStorage.setItem('fct_sdm_user', JSON.stringify(merged));
-        }}
-      />
-
-      {/* Confirm Delete Modal */}
-      <ConfirmDeleteModal
-        isOpen={!!mobileNoteToDelete}
-        title="Delete SDM Operational Note"
-        message="Are you sure you want to delete this SDM Operational Note? This will permanently erase the note and evidence from the server."
-        itemDetails={mobileNoteToDelete ? {
-          siteId: mobileNoteToDelete.site_ihs_id || mobileNoteToDelete.site_id_str,
-          itemTitle: mobileNoteToDelete.title,
-          author: mobileNoteToDelete.created_by
-        } : null}
-        confirmText="Permanently Delete Note"
-        onConfirm={handleConfirmDeleteLiveNote}
-        onCancel={() => setMobileNoteToDelete(null)}
-        isDeleting={isDeletingMobileNote}
-      />
+      </nav>
     </div>
   );
 }

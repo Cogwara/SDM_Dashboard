@@ -34,7 +34,8 @@ export default function App() {
     window.location.protocol === 'capacitor:' || 
     window.location.protocol === 'file:'
   );
-  const [activeTab, setActiveTab] = useState(() => isMobileNative ? 'mobile' : 'dashboard');
+  const isSmallScreen = typeof window !== 'undefined' && window.innerWidth < 768;
+  const [activeTab, setActiveTab] = useState(() => (isMobileNative || isSmallScreen) ? 'mobile' : 'dashboard');
   const [selectedSiteId, setSelectedSiteId] = useState('');
   
   // SDM User Auth State - Require authentication by default
@@ -164,11 +165,18 @@ export default function App() {
     return <SDMLoginModal onLoginSuccess={handleLoginSuccess} />;
   }
 
-  // Direct Mobile View ONLY for Android Native APK App
-  if (isMobileNative) {
+  // Full-Screen Native Mobile Experience for APK or Mobile Workspace Tab
+  if (isMobileNative || activeTab === 'mobile') {
     return (
-      <div className="min-h-screen font-sans w-full overflow-x-hidden p-2 sm:p-4">
-        <MobileAppView currentUser={currentUser} onLogout={handleLogout} onSelectSite={handleSelectSite} currentTheme={theme} onThemeChange={setTheme} />
+      <div className="min-h-screen font-sans w-full overflow-x-hidden bg-slate-950">
+        <MobileAppView
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          onSelectSite={handleSelectSite}
+          currentTheme={theme}
+          onThemeChange={setTheme}
+          onSwitchToDesktop={() => setActiveTab('dashboard')}
+        />
       </div>
     );
   }

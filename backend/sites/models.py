@@ -312,12 +312,21 @@ class CellSector(models.Model):
     source_kml = models.CharField(max_length=255, default='ABUJA REGION KML 07292026 (4G).kml')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Enhanced RF Fields from ABJ WK31 PRB KML/KMZ
+    layer = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    enodeb = models.CharField(max_length=50, null=True, blank=True)
+    prb_utilization = models.FloatField(null=True, blank=True)
+    prb_range = models.CharField(max_length=50, null=True, blank=True)
+    state = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+
     class Meta:
         ordering = ['site_id', 'cell_name']
         indexes = [
             models.Index(fields=['site_id', 'tech']),
             models.Index(fields=['pci']),
             models.Index(fields=['latitude', 'longitude']),
+            models.Index(fields=['layer']),
+            models.Index(fields=['state']),
         ]
 
     def __str__(self):

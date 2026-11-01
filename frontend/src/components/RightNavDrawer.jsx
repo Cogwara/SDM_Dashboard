@@ -215,7 +215,7 @@ export default function RightNavDrawer({ isOpen, onClose, activeTab, setActiveTa
           
           {/* Direct APK Download Card */}
           <a
-            href="https://during-duke-susan-binary.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
+            href="https://ice-powerseller-clerk-where.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
             download="FCT_SDM_Mobile_v3.apk"
             target="_blank"
             rel="noopener noreferrer"

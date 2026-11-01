@@ -11,7 +11,8 @@ from .views import (
     HourlyAvailabilityUploadView, HourlyAvailabilityStatsView, HourlyAvailabilityListView,
     ResetHourlyBaseAvailabilityView,
     SiteCellSectorsView, CellSectorListView, KmlStatsView, KmlImportView,
-    RDMSupervisedSDMsView
+    RDMSupervisedSDMsView,
+    WSDStatusView, WSDUploadView, WSDResetBaseView
 )
 
 router = DefaultRouter()
@@ -27,6 +28,11 @@ urlpatterns = [
     path('sites/identify_hubs/', IdentifyHubSitesView.as_view(), name='identify-hubs'),
     path('sites/lookup_fse/', SiteToFSELookupView.as_view(), name='lookup-fse'),
     path('sites/lookup_fse/export_excel/', SiteToFSEExportExcelView.as_view(), name='lookup-fse-export-excel'),
+
+    # WSD Database Endpoints
+    path('wsd/status/', WSDStatusView.as_view(), name='wsd-status'),
+    path('wsd/upload/', WSDUploadView.as_view(), name='wsd-upload'),
+    path('wsd/reset_base/', WSDResetBaseView.as_view(), name='wsd-reset-base'),
     
     # 4G LTE KML Cell Sectors Endpoints
     path('sites/<str:site_id>/sectors/', SiteCellSectorsView.as_view(), name='site-sectors'),

@@ -571,7 +571,10 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
         return response
 
     def get_queryset(self):
-        qs = SiteNote.objects.all().select_related('site')
+        from django.db.models import Prefetch
+        qs = SiteNote.objects.all().select_related('site').prefetch_related(
+            Prefetch('attachments', queryset=SiteAttachment.objects.select_related('site'))
+        )
         
         rdm = self.request.query_params.get('rdm', None)
         sdm = self.request.query_params.get('sdm', None)
@@ -789,8 +792,8 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
                 if digits:
                     site = Site.objects.filter(ihs_site_id__icontains=digits).first()
 
-        if not site and 'site' in data and data['site']:
-            site = Site.objects.filter(pk=data['site']).first()
+        if not site and 'site' in data and data['site'] and str(data['site']).isdigit():
+            site = Site.objects.filter(pk=int(data['site'])).first()
 
         if not site:
             return Response({'error': f'Site "{site_id_input}" not found in database. Please verify Site ID.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -996,13 +999,13 @@ class SiteNoteViewSet(viewsets.ModelViewSet):
 
 
 class SiteAttachmentViewSet(viewsets.ModelViewSet):
-    queryset = SiteAttachment.objects.all()
+    queryset = SiteAttachment.objects.all().select_related('site')
     serializer_class = SiteAttachmentSerializer
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     pagination_class = FlexiblePagination
 
     def get_queryset(self):
-        qs = SiteAttachment.objects.all()
+        qs = SiteAttachment.objects.all().select_related('site')
         site_id = self.request.query_params.get('site_id', None)
         if site_id:
             qs = qs.filter(site__ihs_site_id__iexact=site_id)
@@ -1010,12 +1013,12 @@ class SiteAttachmentViewSet(viewsets.ModelViewSet):
 
 
 class SiteTimelineViewSet(viewsets.ModelViewSet):
-    queryset = SiteTimeline.objects.all()
+    queryset = SiteTimeline.objects.all().select_related('site')
     serializer_class = SiteTimelineSerializer
     pagination_class = FlexiblePagination
 
     def get_queryset(self):
-        qs = SiteTimeline.objects.all()
+        qs = SiteTimeline.objects.all().select_related('site')
         site_id = self.request.query_params.get('site_id', None)
         if site_id:
             qs = qs.filter(site__ihs_site_id__iexact=site_id)

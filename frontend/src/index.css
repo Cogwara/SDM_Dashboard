@@ -455,4 +455,24 @@ body {
   background-color: rgba(15, 23, 42, 0.65) !important;
 }
 
+/* Custom Leaflet Telecom Marker styling */
+.leaflet-div-icon.custom-telecom-marker,
+.leaflet-div-icon.custom-telecom-waypoint-icon,
+.leaflet-div-icon.custom-midpoint-distance-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.telecom-marker-with-label,
+.custom-waypoint-marker {
+  transition: transform 0.15s ease-out;
+}
+
+.telecom-marker-with-label:hover,
+.custom-waypoint-marker:hover {
+  transform: scale(1.15);
+  z-index: 9999 !important;
+}
+
+
 

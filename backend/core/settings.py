@@ -31,6 +31,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'core.middleware.AppendSlashWithoutRedirectMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -93,6 +94,7 @@ DATABASES = {
         **({'PASSWORD': DB_PASSWORD} if DB_PASSWORD else {}),
         **({'HOST': DB_HOST} if DB_HOST else {}),
         **({'PORT': DB_PORT} if DB_PORT else {}),
+        **({'OPTIONS': {'timeout': 60}} if 'sqlite' in DB_ENGINE else {}),
     }
 }
 
@@ -130,6 +132,7 @@ USE_X_FORWARDED_HOST = True
 CSRF_TRUSTED_ORIGINS = [
     'https://*.trycloudflare.com',
     'http://*.trycloudflare.com',
+    'https://*.vercel.app',
     'http://localhost',
     'http://127.0.0.1',
     'http://localhost:8001',

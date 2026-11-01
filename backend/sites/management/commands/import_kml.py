@@ -10,8 +10,8 @@ class Command(BaseCommand):
             'kml_file',
             nargs='?',
             type=str,
-            default='/home/mrchrys/projects/SDM_Dashboard/backend/data/kml/ABUJA REGION KML 07292026 (4G).kml',
-            help='Path to the KML file to import'
+            default='/app/data/kml/ABJ WK31 PRB.kmz',
+            help='Path to the KML or KMZ file to import'
         )
         parser.add_argument(
             '--region',
@@ -25,11 +25,19 @@ class Command(BaseCommand):
         region = options['region']
 
         if not os.path.exists(kml_path):
-            alt_path = '/home/mrchrys/Downloads/WhatSie/ABUJA REGION KML 07292026 (4G).kml'
-            if os.path.exists(alt_path):
-                kml_path = alt_path
+            candidates = [
+                '/app/data/kml/ABJ WK31 PRB.kmz',
+                '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml/ABJ WK31 PRB.kmz',
+                '/home/mrchrys/Downloads/WhatSie/ABJ WK31 PRB.kmz',
+                '/home/mrchrys/projects/SDM_Dashboard/backend/data/kml/ABUJA REGION KML 07292026 (4G).kml',
+                '/home/mrchrys/Downloads/WhatSie/ABUJA REGION KML 07292026 (4G).kml'
+            ]
+            for cand in candidates:
+                if os.path.exists(cand):
+                    kml_path = cand
+                    break
 
-        self.stdout.write(self.style.NOTICE(f"Parsing and importing KML from: {kml_path}"))
+        self.stdout.write(self.style.NOTICE(f"Parsing and importing KML/KMZ from: {kml_path}"))
         res = parse_and_import_kml(kml_path, region_name=region)
 
         self.stdout.write(self.style.SUCCESS(

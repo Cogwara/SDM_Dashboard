@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ArrowLeft, Radio, Zap, Shield, Phone, User, MapPin, Calendar, Clock, 
+  ArrowLeft, Radio, Zap, Shield, Phone, Mail, User, MapPin, Calendar, Clock, 
   FileText, MessageSquare, AlertTriangle, ChevronRight, CheckCircle2, 
   ExternalLink, Layers, Search, Database, Cpu, Wifi, Edit3, Camera, Upload, X, Maximize2, Trash2,
   Activity, BarChart3, RefreshCw, ArrowRight, Compass
 } from 'lucide-react';
 import { lookupSite, createNote, updateNote, resolveNote, deleteNote, fetchAvailabilityRecords, getMediaUrl } from '../api';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
+import { getRegionalExecutive } from '../executiveDirectory';
 
 export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithPrompt, onNavigateTab, onNavigateToAvailability }) {
   const [site, setSite] = useState(null);
@@ -296,17 +297,41 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
     { label: 'Audit CHECK Status', val: raw['CHECK'] },
   ];
 
+  const stateKey = site.state || raw['STATE'] || 'FCT';
+  const regionalExec = getRegionalExecutive(stateKey);
+
   const personnelSpecs = [
     { label: 'State Delivery Manager (SDM)', val: raw['SDM NAME'] || site.sdm_name, phone: raw['SDM CONTACT NO. '] || site.sdm_phone, ows: raw['SDM OWS ID'], alt: raw['SDM ALTERNATE NO.'] },
-    { label: 'SMC FSE Engineer', val: raw['FSE NAME'] || site.smc_fse_name, phone: raw['FSE CONTACT NO.'] || site.smc_fse_phone, ows: raw['FSE OWS ID'], alt: raw['FSE ALTERNATE NO.'] },
-    { label: 'Switch Engineer', val: raw['Switch Engineer'] || site.smc_rto_name },
-    { label: 'Project Manager (EFS)', val: raw['Project MANAGER'] || site.efs_name, phone: raw['Project MANAGER CONTACT'] || site.efs_phone },
-    { label: 'RPM (MS Site)', val: raw['RPM(MS SITE)'] || site.rto_name, phone: raw['RPM(MS SITE) CONTACT'] || site.rto_phone },
-    { label: 'RPM (RT Site)', val: raw['RPM(RT SITE)'], phone: raw['RPM(RT SITE) CONTACT'] },
+    { label: 'SMC FSE Engineer', val: raw['FSE NAME'] || site.smc_fse_name, phone: raw['FSE CONTACT NO.'] || site.smc_fse_phone, email: raw['SMC FSE Email'], ows: raw['FSE OWS ID'], alt: raw['FSE ALTERNATE NO.'] },
+    { label: 'Project Manager (EFS)', val: raw['Project MANAGER'] || site.efs_name, phone: raw['Project MANAGER CONTACT'] || site.efs_phone, email: raw['EFS Email'] },
+    { 
+      label: 'RPM (MS Site) / RTO', 
+      val: raw['RPM(MS SITE)'] || raw['RPM(RT SITE)'] || raw['RTO Name'] || site.rto_name || regionalExec.rto.name, 
+      phone: raw['RPM(MS SITE) CONTACT'] || raw['RPM(RT SITE) CONTACT'] || raw['RTO Phone'] || site.rto_phone || regionalExec.rto.phone, 
+      email: raw['RTO Email'] || regionalExec.rto.email 
+    },
+    { 
+      label: 'Head, Field Service', 
+      val: raw['Head, Field Service'] || regionalExec.head.name, 
+      phone: raw['Head, Field Service Phone'] || regionalExec.head.phone, 
+      email: raw['Head, Field Service Email'] || regionalExec.head.email 
+    },
+    { 
+      label: 'Customer Experience Manager (CEM)', 
+      val: raw['Customer Experience Manager'] || regionalExec.cem.name, 
+      phone: raw['Customer Experience Manager Phone'] || regionalExec.cem.phone, 
+      email: raw['Customer Experience Manager Email'] || regionalExec.cem.email 
+    },
+    { label: 'Switch Engineer', val: raw['Switch Engineer'] || site.smc_rto_name, phone: raw['SMC RTO Phone'], email: raw['SMC RTO Email'] },
+    { 
+      label: 'RPM (RT Site)', 
+      val: raw['RPM(RT SITE)'] || raw['RPM(MS SITE)'] || raw['RTO Name'] || site.rto_name || regionalExec.rto.name, 
+      phone: raw['RPM(RT SITE) CONTACT'] || raw['RPM(MS SITE) CONTACT'] || raw['RTO Phone'] || site.rto_phone || regionalExec.rto.phone 
+    },
     { label: 'MTN RDM', val: raw['MTN RDM NAME'] || site.mtn_rdm_name, phone: raw['MTN RDM CONTACT NO.'] || site.mtn_rdm_phone, ows: raw['MTN RDM OWS ID'], alt: raw['MTN RDM ALTERNATE NO.'] },
     { label: 'MTN FSE', val: raw['MTN FSE NAME'] || site.mtn_fse_name, phone: raw['MTN FSE CONTACT NO.'] || site.mtn_fse_phone },
     { label: 'MTN RTM', val: raw['MTN RTM'] || site.mtn_rtm_name, phone: raw['MTN RTM NUMBER'] || site.mtn_rtm_phone },
-    { label: 'General Manager (GM)', val: raw['GM'] || site.smc_hoo_name, phone: raw['GM Number'] || site.smc_hoo_phone, alt: raw['GM ALTERNATE NO.'] },
+    { label: 'General Manager (GM)', val: raw['GM'] || site.smc_hoo_name, phone: raw['GM Number'] || site.smc_hoo_phone, email: raw['SMC HOO Email'], alt: raw['GM ALTERNATE NO.'] },
   ];
 
   // All 87 Key-Value Pairs filtered by search
@@ -613,6 +638,14 @@ export default function SiteProfile({ siteId, currentUser, onBack, onOpenAIWithP
                   <div className="text-xs text-slate-300 flex items-center gap-1.5">
                     <Phone className="w-3.5 h-3.5 text-emerald-400" />
                     <a href={`tel:${p.phone}`} className="hover:underline font-mono">{p.phone}</a>
+                  </div>
+                )}
+                {p.email && (
+                  <div className="text-xs text-slate-300 flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-cyan-400" />
+                    <a href={`mailto:${p.email}`} className="hover:underline font-mono text-[11px] text-cyan-300 truncate" title={p.email}>
+                      {p.email}
+                    </a>
                   </div>
                 )}
                 {p.ows && <div className="text-[11px] text-slate-400">OWS ID: <b className="text-slate-200">{p.ows}</b></div>}

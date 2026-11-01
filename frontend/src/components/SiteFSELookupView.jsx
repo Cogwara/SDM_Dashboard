@@ -146,7 +146,7 @@ T0124`;
                 Site to FSE Directory & Engineer Mapping
               </span>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                WSD April 2026 Engine
+                WSD October 2026 Engine
               </span>
             </div>
 
@@ -155,7 +155,7 @@ T0124`;
             </h1>
 
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
-              Paste or input multiple Site IDs below to automatically cross-reference <span className="text-cyan-300 font-mono">WSD APRIL 2026</span> database records and extract the assigned Field Service Engineer (FSE) Name, Phone Number, SDM, LGA, and Site Classification. Export formatted reports in TXT or Excel.
+              Paste or input multiple Site IDs below to automatically cross-reference <span className="text-cyan-300 font-mono">WSD OCTOBER 2026</span> database records and extract the assigned Field Service Engineer (FSE) Name, Phone Number, SDM, LGA, and Site Classification. Export formatted reports in TXT or Excel.
             </p>
           </div>
 
