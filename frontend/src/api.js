@@ -28,67 +28,42 @@ const isStaleCloudflareTunnel = (url) => {
   return KNOWN_STALE_TUNNELS.some((stale) => url.includes(stale));
 };
 
-const isInvalidRemoteOverride = (url, isRemoteContext) => {
-  if (!url) return false;
-  if (isStaleCloudflareTunnel(url)) return true;
-  if (isRemoteContext) {
-    const clean = cleanHost(url);
-    if (
-      clean === 'localhost' ||
-      clean.startsWith('localhost:') ||
-      clean.startsWith('127.0.0.1') ||
-      clean.startsWith('192.168.') ||
-      clean.startsWith('10.') ||
-      clean.endsWith('.vercel.app')
-    ) {
-      return true;
-    }
+const formatServerBaseUrl = (rawInput) => {
+  const raw = rawInput.trim().replace(/\/+$/, '');
+  if (raw.endsWith('/api/v1')) {
+    return raw;
   }
-  return false;
+  if (/^https?:\/\//i.test(raw)) {
+    return `${raw}/api/v1`;
+  }
+  const cleanH = cleanHost(raw);
+  if (cleanH.includes('.trycloudflare.com') || cleanH.includes('.vercel.app') || (cleanH.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(cleanH.split(':')[0]))) {
+    return `https://${cleanH}/api/v1`;
+  }
+  const formattedHost = cleanH.includes(':') ? cleanH : `${cleanH}:8001`;
+  return `http://${formattedHost}/api/v1`;
 };
 
 const getBaseUrl = () => {
   const nativeApp = checkIsCapacitorNative();
   const currentHost = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
   const isVercel = currentHost.endsWith('.vercel.app');
-  const isCloudflareWeb = currentHost.endsWith('.trycloudflare.com');
-  const isRemoteContext = nativeApp || isVercel || isCloudflareWeb;
 
   let savedIp = localStorage.getItem('fct_sdm_server_ip');
-  if (savedIp && isInvalidRemoteOverride(savedIp, isRemoteContext)) {
+  if (savedIp && isStaleCloudflareTunnel(savedIp)) {
     savedIp = null;
     localStorage.removeItem('fct_sdm_server_ip');
   }
-  
+
   if (typeof window !== 'undefined') {
-    // If running inside Capacitor APK on mobile device or hosted on Vercel, default to Cloudflare Tunnel URL
-    if (nativeApp || isVercel) {
-      const rawHost = (savedIp && savedIp.trim()) ? savedIp.trim() : DEFAULT_MOBILE_SERVER_URL;
-      const cleanH = cleanHost(rawHost);
-      if (cleanH.includes('.vercel.app')) {
-        return `${DEFAULT_MOBILE_SERVER_URL}/api/v1`;
-      }
-      if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
-        const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
-        return `${formatted.replace(/\/$/, '')}/api/v1`;
-      }
-      const formattedHost = cleanH.includes(':') ? cleanH : `${cleanH}:8001`;
-      return `http://${formattedHost}/api/v1`;
+    // Always honor any custom IP / web address configured by the user
+    if (savedIp && savedIp.trim()) {
+      return formatServerBaseUrl(savedIp);
     }
 
-    // In web browser
-    if (savedIp && savedIp.trim() && savedIp.trim() !== currentHost && savedIp.trim() !== 'localhost') {
-      const rawHost = savedIp.trim();
-      const cleanH = cleanHost(rawHost);
-      if (cleanH.includes('.vercel.app')) {
-        return `${DEFAULT_MOBILE_SERVER_URL}/api/v1`;
-      }
-      if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
-        const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
-        return `${formatted.replace(/\/$/, '')}/api/v1`;
-      }
-      const formattedHost = cleanH.includes(':') ? cleanH : `${cleanH}:8001`;
-      return `http://${formattedHost}/api/v1`;
+    // Default for Capacitor APK or Vercel when no custom IP is set
+    if (nativeApp || isVercel) {
+      return `${DEFAULT_MOBILE_SERVER_URL}/api/v1`;
     }
 
     return `/api/v1`;
@@ -121,37 +96,26 @@ export const getMediaUrl = (fileUrl) => {
   const nativeApp = checkIsCapacitorNative();
   const currentHost = window.location.hostname || 'localhost';
   const isVercel = currentHost.endsWith('.vercel.app');
-  const isCloudflareWeb = currentHost.endsWith('.trycloudflare.com');
-  const isRemoteContext = nativeApp || isVercel || isCloudflareWeb;
 
   let savedIp = localStorage.getItem('fct_sdm_server_ip');
-  if (savedIp && isInvalidRemoteOverride(savedIp, isRemoteContext)) {
+  if (savedIp && isStaleCloudflareTunnel(savedIp)) {
     savedIp = null;
     localStorage.removeItem('fct_sdm_server_ip');
   }
 
-  // In standard web browsers (local Nginx, Vercel with /media/ rewrite, or Cloudflare web tunnel),
-  // same-origin /media/... works seamlessly and avoids Mixed Content / CORP blocks.
+  if (savedIp && savedIp.trim()) {
+    const base = formatServerBaseUrl(savedIp).replace(/\/api\/v1$/, '');
+    return `${base}${mediaPath}`;
+  }
+
   if (!nativeApp && window.location.protocol.startsWith('http')) {
     if (isVercel) {
       return `${window.location.origin}${mediaPath}`;
     }
-    if (!savedIp || savedIp.trim() === currentHost) {
-      return `${window.location.origin}${mediaPath}`;
-    }
+    return `${window.location.origin}${mediaPath}`;
   }
 
-  const rawHost = (savedIp && savedIp.trim()) ? savedIp.trim() : DEFAULT_MOBILE_SERVER_URL;
-  const cleanH = cleanHost(rawHost);
-  if (cleanH.includes('.vercel.app')) {
-    return `${DEFAULT_MOBILE_SERVER_URL}${mediaPath}`;
-  }
-  if (cleanH.includes('.trycloudflare.com') || rawHost.startsWith('https://')) {
-    const formatted = rawHost.startsWith('http') ? rawHost : `https://${rawHost}`;
-    return `${formatted.replace(/\/$/, '')}${mediaPath}`;
-  }
-  const formattedHost = cleanH.includes(':') ? cleanH : `${cleanH}:8001`;
-  return `http://${formattedHost}${mediaPath}`;
+  return `${DEFAULT_MOBILE_SERVER_URL}${mediaPath}`;
 };
 
 export const API_BASE_URL = getBaseUrl();
@@ -196,15 +160,10 @@ api.interceptors.response.use(
 
 // Update base URL dynamically when server IP changes
 export const setCustomServerIp = (ip) => {
-  const currentHost = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost';
-  const nativeApp = checkIsCapacitorNative();
-
   if (ip && ip.trim()) {
     const trimmed = ip.trim();
     if (isStaleCloudflareTunnel(trimmed)) {
       localStorage.setItem('fct_sdm_server_ip', DEFAULT_MOBILE_SERVER_URL);
-    } else if (!nativeApp && (trimmed === '192.168.1.120' || trimmed === 'localhost' || trimmed === '127.0.0.1' || trimmed === currentHost)) {
-      localStorage.removeItem('fct_sdm_server_ip');
     } else {
       localStorage.setItem('fct_sdm_server_ip', trimmed);
     }

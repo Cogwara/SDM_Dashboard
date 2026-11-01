@@ -27,34 +27,17 @@ export default function SDMLoginModal({ onLoginSuccess }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const [testingServer, setTestingServer] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+  const [savedNotice, setSavedNotice] = useState('');
 
   const handleApplyPreset = (url) => {
     setServerIp(url);
-    setCustomServerIp(url);
-    setTestResult(null);
+    const activeUrl = setCustomServerIp(url);
+    setSavedNotice(`Saved endpoint: ${activeUrl}`);
   };
 
-  const handleTestConnection = async () => {
-    setTestingServer(true);
-    setTestResult(null);
-    const startTime = performance.now();
+  const handleSaveServerAddress = () => {
     const activeUrl = setCustomServerIp(serverIp.trim());
-    try {
-      const res = await checkServerHealth();
-      const endTime = performance.now();
-      const latency = Math.round(endTime - startTime);
-      if (res) {
-        setTestResult({ success: true, message: `🟢 Connected successfully (${latency}ms) to ${activeUrl}` });
-      } else {
-        setTestResult({ success: false, message: `🔴 Unreachable at ${activeUrl}. Check network connectivity.` });
-      }
-    } catch (err) {
-      setTestResult({ success: false, message: `🔴 Connection error: ${err.message || 'Network unreachable'}` });
-    } finally {
-      setTestingServer(false);
-    }
+    setSavedNotice(`Saved endpoint: ${activeUrl}`);
   };
 
   const handleFormSubmit = async (e) => {
@@ -78,21 +61,7 @@ export default function SDMLoginModal({ onLoginSuccess }) {
       if (status === 401 || status === 400 || status === 429) {
         setError(err.response?.data?.error || err.response?.data?.detail || 'Invalid username or password. Please check your credentials.');
       } else {
-        // Fallback retry against primary tunnel if current endpoint returned 405/502/530 or network error
-        try {
-          setServerIp(defaultIp);
-          setCustomServerIp(defaultIp);
-          const retryRes = await loginSDM(username.trim(), password.trim());
-          onLoginSuccess(retryRes.user, retryRes.token);
-          return;
-        } catch (retryErr) {
-          const retryStatus = retryErr.response?.status;
-          if (retryStatus === 401 || retryStatus === 400 || retryStatus === 429) {
-            setError(retryErr.response?.data?.error || retryErr.response?.data?.detail || 'Invalid username or password. Please check your credentials.');
-          } else {
-            setError(`Authentication failed. Unable to reach server at ${activeUrl}. Please verify your network connection.`);
-          }
-        }
+        setError(`Authentication failed. Unable to reach server at ${activeUrl}. Check your Server IP / Web Address configuration.`);
       }
     } finally {
       setLoading(false);
@@ -307,35 +276,27 @@ export default function SDMLoginModal({ onLoginSuccess }) {
                 <div className="flex items-center space-x-2">
                   <input
                     type="text"
-                    placeholder="https://ice-powerseller-clerk-where.trycloudflare.com"
+                    placeholder="Enter IP or Web Address (e.g. https://... or 192.168.1.100:8001)"
                     value={serverIp}
                     onChange={(e) => {
                       setServerIp(e.target.value);
                       setCustomServerIp(e.target.value);
+                      setSavedNotice('');
                     }}
                     className="flex-1 bg-slate-900 text-xs text-white p-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-cyan-400 font-mono"
                   />
                   <button
                     type="button"
-                    onClick={handleTestConnection}
-                    disabled={testingServer}
-                    className="px-3.5 py-2.5 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5"
+                    onClick={handleSaveServerAddress}
+                    className="px-3.5 py-2.5 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
                   >
-                    {testingServer ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-300" /> Pinging...
-                      </>
-                    ) : (
-                      'Test Connection'
-                    )}
+                    Apply Address
                   </button>
                 </div>
 
-                {testResult && (
-                  <div className={`p-2.5 rounded-xl text-[11px] font-mono border ${
-                    testResult.success ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30' : 'bg-red-950/40 text-red-300 border-red-500/30'
-                  }`}>
-                    {testResult.message}
+                {savedNotice && (
+                  <div className="p-2.5 rounded-xl text-[11px] font-mono border bg-emerald-950/40 text-emerald-300 border-emerald-500/30">
+                    {savedNotice}
                   </div>
                 )}
               </div>
