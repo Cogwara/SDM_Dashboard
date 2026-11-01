@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://ice-powerseller-clerk-where.trycloudflare.com/api/$1"
+    },
+    {
+      "source": "/media/(.*)",
+      "destination": "https://ice-powerseller-clerk-where.trycloudflare.com/media/$1"
+    },
+    {
+      "source": "/((?!api/|media/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
