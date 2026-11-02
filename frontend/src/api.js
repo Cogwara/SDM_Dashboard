@@ -131,7 +131,17 @@ export const api = axios.create({
 // Dynamically evaluate baseURL before every request to eliminate stale IP connection issues
 api.interceptors.request.use(
   (config) => {
-    config.baseURL = getBaseUrl();
+    let base = getBaseUrl();
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      const isVercelHost = typeof window !== 'undefined' && (window.location.hostname || '').endsWith('.vercel.app');
+      if (base.includes('.vercel.app') || (isVercelHost && base === '/api/v1')) {
+        base = `${DEFAULT_MOBILE_SERVER_URL}/api/v1`;
+      }
+      if (config.headers) {
+        delete config.headers['Content-Type'];
+      }
+    }
+    config.baseURL = base;
     const token = localStorage.getItem('fct_sdm_token');
     if (token && token !== 'undefined' && token !== 'null') {
       config.headers.Authorization = `Bearer ${token}`;
@@ -512,8 +522,7 @@ export const fetchAvailabilityArchives = async () => {
 
 export const uploadAvailabilityFile = async (formData) => {
   const res = await api.post('/availability/upload/', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000
+    timeout: 300000
   });
   return res.data;
 };
@@ -576,8 +585,7 @@ export const fetchHourlyAvailabilityRecords = async (params = {}) => {
 
 export const uploadHourlyAvailabilityFile = async (formData) => {
   const res = await api.post('/hourly_availability/upload/', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 180000
+    timeout: 300000
   });
   return res.data;
 };

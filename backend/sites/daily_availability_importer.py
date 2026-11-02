@@ -1,54 +1,173 @@
 import os
 import re
-from datetime import datetime, timedelta
-import pandas as pd
+from datetime import datetime, date, timedelta
+import openpyxl
 from pyxlsb import open_workbook
 from django.db import transaction, connection
-from django.db.models import Q
+from django.utils import timezone
 from django.conf import settings
-from .models import DailyAvailabilityRecord, DailyAvailabilityUploadLog
+from .models import DailyAvailabilityRecord, DailyAvailabilityUploadLog, PIWeightageRecord
 
 DEFAULT_BASE_AVAILABILITY_PATH = "/home/mrchrys/SDM/Daily Availibility/2026-08-03.xlsb"
 
+_SITE_PREFIX_RE = re.compile(r'^(?:[A-Z]{2}|T)\d{2,6}$')
+_ISO_DATE_RE = re.compile(r'^(\d{4})-(\d{2})-(\d{2})')
+
+
 def clean_str(val):
-    if val is None or pd.isnull(val): return ''
+    if val is None:
+        return ''
+    if isinstance(val, float):
+        if val != val:  # NaN check
+            return ''
+        if val.is_integer():
+            return str(int(val))
     s = str(val).strip()
-    if s.endswith('.0'): s = s[:-2]
-    return '' if s.lower() == 'nan' else s
+    if s.endswith('.0'):
+        s = s[:-2]
+    return '' if s.lower() in ('nan', 'none', 'null') else s
+
 
 def clean_float(val):
-    try:
-        if val is None or pd.isnull(val): return None
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        if val != val:  # NaN
+            return None
         v = float(val)
         return max(0.0, min(100.0, round(v, 2)))
-    except Exception:
-        return None
+    if isinstance(val, str):
+        s = val.strip()
+        if not s or s.lower() in ('nan', 'none', 'null', '-', 'n/a', '#n/a'):
+            return None
+        if s.endswith('%'):
+            s = s[:-1].strip()
+        try:
+            v = float(s)
+            return max(0.0, min(100.0, round(v, 2)))
+        except ValueError:
+            return None
+    return None
+
 
 def excel_serial_to_date_str(serial):
-    try:
-        if isinstance(serial, (int, float)) and serial > 40000:
+    if serial is None:
+        return None
+    if isinstance(serial, datetime):
+        return serial.strftime('%Y-%m-%d')
+    if isinstance(serial, date):
+        return serial.strftime('%Y-%m-%d')
+    if isinstance(serial, (int, float)):
+        if serial == serial and 40000 < serial < 65000:
             dt = datetime(1899, 12, 30) + timedelta(days=int(serial))
             return dt.strftime('%Y-%m-%d')
-        s = str(serial).strip()
-        if len(s) == 10 and '-' in s:
-            return s
+        return None
+    s = str(serial).strip()
+    if not s:
+        return None
+    m = _ISO_DATE_RE.match(s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    if s.isdigit() and 40000 < int(s) < 65000:
+        dt = datetime(1899, 12, 30) + timedelta(days=int(s))
+        return dt.strftime('%Y-%m-%d')
+    for fmt in ('%d/%m/%Y', '%m/%d/%Y', '%Y/%m/%d', '%d-%m-%Y', '%d-%b-%Y', '%d-%b-%y', '%b %d, %Y'):
+        try:
+            return datetime.strptime(s.split(' ')[0] if ':' in s else s, fmt).strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    return None
+
+
+def _get_fast_temp_dir():
+    if os.path.isdir('/dev/shm') and os.access('/dev/shm', os.W_OK):
+        d = '/dev/shm/sdm_uploads'
+    else:
+        d = os.path.join('/tmp', 'sdm_uploads')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _load_pi_weights_lookup():
+    pi_cache = {}
+    try:
+        for p in PIWeightageRecord.objects.values(
+            'tech', 'element_id', 'site_id',
+            'pi_national', 'pi_state', 'pi_region', 'pi_territory', 'configured_capacity'
+        ):
+            t = p['tech']
+            pi_cache[(t, p['element_id'])] = p
+            if (t, p['site_id']) not in pi_cache:
+                pi_cache[(t, p['site_id'])] = p
     except Exception:
         pass
-    return None
+    if not pi_cache:
+        try:
+            from .management.commands.load_pi_weights import load_pi_weights_from_file
+            pi_cache = load_pi_weights_from_file()
+        except Exception:
+            pass
+    return pi_cache
+
+
+def _resolve_tech_label(sheet_name):
+    s_up = sheet_name.strip().upper()
+    if '2G' in s_up or 'GSM' in s_up:
+        return '2G'
+    if '3G' in s_up or 'UMTS' in s_up or 'WCDMA' in s_up:
+        return '3G'
+    if '4G' in s_up or 'LTE' in s_up:
+        return '4G'
+    if '5G' in s_up or 'NR' in s_up:
+        return '5G'
+    return s_up
+
+
+def _iter_sheet_rows(file_path, is_xlsb):
+    """
+    Yields (sheet_name, rows_generator) where each row is a list of raw cell values.
+    Uses streaming readers for both .xlsb (pyxlsb) and .xlsx (openpyxl read_only).
+    """
+    if is_xlsb:
+        with open_workbook(file_path) as wb:
+            sheet_names = list(wb.sheets)
+            tech_sheets = [s for s in sheet_names if s.strip().upper() in ('2G', '3G', '4G', '5G')]
+            if not tech_sheets:
+                tech_sheets = [s for s in sheet_names if any(t in s.upper() for t in ('2G', '3G', '4G', '5G'))]
+            if not tech_sheets:
+                tech_sheets = [s for s in sheet_names if s.strip().upper() != 'SEARCH ENGINE']
+
+            for sname in tech_sheets:
+                with wb.get_sheet(sname) as sheet:
+                    yield sname, ([c.v for c in r] for r in sheet.rows())
+    else:
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        try:
+            sheet_names = list(wb.sheetnames)
+            tech_sheets = [s for s in sheet_names if s.strip().upper() in ('2G', '3G', '4G', '5G')]
+            if not tech_sheets:
+                tech_sheets = [s for s in sheet_names if any(t in s.upper() for t in ('2G', '3G', '4G', '5G'))]
+            if not tech_sheets:
+                tech_sheets = [s for s in sheet_names if s.strip().upper() != 'SEARCH ENGINE']
+
+            for sname in tech_sheets:
+                ws = wb[sname]
+                yield sname, (list(r) for r in ws.iter_rows(values_only=True))
+        finally:
+            wb.close()
+
 
 def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", uploaded_by="System Administrator", is_base=False):
     """
-    Parses a Daily Availability Excel/XLSB file across 2G, 3G, 4G, 5G sheets using low-memory row-level streaming,
-    calculates month boundaries, auto-archives completed months, and preserves historical data.
+    High-speed streaming parser for Daily Availability Excel/XLSB files across 2G, 3G, 4G, 5G sheets.
     """
     temp_path = None
     file_to_read = file_source
 
     if not isinstance(file_source, str):
-        temp_dir = os.path.join(settings.BASE_DIR, 'media', 'temp_uploads')
-        os.makedirs(temp_dir, exist_ok=True)
-        suffix = ".xlsb" if filename.lower().endswith(".xlsb") else ".xlsx"
-        temp_file = os.path.join(temp_dir, f"daily_upload_{int(datetime.now().timestamp())}{suffix}")
+        temp_dir = _get_fast_temp_dir()
+        ext = os.path.splitext(filename.lower())[1] or '.xlsx'
+        temp_file = os.path.join(temp_dir, f"daily_upload_{int(datetime.now().timestamp() * 1000)}{ext}")
         with open(temp_file, 'wb+') as destination:
             for chunk in file_source.chunks():
                 destination.write(chunk)
@@ -59,401 +178,265 @@ def process_daily_availability_file(file_source, filename="2026-07-30.xlsb", upl
         if not os.path.exists(file_to_read):
             return {'success': False, 'error': f"File path not found: {file_to_read}"}
 
-        all_detected_dates = set()
         clean_filename = os.path.basename(filename)
+        is_xlsb = file_to_read.lower().endswith('.xlsb')
 
-        if file_to_read.lower().endswith('.xlsb'):
-            wb = open_workbook(file_to_read)
-            tech_sheets = [s for s in ['2G', '3G', '4G', '5G'] if s in wb.sheets]
-            if not tech_sheets:
-                tech_sheets = [s for s in wb.sheets if s.upper() != 'SEARCH ENGINE']
+        pi_weights_dict = _load_pi_weights_lookup()
 
-            # Header scan to detect dates
-            for sheet_name in tech_sheets:
-                sheet = wb.get_sheet(sheet_name)
-                rows_iter = iter(sheet)
+        all_detected_dates = set()
+        seen_keys = set()
+        tech_counts = {}
+        parsed_records = []
+
+        for sheet_name, rows_iter in _iter_sheet_rows(file_to_read, is_xlsb):
+            sheet_tech = _resolve_tech_label(sheet_name)
+            header_row = None
+            date_col_map = {}
+
+            # Scan up to first 10 rows to locate the header row containing date columns
+            for _ in range(10):
                 try:
-                    header_row = [c.v for c in next(rows_iter)]
-                    for val in header_row:
-                        d_str = excel_serial_to_date_str(val)
-                        if d_str:
-                            all_detected_dates.add(d_str)
+                    cand_row = next(rows_iter)
                 except StopIteration:
-                    pass
-
-            all_sorted_dates = sorted(list(all_detected_dates))
-            start_date = all_sorted_dates[0] if all_sorted_dates else None
-            end_date = all_sorted_dates[-1] if all_sorted_dates else None
-            date_range_str = f"{start_date} to {end_date}" if (start_date and end_date) else "N/A"
-
-            month_str = "Unknown Month"
-            if end_date:
-                try:
-                    dt_end = datetime.strptime(end_date, '%Y-%m-%d')
-                    month_str = dt_end.strftime('%B %Y')
-                except Exception:
-                    month_str = end_date[:7]
-
-            if 'sqlite' in connection.vendor:
-                with connection.cursor() as cursor:
-                    cursor.execute("PRAGMA busy_timeout = 60000;")
-
-            with transaction.atomic():
-                existing_log = DailyAvailabilityUploadLog.objects.filter(filename=clean_filename).first()
-
-                if existing_log:
-                    DailyAvailabilityRecord.objects.filter(upload_log=existing_log).delete()
-                    log = existing_log
-                    log.filename = clean_filename
-                    log.uploaded_by = uploaded_by
-                    log.uploaded_at = datetime.now()
-                    log.date_range = date_range_str
-                    log.start_date = start_date
-                    log.end_date = end_date
-                    log.save()
-                else:
-                    log = DailyAvailabilityUploadLog.objects.create(
-                        filename=clean_filename,
-                        uploaded_by=uploaded_by,
-                        records_count=0,
-                        date_range=date_range_str,
-                        month_str=month_str,
-                        start_date=start_date,
-                        end_date=end_date,
-                        is_active=False,
-                        is_archived=False,
-                        is_base=is_base
-                    )
-
-            # Pre-load PI Weightage reference dictionary
-            try:
-                from .management.commands.load_pi_weights import load_pi_weights_from_file
-                pi_weights_dict = load_pi_weights_from_file()
-            except Exception as e:
-                print(f"[DailyAvailabilityImporter] Warning: Could not pre-load PI weights: {e}")
-                pi_weights_dict = {}
-
-            total_created = 0
-            seen_keys = set()
-            tech_counts = {}
-
-            for sheet_name in tech_sheets:
-                sheet = wb.get_sheet(sheet_name)
-                rows_iter = iter(sheet)
-                try:
-                    header_row = [c.v for c in next(rows_iter)]
-                except StopIteration:
+                    break
+                if not cand_row:
                     continue
-
-                col_index_map = {str(val).strip().upper(): idx for idx, val in enumerate(header_row) if val is not None}
-                
-                # Priority: Look for 'SITE ID' / 'SITE_ID' first, then fallback to tech-specific headers
-                site_col_idx = col_index_map.get('SITE ID', col_index_map.get('SITE_ID', col_index_map.get('2G', col_index_map.get('3G NODEB', col_index_map.get('4G ENODEB', col_index_map.get('5G GNODEB', 1))))))
-                elem_col_idx = col_index_map.get('4G ENODEB', col_index_map.get('5G GNODEB', col_index_map.get('3G NODEB', col_index_map.get('2G', site_col_idx))))
-
-                state_idx = col_index_map.get('STATE')
-                region_idx = col_index_map.get('NEW REGION', col_index_map.get('REGION'))
-                lga_idx = col_index_map.get('LGA')
-                territory_idx = col_index_map.get('TERRITORY')
-                tower_co_idx = col_index_map.get('TOWER CO')
-                vendor_idx = col_index_map.get('VENDOR')
-                status_idx = col_index_map.get('STATUS')
-                vvip_idx = col_index_map.get('VVIP')
-
-                date_col_map = {}
-                for idx, val in enumerate(header_row):
+                cand_dates = {}
+                for idx, val in enumerate(cand_row):
                     d_str = excel_serial_to_date_str(val)
                     if d_str:
-                        date_col_map[idx] = d_str
+                        cand_dates[idx] = d_str
+                if cand_dates:
+                    header_row = cand_row
+                    date_col_map = cand_dates
+                    all_detected_dates.update(cand_dates.values())
+                    break
 
-                sheet_created = 0
-                batch = []
-                sheet_tech = sheet_name.upper()
-                for r in rows_iter:
-                    row_vals = [c.v for c in r]
-                    if not row_vals or site_col_idx >= len(row_vals) or row_vals[site_col_idx] is None:
+            if not header_row or not date_col_map:
+                continue
+
+            col_index_map = {str(val).strip().upper(): idx for idx, val in enumerate(header_row) if val is not None}
+
+            site_col_idx = col_index_map.get(
+                'SITE ID',
+                col_index_map.get(
+                    'SITE_ID',
+                    col_index_map.get(
+                        'SITE',
+                        col_index_map.get(
+                            '2G',
+                            col_index_map.get(
+                                '3G NODEB',
+                                col_index_map.get(
+                                    '4G ENODEB',
+                                    col_index_map.get('5G GNODEB', 1 if len(header_row) > 1 else 0)
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+            elem_col_idx = col_index_map.get(
+                '4G ENODEB',
+                col_index_map.get(
+                    '5G GNODEB',
+                    col_index_map.get('3G NODEB', col_index_map.get('2G', site_col_idx))
+                )
+            )
+
+            state_idx = col_index_map.get('STATE')
+            region_idx = col_index_map.get('NEW REGION', col_index_map.get('REGION'))
+            lga_idx = col_index_map.get('LGA')
+            territory_idx = col_index_map.get('TERRITORY')
+            tower_co_idx = col_index_map.get('TOWER CO', col_index_map.get('TOWER_CO', col_index_map.get('TOWERCO')))
+            vendor_idx = col_index_map.get('VENDOR')
+            status_idx = col_index_map.get('STATUS')
+            vvip_idx = col_index_map.get('VVIP')
+
+            date_col_items = sorted(date_col_map.items(), key=lambda x: x[1])
+            latest_sheet_date = date_col_items[-1][1] if date_col_items else None
+
+            sheet_created = 0
+            for row_vals in rows_iter:
+                if not row_vals:
+                    continue
+                row_len = len(row_vals)
+                if site_col_idx >= row_len:
+                    continue
+                raw_site_cell = row_vals[site_col_idx]
+                raw_elem_cell = row_vals[elem_col_idx] if elem_col_idx < row_len else None
+                if raw_site_cell is None and raw_elem_cell is None:
+                    continue
+
+                raw_s_id = clean_str(raw_site_cell).upper()
+                raw_elem = clean_str(raw_elem_cell).upper() if raw_elem_cell is not None else raw_s_id
+
+                if not raw_s_id or raw_s_id in ('NAN', '0', 'TOTAL', 'AVERAGE', 'GRAND TOTAL', 'SUMMARY'):
+                    if raw_elem and raw_elem not in ('NAN', '0', 'TOTAL', 'AVERAGE', 'GRAND TOTAL', 'SUMMARY'):
+                        raw_s_id = raw_elem
+                    else:
                         continue
-                    raw_s_id = clean_str(row_vals[site_col_idx]).upper()
-                    raw_elem = clean_str(row_vals[elem_col_idx]).upper() if elem_col_idx < len(row_vals) and row_vals[elem_col_idx] is not None else raw_s_id
-                    
-                    if not raw_s_id or raw_s_id in ['NAN', '0', 'TOTAL', 'AVERAGE', 'GRAND TOTAL', 'SUMMARY']:
-                        if raw_elem and raw_elem not in ['NAN', '0', 'TOTAL', 'AVERAGE', 'GRAND TOTAL', 'SUMMARY']:
-                            raw_s_id = raw_elem
-                        else:
-                            continue
 
-                    elem_name = raw_elem or raw_s_id
+                elem_name = raw_elem or raw_s_id
 
-                    # Resolve canonical site_id by stripping carrier tech prefix (L/U/N/LTE) if needed
-                    s_id = raw_s_id
-                    if len(s_id) >= 5 and (s_id.startswith('L') or s_id.startswith('U') or s_id.startswith('N')):
-                        cand = s_id[1:]
-                        if re.match(r'^[A-Z]{2}\d{2,6}$', cand) or re.match(r'^T\d{2,6}$', cand):
-                            s_id = cand
-                    elif len(s_id) >= 6 and s_id.startswith('LTE'):
-                        cand = s_id[3:]
-                        if re.match(r'^[A-Z]{2}\d{2,6}$', cand) or re.match(r'^T\d{2,6}$', cand):
-                            s_id = cand
+                s_id = raw_s_id
+                s_len = len(s_id)
+                if s_len >= 5 and s_id[0] in ('L', 'U', 'N'):
+                    cand = s_id[1:]
+                    if _SITE_PREFIX_RE.match(cand):
+                        s_id = cand
+                elif s_len >= 6 and s_id.startswith('LTE'):
+                    cand = s_id[3:]
+                    if _SITE_PREFIX_RE.match(cand):
+                        s_id = cand
 
-                    rec_key = (s_id, sheet_tech)
-                    if rec_key in seen_keys:
-                        continue
-                    seen_keys.add(rec_key)
+                rec_key = (s_id, sheet_tech)
+                if rec_key in seen_keys:
+                    continue
 
-                    state_val = clean_str(row_vals[state_idx]) if (state_idx is not None and state_idx < len(row_vals)) else ''
-                    region_val = clean_str(row_vals[region_idx]) if (region_idx is not None and region_idx < len(row_vals)) else ''
-                    lga_val = clean_str(row_vals[lga_idx]) if (lga_idx is not None and lga_idx < len(row_vals)) else ''
-                    territory_val = clean_str(row_vals[territory_idx]) if (territory_idx is not None and territory_idx < len(row_vals)) else ''
-                    tower_val = clean_str(row_vals[tower_co_idx]) if (tower_co_idx is not None and tower_co_idx < len(row_vals)) else ''
-                    vendor_val = clean_str(row_vals[vendor_idx]) if (vendor_idx is not None and vendor_idx < len(row_vals)) else ''
-                    status_val = clean_str(row_vals[status_idx]) if (status_idx is not None and status_idx < len(row_vals)) else 'Active'
-                    vvip_val = clean_str(row_vals[vvip_idx]) if (vvip_idx is not None and vvip_idx < len(row_vals)) else ''
+                daily_scores = {}
+                total_val = 0.0
+                valid_count = 0
+                for c_idx, d_key in date_col_items:
+                    if c_idx < row_len:
+                        val = clean_float(row_vals[c_idx])
+                        if val is not None:
+                            daily_scores[d_key] = val
+                            total_val += val
+                            valid_count += 1
 
-                    daily_scores = {}
-                    valid_vals = []
-                    for c_idx, d_key in date_col_map.items():
-                        if c_idx < len(row_vals):
-                            val = clean_float(row_vals[c_idx])
-                            if val is not None:
-                                daily_scores[d_key] = val
-                                valid_vals.append(val)
+                if not valid_count:
+                    continue
 
-                    if not daily_scores:
-                        continue
+                seen_keys.add(rec_key)
 
-                    avg_val = round(sum(valid_vals) / len(valid_vals), 2) if valid_vals else 100.0
-                    latest_val = daily_scores.get(all_sorted_dates[-1], avg_val) if all_sorted_dates else avg_val
+                avg_val = round(total_val / valid_count, 2)
+                latest_val = daily_scores.get(latest_sheet_date, avg_val)
 
-                    # Lookup PI weight for this element/site
-                    pi_info = pi_weights_dict.get((sheet_tech, elem_name)) or pi_weights_dict.get((sheet_tech, s_id)) or pi_weights_dict.get((sheet_tech, raw_s_id)) or {}
+                state_val = clean_str(row_vals[state_idx]) if (state_idx is not None and state_idx < row_len) else ''
+                region_val = clean_str(row_vals[region_idx]) if (region_idx is not None and region_idx < row_len) else ''
+                lga_val = clean_str(row_vals[lga_idx]) if (lga_idx is not None and lga_idx < row_len) else ''
+                territory_val = clean_str(row_vals[territory_idx]) if (territory_idx is not None and territory_idx < row_len) else ''
+                tower_val = clean_str(row_vals[tower_co_idx]) if (tower_co_idx is not None and tower_co_idx < row_len) else ''
+                vendor_val = clean_str(row_vals[vendor_idx]) if (vendor_idx is not None and vendor_idx < row_len) else ''
+                status_val = clean_str(row_vals[status_idx]) if (status_idx is not None and status_idx < row_len) else 'Active'
+                vvip_val = clean_str(row_vals[vvip_idx]) if (vvip_idx is not None and vvip_idx < row_len) else ''
 
-                    batch.append(DailyAvailabilityRecord(
-                        upload_log=log,
-                        site_id=s_id,
-                        tech=sheet_tech,
-                        element_name=elem_name,
-                        state=state_val,
-                        region=region_val,
-                        lga=lga_val,
-                        territory=territory_val,
-                        tower_co=tower_val,
-                        vendor=vendor_val,
-                        status=status_val,
-                        vvip=vvip_val,
-                        daily_scores=daily_scores,
-                        avg_availability=avg_val,
-                        latest_availability=latest_val,
-                        pi_national=pi_info.get('pi_national', 0.0),
-                        pi_state=pi_info.get('pi_state', 0.0),
-                        pi_region=pi_info.get('pi_region', 0.0),
-                        pi_territory=pi_info.get('pi_territory', 0.0),
-                        configured_capacity=pi_info.get('configured_capacity', 0.0)
-                    ))
+                pi_info = (
+                    pi_weights_dict.get((sheet_tech, elem_name))
+                    or pi_weights_dict.get((sheet_tech, s_id))
+                    or pi_weights_dict.get((sheet_tech, raw_s_id))
+                    or {}
+                )
 
-                    if len(batch) >= 1500:
-                        DailyAvailabilityRecord.objects.bulk_create(batch)
-                        total_created += len(batch)
-                        sheet_created += len(batch)
-                        batch = []
+                parsed_records.append(DailyAvailabilityRecord(
+                    site_id=s_id,
+                    tech=sheet_tech,
+                    element_name=elem_name,
+                    state=state_val,
+                    region=region_val,
+                    lga=lga_val,
+                    territory=territory_val,
+                    tower_co=tower_val,
+                    vendor=vendor_val,
+                    status=status_val or 'Active',
+                    vvip=vvip_val,
+                    daily_scores=daily_scores,
+                    avg_availability=avg_val,
+                    latest_availability=latest_val,
+                    pi_national=pi_info.get('pi_national', 0.0),
+                    pi_state=pi_info.get('pi_state', 0.0),
+                    pi_region=pi_info.get('pi_region', 0.0),
+                    pi_territory=pi_info.get('pi_territory', 0.0),
+                    configured_capacity=pi_info.get('configured_capacity', 0.0),
+                ))
+                sheet_created += 1
 
-                if batch:
-                    DailyAvailabilityRecord.objects.bulk_create(batch)
-                    total_created += len(batch)
-                    sheet_created += len(batch)
-                    batch = []
+            tech_counts[sheet_tech] = tech_counts.get(sheet_tech, 0) + sheet_created
 
-                tech_counts[sheet_name.upper()] = sheet_created
+        if not parsed_records:
+            return {
+                'success': False,
+                'error': 'No valid availability records or date columns were detected in the uploaded spreadsheet.'
+            }
 
-            with transaction.atomic():
-                DailyAvailabilityUploadLog.objects.exclude(id=log.id).update(is_active=False, is_archived=True)
+        all_sorted_dates = sorted(list(all_detected_dates))
+        start_date = all_sorted_dates[0] if all_sorted_dates else None
+        end_date = all_sorted_dates[-1] if all_sorted_dates else None
+        date_range_str = f"{start_date} to {end_date}" if (start_date and end_date) else "N/A"
+
+        month_str = "Unknown Month"
+        if end_date:
+            try:
+                dt_end = datetime.strptime(end_date, '%Y-%m-%d')
+                month_str = dt_end.strftime('%B %Y')
+            except Exception:
+                month_str = end_date[:7]
+
+        if 'sqlite' in connection.vendor:
+            with connection.cursor() as cursor:
+                cursor.execute("PRAGMA busy_timeout = 60000;")
+                cursor.execute("PRAGMA synchronous = NORMAL;")
+
+        total_created = len(parsed_records)
+
+        with transaction.atomic():
+            existing_log = DailyAvailabilityUploadLog.objects.filter(filename=clean_filename).first()
+            DailyAvailabilityUploadLog.objects.all().update(is_active=False, is_archived=True)
+
+            if existing_log:
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM sites_dailyavailabilityrecord WHERE upload_log_id = %s", [existing_log.id])
+                log = existing_log
+                log.filename = clean_filename
+                log.uploaded_by = uploaded_by
+                log.uploaded_at = timezone.now()
                 log.records_count = total_created
+                log.date_range = date_range_str
+                log.month_str = month_str
+                log.start_date = start_date
+                log.end_date = end_date
                 log.is_active = True
                 log.is_archived = False
                 log.save()
+            else:
+                log = DailyAvailabilityUploadLog.objects.create(
+                    filename=clean_filename,
+                    uploaded_by=uploaded_by,
+                    records_count=total_created,
+                    date_range=date_range_str,
+                    month_str=month_str,
+                    start_date=start_date,
+                    end_date=end_date,
+                    is_active=True,
+                    is_archived=False,
+                    is_base=is_base
+                )
 
-            return {
-                'success': True,
-                'filename': log.filename,
-                'uploaded_by': log.uploaded_by,
-                'records_count': log.records_count,
-                'date_range': date_range_str,
-                'month_str': log.month_str,
-                'start_date': log.start_date,
-                'end_date': log.end_date,
-                'detected_dates': all_sorted_dates,
-                'tech_counts': tech_counts,
-                'uploaded_at': log.uploaded_at.isoformat(),
-                'is_base': log.is_base
-            }
-        else:
-            excel_file = pd.ExcelFile(file_to_read)
-            sheet_names = excel_file.sheet_names
-            tech_sheets = [s for s in ['2G', '3G', '4G', '5G'] if s in sheet_names]
-            if not tech_sheets:
-                tech_sheets = [s for s in sheet_names if s.upper() != 'SEARCH ENGINE']
+            for rec in parsed_records:
+                rec.upload_log = log
 
-            records_map = {}
-            for tech in tech_sheets:
-                df = pd.read_excel(file_to_read, sheet_name=tech)
-                col_map = {str(c).strip().upper(): c for c in df.columns}
-                site_id_col = None
-                for cand in ['SITE ID', 'SITE_ID', '2G', 'Site ID', '3G NODEB', '4G eNodeB', '5G gNodeB']:
-                    if cand.upper() in col_map:
-                        site_id_col = col_map[cand.upper()]
-                        break
-                if not site_id_col:
-                    site_id_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+            for i in range(0, total_created, 3000):
+                DailyAvailabilityRecord.objects.bulk_create(parsed_records[i:i + 3000], batch_size=3000)
 
-                elem_col = None
-                for cand in ['4G ENODEB', '5G GNODEB', '3G NODEB', '2G', 'SITE ID']:
-                    if cand.upper() in col_map:
-                        elem_col = col_map[cand.upper()]
-                        break
-
-                date_col_mapping = {}
-                for c in df.columns:
-                    date_str = excel_serial_to_date_str(c)
-                    if date_str:
-                        date_col_mapping[c] = date_str
-                        all_detected_dates.add(date_str)
-
-                sorted_dates = sorted(list(date_col_mapping.values()))
-                latest_date = sorted_dates[-1] if sorted_dates else None
-
-                count_tech = 0
-                for _, row in df.iterrows():
-                    raw_s_id = clean_str(row.get(site_id_col, '')).upper()
-                    raw_elem = clean_str(row.get(elem_col, '')) if elem_col else raw_s_id
-                    if not raw_s_id or raw_s_id in ['NAN', '0', 'TOTAL', 'AVERAGE', 'GRAND TOTAL', 'SUMMARY']:
-                        if raw_elem and raw_elem not in ['NAN', '0', 'TOTAL', 'AVERAGE', 'GRAND TOTAL', 'SUMMARY']:
-                            raw_s_id = raw_elem
-                        else:
-                            continue
-
-                    elem_name = raw_elem or raw_s_id
-                    s_id = raw_s_id
-                    if len(s_id) >= 5 and (s_id.startswith('L') or s_id.startswith('U') or s_id.startswith('N')):
-                        cand = s_id[1:]
-                        if re.match(r'^[A-Z]{2}\d{2,6}$', cand) or re.match(r'^T\d{2,6}$', cand):
-                            s_id = cand
-                    elif len(s_id) >= 6 and s_id.startswith('LTE'):
-                        cand = s_id[3:]
-                        if re.match(r'^[A-Z]{2}\d{2,6}$', cand) or re.match(r'^T\d{2,6}$', cand):
-                            s_id = cand
-
-                    state = clean_str(row.get('STATE') or row.get('State') or '')
-                    region = clean_str(row.get('NEW REGION') or row.get('REGION') or '')
-                    lga = clean_str(row.get('LGA') or '')
-                    territory = clean_str(row.get('TERRITORY') or row.get('Territory') or '')
-                    tower_co = clean_str(row.get('TOWER CO') or row.get('Tower Co') or '')
-                    vendor = clean_str(row.get('Vendor') or '')
-                    status = clean_str(row.get('Status') or row.get('STATUS') or 'Active')
-                    vvip = clean_str(row.get('VVIP') or '')
-
-                    daily_scores = {}
-                    valid_vals = []
-                    for col_name, date_key in date_col_mapping.items():
-                        val = clean_float(row.get(col_name))
-                        if val is not None:
-                            daily_scores[date_key] = val
-                            valid_vals.append(val)
-
-                    if not daily_scores:
-                        continue
-
-                    avg_val = round(sum(valid_vals) / len(valid_vals), 2) if valid_vals else 100.0
-                    latest_val = daily_scores.get(latest_date, avg_val) if latest_date else avg_val
-
-                    rec_key = (s_id, tech.upper())
-                    records_map[rec_key] = {
-                        'site_id': s_id,
-                        'tech': tech.upper(),
-                        'element_name': elem_name,
-                        'state': state,
-                        'region': region,
-                        'lga': lga,
-                        'territory': territory,
-                        'tower_co': tower_co,
-                        'vendor': vendor,
-                        'status': status,
-                        'vvip': vvip,
-                        'daily_scores': daily_scores,
-                        'avg_availability': avg_val,
-                        'latest_availability': latest_val
-                    }
-                    count_tech += 1
-
-                tech_counts[tech.upper()] = count_tech
-
-            all_sorted_dates = sorted(list(all_detected_dates))
-            start_date = all_sorted_dates[0] if all_sorted_dates else None
-            end_date = all_sorted_dates[-1] if all_sorted_dates else None
-            date_range_str = f"{start_date} to {end_date}" if (start_date and end_date) else "N/A"
-
-            month_str = "Unknown Month"
-            if end_date:
-                try:
-                    dt_end = datetime.strptime(end_date, '%Y-%m-%d')
-                    month_str = dt_end.strftime('%B %Y')
-                except Exception:
-                    month_str = end_date[:7]
-
-            with transaction.atomic():
-                existing_log = DailyAvailabilityUploadLog.objects.filter(filename=clean_filename).first()
-                DailyAvailabilityUploadLog.objects.all().update(is_active=False, is_archived=True)
-
-                if existing_log:
-                    DailyAvailabilityRecord.objects.filter(upload_log=existing_log).delete()
-                    log = existing_log
-                    log.filename = clean_filename
-                    log.uploaded_by = uploaded_by
-                    log.uploaded_at = datetime.now()
-                    log.records_count = len(records_map)
-                    log.date_range = date_range_str
-                    log.start_date = start_date
-                    log.end_date = end_date
-                    log.is_active = True
-                    log.is_archived = False
-                    log.save()
-                else:
-                    log = DailyAvailabilityUploadLog.objects.create(
-                        filename=clean_filename,
-                        uploaded_by=uploaded_by,
-                        records_count=len(records_map),
-                        date_range=date_range_str,
-                        month_str=month_str,
-                        start_date=start_date,
-                        end_date=end_date,
-                        is_active=True,
-                        is_archived=False,
-                        is_base=is_base
-                    )
-
-                batch = []
-                for data in records_map.values():
-                    batch.append(DailyAvailabilityRecord(upload_log=log, **data))
-                    if len(batch) >= 1500:
-                        DailyAvailabilityRecord.objects.bulk_create(batch)
-                        batch = []
-                if batch:
-                    DailyAvailabilityRecord.objects.bulk_create(batch)
-
-            return {
-                'success': True,
-                'filename': log.filename,
-                'uploaded_by': log.uploaded_by,
-                'records_count': log.records_count,
-                'date_range': date_range_str,
-                'month_str': log.month_str,
-                'start_date': log.start_date,
-                'end_date': log.end_date,
-                'detected_dates': all_sorted_dates,
-                'tech_counts': tech_counts,
-                'uploaded_at': log.uploaded_at.isoformat(),
-                'is_base': log.is_base
-            }
+        return {
+            'success': True,
+            'filename': log.filename,
+            'uploaded_by': log.uploaded_by,
+            'records_count': log.records_count,
+            'date_range': date_range_str,
+            'month_str': log.month_str,
+            'start_date': log.start_date,
+            'end_date': log.end_date,
+            'detected_dates': all_sorted_dates,
+            'tech_counts': tech_counts,
+            'uploaded_at': log.uploaded_at.isoformat(),
+            'is_base': log.is_base
+        }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {'success': False, 'error': str(e)}
     finally:
         if temp_path and os.path.exists(temp_path):
