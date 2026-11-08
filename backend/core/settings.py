@@ -132,6 +132,7 @@ USE_X_FORWARDED_HOST = True
 CSRF_TRUSTED_ORIGINS = [
     'https://*.trycloudflare.com',
     'http://*.trycloudflare.com',
+    'https://*.ts.net',
     'https://*.vercel.app',
     'http://localhost',
     'http://127.0.0.1',

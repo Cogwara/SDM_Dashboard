@@ -2,11 +2,11 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://ice-powerseller-clerk-where.trycloudflare.com/api/$1"
+      "destination": "https://sdm-dashboard.taila29011.ts.net/api/$1"
     },
     {
       "source": "/media/(.*)",
-      "destination": "https://ice-powerseller-clerk-where.trycloudflare.com/media/$1"
+      "destination": "https://sdm-dashboard.taila29011.ts.net/media/$1"
     },
     {
       "source": "/((?!api/|media/).*)",
