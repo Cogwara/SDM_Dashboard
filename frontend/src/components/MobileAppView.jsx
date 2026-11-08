@@ -169,11 +169,13 @@ export default function MobileAppView({
   // Server IP Configuration
   const [serverIp, setServerIp] = useState(() => {
     const saved = localStorage.getItem('fct_sdm_server_ip');
-    if (
-      saved &&
-      (saved.includes('warm-tennis-touch-kansas.trycloudflare.com') ||
-       saved.includes('graduate-summaries-joy-tenant.trycloudflare.com'))
-    ) {
+    const staleTunnels = [
+      'ice-powerseller-clerk-where.trycloudflare.com',
+      'obligations-ecommerce-gospel-nhs.trycloudflare.com',
+      'warm-tennis-touch-kansas.trycloudflare.com',
+      'graduate-summaries-joy-tenant.trycloudflare.com',
+    ];
+    if (saved && staleTunnels.some((tunnel) => saved.includes(tunnel))) {
       localStorage.removeItem('fct_sdm_server_ip');
       return DEFAULT_MOBILE_SERVER_URL;
     }

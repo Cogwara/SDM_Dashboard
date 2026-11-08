@@ -10,14 +10,20 @@ export default function SDMLoginModal({ onLoginSuccess }) {
     window.location.protocol === 'file:'
   );
 
-  const defaultIp = 'https://ice-powerseller-clerk-where.trycloudflare.com';
+  const defaultIp = 'https://sdm-dashboard.taila29011.ts.net';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [serverIp, setServerIp] = useState(() => {
     const saved = localStorage.getItem('fct_sdm_server_ip');
-    if (saved && (saved.includes('warm-tennis-touch-kansas.trycloudflare.com') || saved.includes('graduate-summaries-joy-tenant.trycloudflare.com'))) {
+    const staleTunnels = [
+      'ice-powerseller-clerk-where.trycloudflare.com',
+      'obligations-ecommerce-gospel-nhs.trycloudflare.com',
+      'warm-tennis-touch-kansas.trycloudflare.com',
+      'graduate-summaries-joy-tenant.trycloudflare.com',
+    ];
+    if (saved && staleTunnels.some((tunnel) => saved.includes(tunnel))) {
       localStorage.removeItem('fct_sdm_server_ip');
       return defaultIp;
     }
@@ -138,7 +144,7 @@ export default function SDMLoginModal({ onLoginSuccess }) {
                   <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">Mobile Build</span>
                 </div>
                 <a
-                  href="https://ice-powerseller-clerk-where.trycloudflare.com/media/downloads/FCT_SDM_Mobile_v3.apk"
+                  href="https://sdm-dashboard.taila29011.ts.net/media/downloads/FCT_SDM_Mobile_v3.apk"
                   download="FCT_SDM_Mobile_v3.apk"
                   target="_blank"
                   rel="noopener noreferrer"

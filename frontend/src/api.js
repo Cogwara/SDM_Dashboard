@@ -15,10 +15,13 @@ const checkIsCapacitorNative = () => {
   );
 };
 
-export const DEFAULT_MOBILE_SERVER_URL = 'https://ice-powerseller-clerk-where.trycloudflare.com';
-export const FALLBACK_TUNNEL_URL = 'https://obligations-ecommerce-gospel-nhs.trycloudflare.com';
+export const DEFAULT_MOBILE_SERVER_URL = 'https://sdm-dashboard.taila29011.ts.net';
+export const FALLBACK_TUNNEL_URL = 'https://sdm-dashboard.taila29011.ts.net';
 
 const KNOWN_STALE_TUNNELS = [
+  // Retired Cloudflare quick tunnels — they rotate URLs on every restart and are permanently dead
+  'ice-powerseller-clerk-where.trycloudflare.com',
+  'obligations-ecommerce-gospel-nhs.trycloudflare.com',
   'warm-tennis-touch-kansas.trycloudflare.com',
   'graduate-summaries-joy-tenant.trycloudflare.com',
 ];
