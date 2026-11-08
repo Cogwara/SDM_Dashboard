@@ -476,3 +476,134 @@ body {
 
 
 
+
+/* ═══════════════════════════════════════════════════════════
+   Navbar v3.1 — shared component styles (theme-aware)
+   Uses CSS variables so one style adapts to every theme; the
+   class names with arbitrary values escape the per-theme
+   slate-override rules that would otherwise mangle dropdowns.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Segmented quick-tab strip (desktop) */
+.nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 0.85rem;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+}
+.nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.38rem 0.7rem;
+  border-radius: 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.nav-tab svg { width: 0.95rem; height: 0.95rem; }
+.nav-tab:hover {
+  color: var(--text-main);
+  background: color-mix(in srgb, var(--text-main) 7%, transparent);
+}
+.nav-tab[data-active="true"] {
+  color: var(--text-main);
+  background: var(--accent-glow);
+  box-shadow: inset 0 0 0 1px var(--card-hover-border);
+}
+
+/* Ghost control button (icon-only or icon+label) */
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-width: 2.15rem;
+  height: 2.15rem;
+  padding: 0 0.5rem;
+  border-radius: 0.65rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.nav-btn:hover {
+  background: color-mix(in srgb, var(--text-main) 9%, transparent);
+  color: var(--text-main);
+}
+
+/* Dropdown menus — surface color comes from the theme palette */
+.dropdown-surface {
+  background: var(--panel-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.dropdown-item {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.dropdown-item:hover {
+  background: color-mix(in srgb, var(--accent-glow) 55%, transparent);
+  color: var(--text-main);
+}
+.dropdown-item[data-variant="danger"] { color: #fb7185; }
+.dropdown-item[data-variant="danger"]:hover {
+  background: rgba(244, 63, 94, 0.12);
+  color: #fb7185;
+}
+
+/* Site-ID quick search */
+.nav-search {
+  width: 100%;
+  background: var(--input-bg);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 0.7rem;
+  padding: 0.44rem 0.7rem 0.44rem 2.05rem;
+  font-size: 0.75rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nav-search::placeholder { color: var(--text-muted); opacity: 0.75; }
+.nav-search:focus {
+  outline: none;
+  border-color: var(--card-hover-border);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* Navbar responsive visibility (component CSS outranks utility
+   layers, so breakpoints live here rather than on the element) */
+@media (max-width: 1279.98px) {
+  .nav-tabs { display: none; }
+}
+
+/* MTN themes: dark ghost controls on the gold bar */
+[data-theme="mtn"] header .nav-btn,
+[data-theme="mtn-dark"] header .nav-btn {
+  color: #1f2937;
+}
+
+/* MTN themes: hover tint for gold-bar ghost controls */
+[data-theme="mtn"] header .nav-btn:hover,
+[data-theme="mtn-dark"] header .nav-btn:hover {
+  background: rgba(0, 0, 0, 0.12);
+  color: #000000;
+}
